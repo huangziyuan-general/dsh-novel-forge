@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "note": "黄金三章诊断词库（与 noai-lexicon.json 同一存放约定，均为正则源串）。conflictWords=冲突信号；infoTokens=设定灌输口吻；openingAction=开场动作词；openingLazy=抒情开场模式（数组，拼接为或）。调阈值改这里，勿动 diagnose.js 的算法。",
+  "conflictWords": "怒|仇|挡|杀|争|拦|扑|破门|拔出|抵住|反扑|冷笑|咬牙|对峙|剑拔弩张|反目",
+  "infoTokens": "据说|相传|根据|按.{0,6}的规定|一共|总计|有着|可分为|设定|规则|系统提示|大陆",
+  "openingAction": "推开门|拔刀|冲进|撞|拍案|扑|握紧|踹|踩碎",
+  "openingLazy": ["夜色.*静谧", ".*缓缓.*流淌", "风拂过"]
+}

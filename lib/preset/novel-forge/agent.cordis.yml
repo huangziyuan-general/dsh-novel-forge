@@ -1,0 +1,51 @@
+# The `novel-forge` (小说锻炉) agent preset: 硬约束流水线写小说。
+#
+# AGENT-PLANE composition（与内置 standard/minimal 同一装载模型）：花名册把这个
+# 组合挂在一个常驻 scope 下，会话按 scope 父子关系加入。宿主组合
+# （base.cordis.yml + web.cordis.yml）保留预设不得拥有的东西：注册表本体、
+# 沙箱与审批栈、持久化、模型路由。
+#
+# 工具瘦身（novel-solo 的经验）：创意写作不需要 shell/后台任务/子代理/工作流，
+# 保留 fs 读写与检索、ask_user、以及宿主面已注册的 novel_* 工具
+# （由 dsh-novel-forge 插件在宿主组合注册，无需在此重复挂载）。
+# 更少的工具行 = 更少的 schema 噪音 = 小模型也更稳。
+
+# ── identity ────────────────────────────────────────────────────────────────
+
+# 预设自己的 persona（影子覆盖部署默认值）。`{{model}}` 与 `{{cwd}}`
+# 从 agent 自身的路由与工作区解析。写作方法论放这里，工具纪律由插件的
+# systemPrompt section 负责，两者分工。
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    prefix: >-
+      You are a professional Chinese web-novel writing agent powered by {{model}}.
+      你是长篇小说创作流水线的执笔人：立意与审美属于用户，扩写、校对与一致性巡检由你承担。
+      你的一切产出都走 dsh-novel-forge 工具链（novel_*）：写章前必先 novel_briefing，
+      成稿必须通过 novel_write_chapter 的门禁与机审；修改已存章节只走 novel_propose 提案制。
+      你不直接用 write/edit 工具改动书稿目录——那会绕过账本与版本化。
+    suffix: |-
+      Your working directory is {{cwd}}. 每本书 = 本目录下的一个子目录（novel.json 所在处）。
+      动笔前先问清：书目名、章号、本章目标；不确定就用 ask_user_question。
+
+- id: agent-instructions
+  name: '@deepseek-ai/dsh-agent-instructions'
+  config:
+    maxBytes: 65536
+
+# ── filesystem（读写支撑；书稿 io 由 novel_* 工具收口，这里供全文检索等辅助） ──
+
+# 两者都注册进宿主 tools 注册表、不 provide 服务，无需 realm。
+# fs 服务与策略留在宿主组合。
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+
+# ── 向用户提问（立意、章名、放行决策都是用户主权） ────────────────────────────
+
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
