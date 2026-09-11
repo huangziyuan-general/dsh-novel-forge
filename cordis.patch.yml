@@ -1,0 +1,13 @@
+# dsh-novel-forge bundle patch: one insert registering the novel-forge plugin.
+# The row id MUST match the node half's exported cordis `name` (lib/index.js).
+# Config values are validated fail-fast in apply(); see lib/index.js.
+- insert:
+    - id: 'dsh-novel-forge'
+      name: 'dsh-novel-forge'
+      config:
+        minChapterChars: 500
+        maxChapterChars: 12000
+        contextBudgetChars: 6000
+        scanTopK: 8
+        repetitionWindow: 10
+        skipPresetDeploy: false
