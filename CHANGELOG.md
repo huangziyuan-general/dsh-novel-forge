@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.8 (2026-09-12) — 三项遗留加固
+
+- **MCP 后端符号链接逃逸修复**：`createNodeFsBackend` 的 containment 从词法 `path.relative` 升级为 **realpath 校验**——工作区内的软链指向区外时 stat/read/write 全部拒绝（`FS_SANDBOX_DENIED`）；root 本身是软链时统一到真实路径再比较；待创建新文件对最近存在祖先做 realpath 后拼回剩余段。0.2.6 记录的"低风险加固项"就此关闭。
+- **MCP 通道输出契约校验**：`buildStandaloneTools.call` 对返回值跑宿主同款 `validateJsonSchemaValue`（防御性动态导入，SDK 缺席时退化为不校验）——MCP 客户端拿到的数据与宿主通道同一标准，违规抛 `INVALID_TOOL_OUTPUT`。
+- **style 词表外置**：`style.js` 的六维词表（模糊限制语/抽象后缀/动作动词/动态助词/「X地」排除表）与 12 轴氛围词表挪到 `lib/data/style-lexicon.json`，与 noai/diagnose 词库同一存放约定；`MOOD_AXES` 改为从词库导出，用户调词不动算法。
+- 测试 61/61 全绿（新增：软链逃逸 ×read/write/resolve 三通道、契约探针违规拒绝 + 正常工具不受影响）。
+
 ## 0.2.7 (2026-09-12) — 氛围光谱去重修复
 
 - **修复**：`MOOD_AXES` 的 `mystery` 轴 `'线索'` 重复出现，而 `measureMood` 逐词累加命中 → 悬疑轴被双倍计分、系统性抬高。已删数据层重复词，并在 `measureMood` 内用 `new Set(words)` 去重兜底（防词表再次引入重复）。新增回归测试：998 字文本含 1 个"线索"时悬疑轴精确为 1.0/千字（旧实现会得 2.0）。59/59 测试全绿。
