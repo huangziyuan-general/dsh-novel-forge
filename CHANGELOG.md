@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.3 (2026-09-12) — 真机冒烟修复：render 兼容 0.1.5-rc.1 宿主
+
+- **修复**：`defineTool` 选项顶层的 `render` 在 dsh 0.1.5-rc.1 宿主上全部失效——宿主只读 `options.output.render`，其渲染包装函数拿到 `undefined` 调用即抛 `output.render failed: userRender is not a function`，工具输出被判 INVALID_TOOL_OUTPUT（16 个工具全数命中）。新增 `lib/tools/define-tool.js` 兼容垫片（顶层 render / presentationMeta 归位到 output 下），6 个工具文件改走垫片导入。单测（假 fs）不走宿主渲染路径故未暴露，真机 headless one-shot 冒烟抓出。
+- 真机冒烟 7 步全通：import preview/import → diagnose 四维 → export 落盘 → clone_project（`ctx.fs.listDir` host 面验证，缺失 0）→ polish analyze/submit → propose list/apply（提案制 v1→v2 旧版保留）。
+
 ## 0.2.2 (2026-09-12) — 输出契约硬化 + 世界书互操作 + 克隆修复
 
 - **世界书互操作**（新 `lib/worldbook-io.js` 纯函数）：`novel_worldbook import/export` 接受三种形态——JSON 数组、SillyTavern 简化形（`{key/keyword/comment/constant/uid}` 尽力规约）、纯文本行 `关键词1,关键词2 | 内容`；导入按 id 覆盖合并，坏行跳过并报告 errors。
