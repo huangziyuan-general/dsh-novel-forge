@@ -1,6 +1,6 @@
 {
   "name": "dsh-novel-forge",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "DSH 小说锻炉：把 AI 长篇写作的通病变成代码强制的硬约束——事实账本、上下文包、阶段门禁、结构性去 AI 味扫描、确定性章节审计与修改提案制。Novel-writing plugin for DeepSeek Harness (DSH) that turns known AI-fiction failure modes into code-enforced guardrails.",
   "keywords": [
     "deepseek",
@@ -27,11 +27,12 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "lib",
-    "cordis.patch.yml",
-    "README.md",
+    "CHANGELOG.md",
     "COMPATIBILITY.md",
-    "CHANGELOG.md"
+    "README.md",
+    "cordis.patch.yml",
+    "lib",
+    "mcp"
   ],
   "peerDependencies": {
     "@deepseek-ai/dsh-fs": "*",
@@ -39,9 +40,15 @@
     "@deepseek-ai/schemastery": "*"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/dsh-fs": { "optional": true },
-    "@deepseek-ai/dsh-tools": { "optional": true },
-    "@deepseek-ai/schemastery": { "optional": true }
+    "@deepseek-ai/dsh-fs": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    }
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
@@ -51,5 +58,8 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
+  },
+  "bin": {
+    "dsh-novel-forge-mcp": "./mcp/server.mjs"
   }
 }

@@ -46,12 +46,12 @@ dsh plugin --profile web add github:<owner>/dsh-novel-forge
 | `novel_outline` | 全书大纲 / 第N章细纲 / **批准** | 写章门禁的钥匙 |
 | `novel_character` | 人物卡（含语言基因卡） | 写章自动注入 |
 | `novel_worldbook` | 世界书条目（add/update/list/remove + import/export） | 设定只认这里；update 保 id |
-| `novel_briefing` | 写前上下文包（预算裁剪 + 术语表） | 一致性供给侧 |
+| `novel_briefing` | 写前上下文包（预算裁剪 + 术语表 + **原著锚段**） | 一致性供给侧 |
 | `novel_write_chapter` | 写章落盘 | 门禁→机审→账本→版本化，四道全过才保存 |
 | `novel_ledger` | 事实账本（含 note）+ 伏笔埋/收/改期 | 同章改值拒绝；章号超前拒绝；超期伏笔告警 |
 | `novel_noai_scan` | 六维去 AI 味扫描 | 纯本地零费用 |
 | `novel_audit` | 确定性章节审计 | 机审证据 |
-| `novel_style` | 文笔六维基线（句法/修饰/抽象/动作/不确定/留白，μ±σ 带）：build 建基线 / check 对照 | 纯本地零费用；只报数不贴标签 |
+| `novel_style` | 文笔六维基线（μ±σ 带）+ **氛围光谱 12 轴**（热血/悬疑/惊悚/压抑/甜宠/温情/悲情/诙谐/爽感/神秘/肃杀/苍凉）：build 建基线 / check 对照（含主导氛围漂移） | 纯本地零费用；只报数不贴标签 |
 | `novel_propose` | 提案 / 列表 / 应用 / 清理 | 旧版永不覆盖；prune 清已终态索引 |
 | `novel_import` | 本地书籍导入（preview/import/**backfill 门禁回补**） | 纯函数切分章节；建书+版本化落盘；回补粗纲让导入书回到门禁体系 |
 | `novel_export` | 导出整本（md/txt + stats） | 按版本顺序拼装，写 `导出/` |
@@ -105,6 +105,27 @@ novel_project init → novel_outline save_book → novel_character save（建语
 | scanTopK | 8 | 扫描报告每维最多列出的问题数 |
 | repetitionWindow | 10 | 跨章重复检测的滑动窗口（与前 N 章比对） |
 | skipPresetDeploy | false | 跳过预设部署 |
+
+## MCP 双通道（宿主外复用）
+
+同一套 novel_* 工具（门禁/账本/审计/基线全在工具层）也可通过 stdio MCP 暴露给
+Claude Desktop / Cursor 等任意 MCP 客户端——工作区根取 `NOVEL_FORGE_ROOT`
+（缺省为进程 cwd），一本小说 = 工作区里的一个目录：
+
+```json
+{
+  "mcpServers": {
+    "novel-forge": {
+      "command": "node",
+      "args": ["/path/to/dsh-novel-forge/mcp/server.mjs"],
+      "env": { "NOVEL_FORGE_ROOT": "/你的小说工作区" }
+    }
+  }
+}
+```
+
+零依赖实现（原生 JSON-RPC 2.0 over stdio）；宿主外的 fs 后端带同样的
+containment 与版本守卫语义。锚段写作与氛围光谱均为纯本地计算。
 
 ## 开发与测试
 
