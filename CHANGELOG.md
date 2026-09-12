@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 (2026-09-12) — client-half headless 注册验证门禁
+
+- **新增 `test/client.test.mjs`**：用 `node:vm` 以 `__ModuleLoader__` 真实语义加载 `lib/client.js`，物化 `{ inject, apply }`，再用 slots/effect stub 跑 `apply(ctx)` 断言右侧栏两个槽位（`sidebar.right.pane.tab` / `sidebar.right.pane.tab.title`）各注册一次、meta.name 与槽位同名、key=novel-forge、带组件函数。**把"假 ctx 载不了浏览器半"的验证坑填成可命令复现的门禁**——即便无浏览器也能确定性验证 client load 不炸、注册调用正确。
+- 同时确认：裸 `react` 是平台可解析种子词（宿主 80 处已打包 client 均如此 require）；`dsh.client.inject` 指向的 `@deepseek-ai/dsh-client-ui-sidebar-right` 为宿主既有可注入服务。
+- 排除需重启 web：客户端挂载错误只出现在浏览器 console，不落服务器日志，重启无诊断增益；服务器侧已确认 web 存活（HTTP 401 为登录门禁）且 link 安装、0.3.1 client 产物与声明就位。64/64 测试全绿。
+
 ## 0.3.0 (2026-09-12) — 浏览器 client-half（GUI）首块：右侧"锻炉"tab
 
 - **新增 `lib/client.js`**：dsh-novel-forge 第一个浏览器 client 模块，以 `__ModuleLoader__.load` 部署格式（对齐 dsh-client-ui-brand-official / sidebar-files），在右侧栏注册一个"锻炉" tab（面板 + chip 标题）作插件的常驻 UI 挂载点。v1 为静态识别面（插件名/版本/17 工具/双通道/规范三条），证明 client 挂载链路；数据面（书目/账本/风格基线…经 remote 拉取工具态）留到下一里程碑。
