@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.5 (2026-09-12) — 新增 novel_style 文笔六维基线（第 17 个工具）
+
+- **新增** `lib/style.js` 纯逻辑模块（零依赖、零模型调用）：六维测量——句法复杂度（小句/句）、修饰密度（X的/X地，排除「地铁/地方」等名词词素）、抽象度（抽象后缀词/千字）、动作密度（动词+动态助词/千字）、不确定性（模糊限制语/千字）、留白指数（省略号/破折号+未完句）。按章算 μ±σ 基线带，容差默认 1.5σ 相对占比（夹 10%~100%，单样本退化 35%）。
+- **新增** `novel_style` 工具：`build` 测全书各章建基线存 `.novel/style-baseline.json`；`check` 拿某章或给定 text 对照基线，逐维报带内✓/出带⚠与偏差百分比，verdict 三档（in_band / minor_drift / drift），容差可按维覆盖。
+- 系统提示新增纪律第 8 条：续写前 build、交稿前 check，出带只报方向、不把数字翻译成写作规则。
+- 思路致谢 dsh-novel-writer（siweina，MIT）的六维测量设计；实现口径为本插件自有（密度统一每千字、测量与判断分离与既有审计一致）。
+- 测试 53 项全绿（新增 5 项 style 单测）；真机 headless 验证 build+check 通过（顺带抓出并修复 build/check 输出 schema 与实际返回不一致两处）。
+
 ## 0.2.4 (2026-09-12) — 垫片补全 presentationMeta 对称归位
 
 - **补齐**：`lib/tools/define-tool.js` 之前只把顶层 `render` 挪进 `output.render`，`presentationMeta` 仍会留在顶层被宿主忽略——注释/0.2.3 说明写的"render / presentationMeta 归位"名不符实。现对称处理：顶层 `render`/`presentationMeta` 都归位到 `output` 下（output 已有值不覆盖），注释与行为一致。当前无工具用 presentationMeta，故纯为消缺 + 消除误导。
