@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.6 (2026-09-12) — 大肥鱼三连：锚包写作 + 氛围光谱 + MCP 双通道
+
+- **锚包写作**（灵感：dsh-novel-writer 锚包哲学）：`novel_briefing` 上下文包新增
+  「原著锚段」区——从最近已写的 3 章里启发式挑出叙述感/对话感各一段代表性段落，
+  有基线时附六维指纹行；纪律同一条：照锚段的语感节奏写，勿抄词句，勿把数字当写作规则。
+- **氛围光谱 12 轴**：`lib/style.js` 新增 `measureMood`（热血/悬疑/惊悚/压抑/甜宠/
+  温情/悲情/诙谐/爽感/神秘/肃杀/苍凉，命中数/千字，宁漏勿误词表）；`novel_style`
+  build 附全书各轴均值 + 最浓三轴，check 附本段向量与主导氛围漂移判定
+  （from → to，方向参考非错误）。
+- **MCP 双通道**：新增零依赖 stdio MCP server（`mcp/server.mjs`，原生 JSON-RPC 2.0），
+  把全部 17 个 novel_* 工具暴露给 Claude Desktop / Cursor 等任意 MCP 客户端；
+  `lib/mcp-standalone.js` 提供 node:fs 后端（containment + createIfAbsent/
+  replaceIfVersion 版本守卫，与宿主沙箱语义对齐）；package.json 增加
+  `bin: dsh-novel-forge-mcp`；工作区根 = `NOVEL_FORGE_ROOT`（缺省 cwd）。
+- 测试 58/58 绿（新增 6：锚段提取、氛围测量、后端 containment/版本守卫、
+  standalone 装配、stdio 子进程 initialize→tools/list→tools/call 全链）；
+  真机 headless 验证：build 氛围 top3=苍凉/肃杀/压抑（废土书方向正确），
+  briefing 锚段区 + 指纹正常注入（totalChars 2794）。
+
 ## 0.2.5 (2026-09-12) — 新增 novel_style 文笔六维基线（第 17 个工具）
 
 - **新增** `lib/style.js` 纯逻辑模块（零依赖、零模型调用）：六维测量——句法复杂度（小句/句）、修饰密度（X的/X地，排除「地铁/地方」等名词词素）、抽象度（抽象后缀词/千字）、动作密度（动词+动态助词/千字）、不确定性（模糊限制语/千字）、留白指数（省略号/破折号+未完句）。按章算 μ±σ 基线带，容差默认 1.5σ 相对占比（夹 10%~100%，单样本退化 35%）。
