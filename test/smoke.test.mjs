@@ -484,3 +484,22 @@ test('克隆回归：未批准细纲一并复制，新书 approve 不再 TypeErr
     const ra = await tool('novel_outline').execute({ action: 'approve', book: '拾骨记-塞北版', chapter: 9 }, exec);
     assert.equal(ra.approved, true, '克隆出的书必须能正常 approve（不再 TypeError）');
 });
+
+test('defineTool 垫片：顶层 render/presentationMeta 归位 output，渲染不再抛 userRender', async () => {
+    assert.equal(hasSdk, true, '缺宿主 SDK symlink：先 npm run setup-dev');
+    const { defineTool } = await import('../lib/tools/define-tool.js');
+    const t = defineTool({
+        name: 'shim_render_test',
+        description: '垫片归位自测',
+        parameters: {},
+        output: { schema: { type: 'object', additionalProperties: false, properties: {} } },
+        execute: async () => ({}),
+        // 刻意放在选项顶层——宿主只读 output.render，垫片必须把它们搬进去
+        render: (_a, v) => 'R:' + JSON.stringify(v),
+        presentationMeta: (_a, v) => ({ kind: 'x' }),
+    });
+    assert.equal(typeof t.output.render, 'function', '顶层 render 应被归位为 output.render');
+    assert.equal(typeof t.output.presentationMeta, 'function', '顶层 presentationMeta 应被归位为 output.presentationMeta');
+    assert.equal(t.output.render({}, {}), 'R:{}', '顶层 render 归位后调用不再抛 userRender is not a function');
+    assert.deepEqual(t.output.presentationMeta({}, {}), { kind: 'x' }, '顶层 presentationMeta 归位后可用');
+});
