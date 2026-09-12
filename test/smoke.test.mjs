@@ -118,14 +118,15 @@ const GOOD_CHAPTER = [
     '她忽然吹熄了灯。',
 ].join('\n');
 
-test('装载：16 个工具注册 + 系统提示注入', () => {
+test('装载：17 个工具注册 + 系统提示注入', () => {
     assert.equal(hasSdk, true, '缺宿主 SDK symlink：先 npm run setup-dev');
-    assert.equal(ctx._registered.length, 16);
+    assert.equal(ctx._registered.length, 17);
     assert.deepEqual(
         ctx._registered.map((t) => t.name),
         ['novel_project', 'novel_outline', 'novel_character', 'novel_worldbook', 'novel_briefing',
-         'novel_write_chapter', 'novel_ledger', 'novel_noai_scan', 'novel_audit', 'novel_propose',
-         'novel_import', 'novel_export', 'novel_glossary', 'novel_clone_project', 'novel_diagnose', 'novel_polish'],
+         'novel_write_chapter', 'novel_ledger', 'novel_noai_scan', 'novel_audit', 'novel_style',
+         'novel_propose', 'novel_import', 'novel_export', 'novel_glossary', 'novel_clone_project',
+         'novel_diagnose', 'novel_polish'],
     );
     assert.equal(ctx._sections.length, 1);
     assert.ok(ctx._sections[0].text.includes('代码强制') === false);

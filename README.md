@@ -32,13 +32,13 @@ dsh plugin --profile web add npm:dsh-novel-forge
 dsh plugin --profile web add github:<owner>/dsh-novel-forge
 ```
 
-安装后重启 DSH web 即生效：16 个 `novel_*` 工具进入工具目录，agent 预设「小说锻炉」
+安装后重启 DSH web 即生效：17 个 `novel_*` 工具进入工具目录，agent 预设「小说锻炉」
 自动部署到 `~/.dsh/.agent-presets/novel-forge/`（已存在则跳过，永不覆盖；
 `DSH_NOVEL_FORGE_REDEPLOY=1` 强制重铺，`DSH_NOVEL_FORGE_SKIP_DEPLOY=1` 关闭）。
 
 宿主版本要求与依赖面清单见 [COMPATIBILITY.md](./COMPATIBILITY.md)。
 
-## 16 个工具
+## 17 个工具
 
 | 工具 | 职责 | 硬约束 |
 | --- | --- | --- |
@@ -51,6 +51,7 @@ dsh plugin --profile web add github:<owner>/dsh-novel-forge
 | `novel_ledger` | 事实账本（含 note）+ 伏笔埋/收/改期 | 同章改值拒绝；章号超前拒绝；超期伏笔告警 |
 | `novel_noai_scan` | 六维去 AI 味扫描 | 纯本地零费用 |
 | `novel_audit` | 确定性章节审计 | 机审证据 |
+| `novel_style` | 文笔六维基线（句法/修饰/抽象/动作/不确定/留白，μ±σ 带）：build 建基线 / check 对照 | 纯本地零费用；只报数不贴标签 |
 | `novel_propose` | 提案 / 列表 / 应用 / 清理 | 旧版永不覆盖；prune 清已终态索引 |
 | `novel_import` | 本地书籍导入（preview/import/**backfill 门禁回补**） | 纯函数切分章节；建书+版本化落盘；回补粗纲让导入书回到门禁体系 |
 | `novel_export` | 导出整本（md/txt + stats） | 按版本顺序拼装，写 `导出/` |

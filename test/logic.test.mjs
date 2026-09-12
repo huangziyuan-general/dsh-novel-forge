@@ -14,6 +14,7 @@ import { roughOutline, splitIntoChapters, isChapterHeading } from '../lib/import
 import { diagnoseIntro, computeChapterDiagnosis } from '../lib/diagnose.js';
 import { parseFactLines, foreshadowView } from '../lib/tools/common.js';
 import { parseWorldbookImport } from '../lib/worldbook-io.js';
+import { splitSentences, measureStyleMetrics, computeBaseline, judgeAgainstBaseline } from '../lib/style.js';
 
 // ── versioning ──────────────────────────────────────────────────────────────
 
@@ -410,4 +411,69 @@ test('import: 中文数字章号（第十一起）也能切分', () => {
     assert.equal(cs.length, 3);
     assert.deepEqual(cs.map((c) => c.title), ['风起', '云动', '第3章']);
     assert.equal(cs[1].content, '乙正文。');
+});
+
+// ── style：文笔六维基线 ─────────────────────────────────────────────────────
+
+test('style: 切句——剥标题、吞引号、连续句末符不拆残片', () => {
+    const text = '# 第1章 测试\n\n她说："走吧。"\n\n太好了！！！他哭了。。。\n\n风停了。';
+    const ss = splitSentences(text);
+    // 句末闭合引号被剥掉
+    assert.equal(ss.some((s) => /[」』"]$/.test(s)), false);
+    assert.equal(ss.some((s) => s.includes('走吧')), true);
+    // 纯句末标点残片（！！！/。。。）被丢弃
+    assert.equal(ss.some((s) => /^[。！？!？]+$/.test(s)), false);
+    assert.equal(ss.includes('太好了！！！'), true);
+});
+
+test('style: 六维测量——动作章与心理章方向正确', () => {
+    const actionCh = '他推开门，拔出刀，砍翻了挡路的桌椅。她抓起包袱，拉着他冲出后门，跳上马背。他挥刀劈开铁锁，踹倒了追兵。';
+    const hedgingCh = '她似乎觉得一切仿佛都是一场梦，大概也许只有离开才是对的。他好像有些犹豫，似乎想起了什么，像是隐约看见了什么，或许那只是错觉。';
+    const a = measureStyleMetrics(actionCh);
+    const h = measureStyleMetrics(hedgingCh);
+    assert.ok(a.action > h.action, '动作章 action 应高于心理章');
+    assert.ok(h.hedging > a.hedging, '心理章 hedging 应高于动作章');
+    assert.ok(a.chars > 0 && a.sentences > 0);
+    // 密度维全部为每千字口径的非负数
+    for (const k of ['modifier', 'abstract', 'action', 'hedging', 'blank']) {
+        assert.ok(a[k] >= 0 && h[k] >= 0);
+    }
+});
+
+test('style: 修饰密度——「X地」排除名词词素', () => {
+    const withNounDi = measureStyleMetrics('他在地铁上看着地图，慢慢地走到了地方。');
+    const plain = measureStyleMetrics('他慢慢地走。');
+    // 名词「地铁/地图/地方」不计修饰；「慢慢地」计一次
+    assert.ok(withNounDi.chars > plain.chars);
+    assert.ok(plain.modifier > 0);
+});
+
+test('style: 基线计算——μ/σ/容差夹取', () => {
+    const mk = (v) => ({ chars: 1000, sentences: 10, syntax: 2, modifier: v, abstract: 1, action: 10, hedging: 1, blank: 1 });
+    const b = computeBaseline([mk(30), mk(40), mk(50)]);
+    assert.equal(b.chapters, 3);
+    assert.equal(b.dims.modifier.mu, 40);
+    assert.ok(b.dims.modifier.sigma > 0);
+    // 1.5σ/μ：总体 σ=√(200/3)≈8.16 → 8.16/40*150 ≈ 30.6 → 31
+    assert.equal(b.dims.modifier.tolerance, 31);
+    // 单样本无波动：σ=null，容差退化为 35
+    const single = computeBaseline([mk(30)]);
+    assert.equal(single.dims.modifier.sigma, null);
+    assert.equal(single.dims.modifier.tolerance, 35);
+});
+
+test('style: 对照判定——带内/出带与偏差方向', () => {
+    const mk = (v) => ({ chars: 1000, sentences: 10, syntax: 2, modifier: v, abstract: 1, action: 10, hedging: 1, blank: 1 });
+    const baseline = computeBaseline([mk(30), mk(40), mk(50)]);
+    const inBand = judgeAgainstBaseline(mk(42), baseline);
+    assert.equal(inBand.verdict, 'in_band');
+    assert.equal(inBand.inBand, true);
+    const drift = judgeAgainstBaseline(mk(90), baseline);
+    assert.ok(drift.outCount >= 1);
+    assert.equal(drift.deviations[0].dim, 'modifier');
+    assert.ok(drift.deviations[0].deviationPct > 0);
+    assert.equal(drift.verdict, 'minor_drift');
+    // 容差覆盖生效
+    const strict = judgeAgainstBaseline(mk(50), baseline, { modifier: 10 });
+    assert.equal(strict.dims.modifier.inBand, false);
 });
