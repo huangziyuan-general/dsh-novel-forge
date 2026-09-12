@@ -12,6 +12,11 @@
     "creative-writing"
   ],
   "license": "MIT",
+  "author": "huangziyuan-general",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/huangziyuan-general/dsh-novel-forge.git"
+  },
   "type": "module",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
