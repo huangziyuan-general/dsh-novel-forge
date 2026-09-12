@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0 (2026-09-12) — 浏览器 client-half（GUI）首块：右侧"锻炉"tab
+
+- **新增 `lib/client.js`**：dsh-novel-forge 第一个浏览器 client 模块，以 `__ModuleLoader__.load` 部署格式（对齐 dsh-client-ui-brand-official / sidebar-files），在右侧栏注册一个"锻炉" tab（面板 + chip 标题）作插件的常驻 UI 挂载点。v1 为静态识别面（插件名/版本/17 工具/双通道/规范三条），证明 client 挂载链路；数据面（书目/账本/风格基线…经 remote 拉取工具态）留到下一里程碑。
+- **package.json**：新增 `exports["./client"]` 与 `dsh.client { inject:["@deepseek-ai/dsh-client-ui-sidebar-right"], platform:"web" }`；版本 0.3.0。
+- **结构契约回归测试**：`smoke.test.mjs` 新增断言 package.json 的 `./client`/`dsh.client` 声明与 client.js 的 ModuleLoader 标记/load id/apply+inject 导出。62/62 全绿。
+- ⚠️ **验证依赖真机**：浏览器半无法在假 ctx 挂载验证。装进 live web profile 后需**重启 DSH web**，右侧栏应出现"🔨 锻炉" tab；结构契约测试守住了产物不漂移，但挂载效果需真机确认。（回滚：撤 dsh.client + exports["./client"] + 删 lib/client.js 即回到纯服务端。）
+
 ## 0.2.8 (2026-09-12) — 三项遗留加固
 
 - **MCP 后端符号链接逃逸修复**：`createNodeFsBackend` 的 containment 从词法 `path.relative` 升级为 **realpath 校验**——工作区内的软链指向区外时 stat/read/write 全部拒绝（`FS_SANDBOX_DENIED`）；root 本身是软链时统一到真实路径再比较；待创建新文件对最近存在祖先做 realpath 后拼回剩余段。0.2.6 记录的"低风险加固项"就此关闭。
