@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.4 (2026-09-12) — 垫片补全 presentationMeta 对称归位
+
+- **补齐**：`lib/tools/define-tool.js` 之前只把顶层 `render` 挪进 `output.render`，`presentationMeta` 仍会留在顶层被宿主忽略——注释/0.2.3 说明写的"render / presentationMeta 归位"名不符实。现对称处理：顶层 `render`/`presentationMeta` 都归位到 `output` 下（output 已有值不覆盖），注释与行为一致。当前无工具用 presentationMeta，故纯为消缺 + 消除误导。
+- 新增回归测试：顶层 render/presentationMeta 经垫片归位后，`t.output.render(...)` 不再抛 `userRender is not a function`，`presentationMeta` 同样可用（走真实宿主 SDK，48 测试全绿）。
+
 ## 0.2.3 (2026-09-12) — 真机冒烟修复：render 兼容 0.1.5-rc.1 宿主
 
 - **修复**：`defineTool` 选项顶层的 `render` 在 dsh 0.1.5-rc.1 宿主上全部失效——宿主只读 `options.output.render`，其渲染包装函数拿到 `undefined` 调用即抛 `output.render failed: userRender is not a function`，工具输出被判 INVALID_TOOL_OUTPUT（16 个工具全数命中）。新增 `lib/tools/define-tool.js` 兼容垫片（顶层 render / presentationMeta 归位到 output 下），6 个工具文件改走垫片导入。单测（假 fs）不走宿主渲染路径故未暴露，真机 headless one-shot 冒烟抓出。
