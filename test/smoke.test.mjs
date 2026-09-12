@@ -504,3 +504,18 @@ test('defineTool 垫片：顶层 render/presentationMeta 归位 output，渲染�
     assert.equal(t.output.render({}, {}), 'R:{}', '顶层 render 归位后调用不再抛 userRender is not a function');
     assert.deepEqual(t.output.presentationMeta({}, {}), { kind: 'x' }, '顶层 presentationMeta 归位后可用');
 });
+
+test('client 结构契约：package.json 声明 ./client + dsh.client，产物带 ModuleLoader 标记', () => {
+    // 浏览器半无法在假 ctx 挂载验证，这里只守结构契约不漂移：
+    // (1) exports["./client"] 指向已落盘的产物；(2) dsh.client 声明存在；
+    // (3) lib/client.js 以 __ModuleLoader__.load 开头、以 }); 收尾、load id 等于插件名。
+    const pkg = JSON.parse(fs.readFileSync('./package.json', 'utf8'));
+    assert.equal(pkg.exports['./client'], './lib/client.js', 'exports["./client"] 必须指向 lib/client.js');
+    assert.equal(pkg.dsh.client.platform, 'web', 'dsh.client 必须声明 platform=web');
+    assert.ok(Array.isArray(pkg.dsh.client.inject) && pkg.dsh.client.inject.length > 0, 'dsh.client.inject 必须非空');
+    const src = fs.readFileSync('./lib/client.js', 'utf8');
+    assert.match(src, /^window\.__ModuleLoader__\.load\(/, 'client.js 必须以 __ModuleLoader__.load( 开头');
+    assert.match(src, /id:\s*"dsh-novel-forge"/, 'client.js 的 load id 必须等于插件名');
+    assert.match(src, /exports\.apply\s*=\s*apply/, 'client.js 必须以 cordis 语义导出 apply');
+    assert.match(src, /exports\.inject\s*=\s*inject/, 'client.js 必须以 cordis 语义导出 inject');
+});
