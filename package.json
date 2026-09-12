@@ -1,6 +1,6 @@
 {
   "name": "dsh-novel-forge",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "DSH 小说锻炉：把 AI 长篇写作的通病变成代码强制的硬约束——事实账本、上下文包、阶段门禁、结构性去 AI 味扫描、确定性章节审计与修改提案制。Novel-writing plugin for DeepSeek Harness (DSH) that turns known AI-fiction failure modes into code-enforced guardrails.",
   "keywords": [
     "deepseek",

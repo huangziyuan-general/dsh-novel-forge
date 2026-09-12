@@ -41,6 +41,54 @@ test('standalone: 后端 containment——越界 resolve 拒绝', () => {
     );
 });
 
+test('standalone: 符号链接逃逸被拒（realpath containment）', async () => {
+    if (!hasSdk) return;
+    const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-link-'));
+    const outside = path.join(os.tmpdir(), `novel-forge-outside-${Date.now()}.txt`);
+    fs.writeFileSync(outside, 'secret');
+    const link = path.join(ws, 'leak.txt');
+    let symlinkOk = true;
+    try { fs.symlinkSync(outside, link); } catch { symlinkOk = false; } // 无软链权限的环境跳过
+    try {
+        if (symlinkOk) {
+            const backend = createNodeFsBackend(ws);
+            const target = { targetKey: link, displayPath: 'leak.txt' };
+            await assert.rejects(() => backend.writeText(target, 'x', undefined), (e) => e.code === 'FS_SANDBOX_DENIED');
+            await assert.rejects(() => backend.readText(target), (e) => e.code === 'FS_SANDBOX_DENIED');
+            await assert.rejects(() => backend.resolve(link, { cwd: ws }), (e) => e.code === 'FS_SANDBOX_DENIED');
+        }
+    } finally {
+        fs.rmSync(ws, { recursive: true, force: true });
+        fs.rmSync(outside, { force: true });
+    }
+});
+
+test('standalone: 输出经 validateJsonSchemaValue 校验，违规抛 INVALID_TOOL_OUTPUT', async () => {
+    if (!hasSdk) return;
+    const bad = {
+        name: '__contract_probe',
+        description: '契约探针（测试专用）',
+        parameters: {},
+        output: { schema: { type: 'object', additionalProperties: false, properties: {
+            s: { type: 'string', required: true },
+        } } },
+        execute: async () => ({ s: 123 }), // 类型违规
+    };
+    standalone.tools.push(bad);
+    try {
+        await assert.rejects(
+            () => standalone.call('__contract_probe', {}),
+            (e) => e.message.includes('INVALID_TOOL_OUTPUT'),
+        );
+    } finally {
+        const i = standalone.tools.indexOf(bad);
+        if (i !== -1) standalone.tools.splice(i, 1);
+    }
+    // 正常工具不受校验影响：真实返回应通过校验（违规时上一行约定已在 init 内抛出）
+    const ok = await standalone.call('novel_project', { action: 'init', book: '契约编', title: '契约编', genre: '测试', logline: '自验' });
+    assert.equal(ok.action, 'init');
+});
+
 test('standalone: 后端版本守卫——replaceIfVersion 冲突抛 FS_VERSION_CONFLICT', async () => {
     if (!hasSdk) return;
     const backend = createNodeFsBackend(root);
