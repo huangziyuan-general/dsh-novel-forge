@@ -14,7 +14,7 @@ import { roughOutline, splitIntoChapters, isChapterHeading } from '../lib/import
 import { diagnoseIntro, computeChapterDiagnosis } from '../lib/diagnose.js';
 import { parseFactLines, foreshadowView } from '../lib/tools/common.js';
 import { parseWorldbookImport } from '../lib/worldbook-io.js';
-import { splitSentences, measureStyleMetrics, computeBaseline, judgeAgainstBaseline } from '../lib/style.js';
+import { splitSentences, measureStyleMetrics, measureMood, computeBaseline, judgeAgainstBaseline } from '../lib/style.js';
 
 // ── versioning ──────────────────────────────────────────────────────────────
 
@@ -476,4 +476,13 @@ test('style: 对照判定——带内/出带与偏差方向', () => {
     // 容差覆盖生效
     const strict = judgeAgainstBaseline(mk(50), baseline, { modifier: 10 });
     assert.equal(strict.dims.modifier.inBand, false);
+});
+
+test('style: 氛围光谱——词表重复词不去重则悬疑轴双倍计分', () => {
+    // 998 个"天"字 + 一个"线索"：仅 1 次悬疑命中 → 每千字应为 1.0（若重复词双倍计分则为 2.0）
+    const text = '天'.repeat(996) + '线索';
+    const mood = measureMood(text);
+    assert.equal(mood.chars, 998);
+    assert.equal(mood.axes.mystery, 1.0, '悬疑轴只该计 1 次命中，重复词 "线索" 不得双倍计分');
+    assert.equal(mood.top[0], 'mystery');
 });
