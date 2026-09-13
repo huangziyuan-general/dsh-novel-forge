@@ -67,16 +67,22 @@ before(async () => {
 
     const registered = [];
     const sections = [];
+    const effects = [];
     ctx = {
         fs: backend,
         emit() {},
         logger: { info() {} },
         tools: { register: (t) => registered.push(t) },
         systemPrompt: { section: (s) => sections.push(s) },
+        inject: (deps, fn) => { fn(ctx); },
+        effect: (fn) => { effects.push(fn); fn(); },
+        webServer: { register: () => () => {} },
         _registered: registered,
         _sections: sections,
+        _effects: effects,
     };
-    exec = { signal: new AbortController().signal, agent: { session: { header: { cwd: root } } } };
+    // 会话身份：工具层用它做「书 → 会话」归属（面板按会话过滤项目列表）
+    exec = { signal: new AbortController().signal, agent: { session: { header: { cwd: root, id: 'sess-A' } } } };
 
     apply(ctx, {
         minChapterChars: 300,
@@ -131,6 +137,37 @@ test('装载：17 个工具注册 + 系统提示注入', () => {
     assert.equal(ctx._sections.length, 1);
     assert.ok(ctx._sections[0].text.includes('代码强制') === false);
     assert.ok(ctx._sections[0].text.includes('novel_briefing'));
+});
+
+test('★ 会话归属：init 写入创建会话；其他会话碰到也补录；老书自动认领', async () => {
+    assert.equal(hasSdk, true, '缺宿主 SDK symlink：先 npm run setup-dev');
+    const project = tool('novel_project');
+    const metaPath = path.join(root, '归属测试书', 'novel.json');
+
+    await project.execute({ action: 'init', book: '归属测试书', title: '归属测试书' }, exec);
+    let meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    assert.deepEqual(meta.sessions, ['sess-A'],
+        '★ init 必须把创建会话写进 sessions —— 这是面板「项目跟会话走」的全部依据');
+
+    // 另一个会话对这本书做只读动作 → 归属集追加（否则在那边写章、面板里却看不见书）
+    const execB = { signal: new AbortController().signal, agent: { session: { header: { cwd: root, id: 'sess-B' } } } };
+    await project.execute({ action: 'status', book: '归属测试书' }, execB);
+    meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    assert.deepEqual(meta.sessions, ['sess-A', 'sess-B'], '★ 用过工具的会话也要归属（有去无回才是 bug）');
+
+    // 0.5.0 之前建的老书：没有 sessions 字段 → 被工具碰到即补录，否则从此在面板里消失
+    fs.mkdirSync(path.join(root, '老书'), { recursive: true });
+    fs.writeFileSync(path.join(root, '老书', 'novel.json'),
+        JSON.stringify({ title: '老书', stage: 'planning', chapters: {} }, null, 2));
+    await project.execute({ action: 'status', book: '老书' }, exec);
+    const legacy = JSON.parse(fs.readFileSync(path.join(root, '老书', 'novel.json'), 'utf8'));
+    assert.deepEqual(legacy.sessions, ['sess-A'], '★ 老书被工具碰到要自动补录会话戳');
+
+    // 拿不到会话 id（headless 等）不得乱写
+    const execNoSession = { signal: new AbortController().signal, agent: { session: { header: { cwd: root } } } };
+    await project.execute({ action: 'init', book: '无会话书', title: '无会话书' }, execNoSession);
+    const noSession = JSON.parse(fs.readFileSync(path.join(root, '无会话书', 'novel.json'), 'utf8'));
+    assert.deepEqual(noSession.sessions, [], '没有会话 id 时不能凭空造归属');
 });
 
 test('链路：init → 大纲 → 人物 → 世界书 → 细纲批准', async () => {
@@ -521,8 +558,15 @@ test('client 结构契约：package.json 声明 ./client + dsh.client，产物�
     assert.ok(inject === undefined || (Array.isArray(inject) && inject.every((x) => isPeer(x) || fs.existsSync(path.join('./node_modules', x)))),
         'dsh.client.inject 只能声明本地可达包或 @deepseek-ai/* 宿主 peer 包，或省略');
     const src = fs.readFileSync('./lib/client.js', 'utf8');
-    assert.match(src, /^window\.__ModuleLoader__\.load\(/, 'client.js 必须以 __ModuleLoader__.load( 开头');
+    // 产物由 scripts/build-client.mjs 从 src/client/ 生成：头部带 generated 标记。
+    // 缺这个标记 = 有人直接改了产物，构建链已被绕过（源码与产物脱钩）。
+    assert.match(src, /^\/\/ ⚠️ 自动生成/, 'client.js 必须带 generated 头（证明来自 npm run build，而非手写）');
+    assert.match(src, /window\.__ModuleLoader__\.load\(/, 'client.js 必须调用 __ModuleLoader__.load');
     assert.match(src, /id:\s*"dsh-novel-forge"/, 'client.js 的 load id 必须等于插件名');
-    assert.match(src, /exports\.apply\s*=\s*apply/, 'client.js 必须以 cordis 语义导出 apply');
-    assert.match(src, /exports\.inject\s*=\s*inject/, 'client.js 必须以 cordis 语义导出 inject');
+    // 导出改由 esbuild 的 CJS 装配交回（module.exports = __toCommonJS(index_exports)），
+    // 不再有手写的 `exports.apply = apply` —— 断言导出**表内容**，不绑死语句形态。
+    assert.match(src, /module\.exports\s*=\s*__toCommonJS\(index_exports\)/, 'client.js 必须以 CJS 语义交回导出表');
+    assert.match(src, /apply:\s*\(\)\s*=>\s*apply/, '导出表必须含 apply');
+    assert.match(src, /inject:\s*\(\)\s*=>\s*inject/, '导出表必须含 inject');
+    assert.ok(!/^\s*(import|export)\s/m.test(src), '产物不得含 ESM 语法——dsh 按经典脚本执行，混入 import/export 会整包 syntax error');
 });

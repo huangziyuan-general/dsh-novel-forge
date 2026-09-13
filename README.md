@@ -127,36 +127,71 @@ Claude Desktop / Cursor 等任意 MCP 客户端——工作区根取 `NOVEL_FORG
 零依赖实现（原生 JSON-RPC 2.0 over stdio）；宿主外的 fs 后端带同样的
 containment 与版本守卫语义。锚段写作与氛围光谱均为纯本地计算。
 
-## 右侧栏「🔨 锻炉」tab（浏览器半）
+## 右侧栏「锻炉」面板（浏览器半）
 
-插件的常驻 UI 挂载点，代码在 `lib/client.js`（手写 `__ModuleLoader__.load` 格式，**无需构建链**）。
+浏览器半的源码在 `src/client/`（ESM，按职责拆分），**发布物**是构建产物 `lib/client.js`
+（经典脚本 + `__ModuleLoader__.load({ id, factory })`）。dsh 只读 `exports["./client"]`，
+所以**改完 `src/client/` 必须 `npm run build`**（`npm test` 会自动先跑构建）。
 
-**三步注册契约**（缺第三步，前两步全白做——右侧栏一格都不会多）：
+### 入口：右侧栏 tab 的「三步契约」
 
-| 步 | API | 作用 |
+0.5.0 起入口回到**官方右侧栏**，不再往左侧栏注入 DOM：
+
+| 步 | API | 缺了会怎样 |
 | --- | --- | --- |
-| ① | `ctx.sidebarRightTabs.register({ id, kind, title, guide })` | 声明 tab **类型**（本身不产生 tab） |
-| ② | `ctx.slots.register({ name: "sidebar.right.pane.tab", key: <id>, inject }, Panel)` + `…pane.tab.title` | 注册面板与 chip 标题 |
-| ③ | `ctx.sidebarRight.openTab(kind)` | **真正打开**（缺这步类型注册得再对也不出现） |
+| ① 声明类型 | `ctx.sidebarRightTabs.register({ id, kind, title, guide })` | 没有类型可引用 |
+| ② 注册内容 | `ctx.slots.register({ name: 'sidebar.right.pane.tab', key: <id> }, Panel)` | 有格子、内容空白 |
+| ③ 打开 tab | `ctx.sidebarRight.openTab(<kind>)` | **前两步全白做 —— 一格都不多，也不报任何错** |
 
-`guide` 条目落在右侧栏常驻 guide 页，是跨 session 都能点开的保底入口。
-第 ③ 步有**时序陷阱**：seat 挂载前 `openTab` 直接抛（引擎设计：没有 session 可操作时宁可报错），
-故按 250ms 节拍重试（上限 ~30s）、开成即停。
+`openTab` 在 seat 挂载前调用会直接抛错（引擎有意设计），所以走「延迟 400ms + 每 250ms 重试、
+窗口 30 秒」；`guide` 里留了入口胶囊 —— 自动打开失败或被用户关掉时，从右侧栏 guide 页手动进。
 
-**数据通道**：面板注册的 `inject: (sessionId, actions) => …` 交出会话 id，
-数据经 `ctx.remote.workspaceFiles` 读工作区文件
-（`read` / `stat` / `list` / `changes`，签名 `(sessionId, path, …)`）。
-域是「按 Client assembly 装配」的，故面板带一张**运行时探测卡**显示实际可用域——
-不猜、不写不可验证的死代码。
+### 显示时机：本会话有项目才出现
 
-**改了 `client.js` 必须重启 DSH web**（client 图在 web 进程内缓存），随后浏览器硬刷新。
-排障看 console 的 `[dsh-novel-forge]` 前缀日志。
+- 当前会话 id 从 `ctx.sessions.list`（`ObservableSnapshot<SessionListState>.current`）读，不猜 URL、不抠 DOM；
+- **本会话有项目才自动打开** tab —— 没写过小说的会话不打扰；
+- 书是会话里的 AI 调工具建的，客户端收不到通知 → 会话切换时查一次 + 未打开时每 8 秒轮询一次；
+  一旦为某个会话开过就不再重复（关掉是用户的自由，不跟用户抢）。
+
+### 项目跟会话走
+
+`novel.json.sessions` 记录「拥有这本书的会话」：`novel_project init` / `novel_import` /
+`novel_clone_project` 创建时写下创建会话；其它工具碰到这本书时自动补录当前会话（旧书因此自动认领）。
+面板的列表/创建/认领请求一律带 `session`，服务端按它过滤：
+
+- `GET /projects?session=<id>` —— 本会话的书（面板列表）
+- `GET /projects?scope=unclaimed` —— 0.5.0 之前建的书（无会话戳），面板底部给「认领」入口
+- `POST /projects/claim` —— 把未归属的书认领到本会话
+
+### 宿主模块表契约（踩过的大坑）
+
+dsh 的 client 运行时**播种**一批模块，插件只能从这里取（构建时一律 `external`，不重复打包）：
+
+| 模块 | 说明 |
+| --- | --- |
+| `react` | `createElement` / `Component` / `Fragment` / hooks —— **没有 `createRoot`** |
+| `react-dom/client` | `createRoot` 的唯一来源（0.4.x 自建 root 时踩过，见下） |
+| `cordis` | 上下文与 `ctx.effect`（回调**立刻执行**，其返回值登记为清理函数） |
+
+0.4.x 的面板是**自建 root 的全屏抽屉**，那时把 `createRoot` 取成了 `react.createRoot`（`undefined`），
+真机症状极具迷惑性：**点一次没反应、再点一次整屏空白** —— 首次抛错、容器留在 `display:none`；
+第二次只切了 `display`，露出空的 fixed 全屏层。现在面板交给右侧栏 slot 框架渲染
+（我们只返回 element，不自己 createRoot），这条坑从根上消失；历史留在这儿，别再走回去。
+
+**数据通道**：面板走本插件自己的 REST `/api/novel-forge/*`，每个请求带 `x-dsh-novel-forge`
+fence 头（服务端缺头即 403）。视图只读 `state`，交互统一走 `data-action` + 容器级原生点击代理
+（宿主里 React 合成事件不可靠）。
+
+**改了 `lib/client.js` 必须重启 DSH web**（client bundle 在进程启动时快照、已公告响应不可变），
+随后浏览器硬刷新。排障看 console 的 `[novel-forge]` 前缀日志（`client apply v…` / `已打开右侧栏 tab`）；
+自动打开没生效时可从右侧栏 guide 页进，或在 console 敲 `window.__novelForge.open()`。
 
 ## 开发与测试
 
 ```bash
 npm run setup-dev   # 把 DSH checkout 的宿主 SDK 真包 symlink 进本地 node_modules
-npm test            # node --test：68 个用例（纯逻辑单测 + 假 fs 全链路冒烟 + 真校验器输出契约 + headless client 契约）
+npm run build       # src/client/ → lib/client.js（改客户端源码后必须跑；npm test 会自动跑）
+npm test            # node --test：94 个用例（纯逻辑单测 + 假 fs 全链路冒烟 + 真校验器输出契约 + headless 行为测试）
 node scripts/demo.mjs   # 端到端演示：init→细纲→写章→账本→扫描→提案 全流程
 ```
 
@@ -167,7 +202,8 @@ node scripts/demo.mjs   # 端到端演示：init→细纲→写章→账本→�
 
 - 去 AI 味词库与阈值是**启发式**，只能抓显性病，不承诺"根治"——结构性指标（节奏方差/信息稀释）是它比纯词库强的地方。
 - 审稿的"模型审"部分不内置（工具不调模型）：`novel_audit` 产出证据，审稿在会话里进行；独立审稿模型路由留给 v0.2。
-- **GUI 工作台进行中**：右侧栏「🔨 锻炉」tab 已挂载（0.3.3 打通三步注册契约），
-  0.3.4 接上 `ctx.remote` 并加了运行时探测卡。面板**尚未渲染书目/账本**——数据面在 v0.4 落地；
-  在此之前提案可视化仍走对话 + diff 文件。
+- **GUI 工作台已可用**（0.5.0）：右侧栏「锻炉」tab —— 本会话有项目时自动出现，含项目列表 /
+  项目详情（读章 · 保存 · 导出 · 诊断）/ 世界书 CRUD / 设置。写操作走 `/api/novel-forge` REST。
+  列表按**会话**过滤（项目跟会话走）；0.5.0 之前建的老书可从面板底部「认领」到当前会话。
+  **「一键写章 / 润色 / 诊断」需要模型参与**，面板只给引导 —— 真动作在会话里由 `novel_*` 工具完成。
 - 跨章重复检测是滑动窗口（默认前 10 章，`repetitionWindow` 可调）——超出窗口的复读抓不到；世界书递归激活限 2 轮。

@@ -1,463 +1,359 @@
-// test/client.test.mjs — 浏览器 client-half 的 headless 注册契约测试。
+// test/client.test.mjs — 浏览器 client-half 的**行为**测试（不是字符串断言）。
 //
-// 背景：浏览器半无法在假 ctx 里做完整 React 挂载，此前只能守 package.json 结构。
-// 这里更进一步：用 node:vm 以 __ModuleLoader__ 的真实语义加载 lib/client.js，
-// 物化出 { inject, apply }，再用一个 slots/effect stub 跑 apply(ctx)，
-// 断言它按正确的 API 形状走完**右侧栏 tab 的三步**：
-//   ① sidebarRightTabs.register（声明 tab 类型）
-//   ② slots.inject × 2（面板 + chip 标题两个 seat）
-//   ③ sidebarRight.openTab（真正打开 tab —— 缺这步类型注册得再对右侧栏也不会多出一格）
-// 另附 guide 条目与"seat 未挂载 → 重试 → 挂载后打开成功"的时序断言。
-// 这样即便没有浏览器，也能确定性验证 client 产物 load 不炸、注册调用正确。
-
+// 为什么这么写：0.4.0 用 `code.includes('mountSidebarEntry')` 守着入口，
+// 于是「插一次就被 React 冲掉、之后永不自愈」这个真 bug 一路 77/77 全绿、
+// 真机锻炉整个消失。现在真跑 apply()，断言**实际注册了什么、实际打了哪些请求**。
+//
+// 0.5.0 换了入口路线（左侧栏 DOM 注入 → 右侧栏 tab 三步契约）+ 会话语义
+// （项目跟会话走），本文件围绕这两件事重建：
+//   ① 三步契约：sidebarRightTabs.register / slots.register(pane.tab) / openTab
+//   ② 显示时机：**本会话有项目才自动开 tab**，不重复打扰，会话切换重新判断
+//   ③ 会话过滤：面板的请求必须带 session；创建/认领必须写会话戳
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import vm from 'node:vm';
+import { createDom, loadClient, makeCtx } from './helpers/dom.mjs';
 
-/**
- * 用 __ModuleLoader__ 语义执行 lib/client.js，返回物化的模块 exports 与定时器账本。
- *
- * sandbox 里补 setTimeout/clearTimeout/console：client bundle 用全局定时器排重试，
- * 这是平台惯例（官方 dsh-client-ui-sidebar-documentpreview 的 client bundle 里
- * 有 20+ 处 setTimeout）。这里换成**受控假定时器**——只记账不真跑，测试手动触发，
- * 于是重试时序可确定性断言，不引真实等待、不 flake。
- */
-function loadClientBundle() {
-    const code = fs.readFileSync('./lib/client.js', 'utf8');
-    let registration;
-    const timers = [];
-    const sandbox = {
-        window: {
-            __ModuleLoader__: {
-                load: (reg) => { registration = reg; },
-            },
-        },
-        setTimeout: (fn, ms) => { timers.push({ fn, ms, cancelled: false }); return timers.length; },
-        clearTimeout: (id) => { const t = timers[id - 1]; if (t) t.cancelled = true; },
-        console: { info: () => {}, warn: () => {}, log: () => {} },
-    };
-    const ctx = vm.createContext(sandbox);
-    vm.runInContext(code, ctx); // 触发 window.__ModuleLoader__.load({ id, factory })
-    assert.ok(registration, 'client.js 必须调用 __ModuleLoader__.load');
-    assert.equal(registration.id, 'dsh-novel-forge', 'load id 必须等于插件名');
-    const require = (spec) => {
-        // client.js 只依赖 react；注册路径不触碰组件，stub 即可。若未来引入更多外部
-        // 模块（未声明进包、又非平台种子词）会在此暴露，恰好就是我们要防的漂移。
-        if (spec === 'react' || spec === 'react/jsx-runtime') return {};
-        throw new Error(`headless 未提供模块 "${spec}"`);
-    };
-    return { exports: registration.factory(require), timers };
+const BUNDLE = new URL('../lib/client.js', import.meta.url);
+const TAB_ID = 'dsh-novel-forge';
+const TAB_KIND = 'novel-forge';
+
+/** 装一次 client bundle + 一个 ctx，并跑 apply()。 */
+function boot(ctxOpts = {}, clientOpts = {}) {
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, clientOpts);
+    const harness = makeCtx(ctxOpts);
+    mod.exports.apply(harness.ctx);
+    return { dom, mod, ...harness };
 }
 
-/** 记录注册调用的 slots/effect stub（对齐 cordis ctx 的 apply 姿势）。 */
-function makeCtxStub({ seatMounted = false } = {}) {
-    const injected = [];
-    const registered = [];
-    const tabTypes = [];
-    const opened = [];
-    const openFailures = [];
-    const state = { seatMounted };
-    const ctx = {
-        slots: {
-            inject: (name, fn) => { injected.push({ name, fn }); return fn; },
-            register: (meta, comp) => { registered.push({ meta, comp }); },
-        },
-        sidebarRightTabs: { register: (def) => { tabTypes.push(def); return () => {}; } },
-        sidebarRight: {
-            // 真实语义：seat 未挂载时 openTab 直接抛（没有 session 可操作，宁可报错也不静默写）
-            openTab: (kind) => {
-                if (!state.seatMounted) { openFailures.push(kind); throw new Error('no mounted seat for session'); }
-                opened.push(kind);
-            },
-        },
-        effect: (fn) => fn(),
+/** 造一个 fetch：按调用序号返回不同 value，并记录请求。 */
+function scriptedFetch(sequence) {
+    const requests = [];
+    let i = 0;
+    const fetch = (url, init) => {
+        requests.push({ url: String(url), init });
+        const step = sequence[Math.min(i, sequence.length - 1)];
+        i += 1;
+        if (step && step.reject) return Promise.reject(new Error(step.reject));
+        return Promise.resolve({ json: () => Promise.resolve({ ok: true, value: step && 'value' in step ? step.value : [] }) });
     };
-    return { ctx, injected, registered, tabTypes, opened, openFailures, mountSeat: () => { state.seatMounted = true; } };
+    return { fetch, requests };
 }
 
-test('client headless: 通过 __ModuleLoader__ 语义加载，inject 声明 slots + sidebarRightTabs + sidebarRight + remote + remote.workspaceFiles', () => {
-    const { exports } = loadClientBundle();
-    // 注意：exports.inject 是 vm realm 里建的数组，原型不同于 node，需 Array.from 拉回
-    assert.deepEqual(Array.from(exports.inject).sort(),
-        ['remote', 'remote.workspaceFiles', 'sidebarRight', 'sidebarRightTabs', 'slots'],
-        '模块必须声明 inject=["slots","sidebarRightTabs","sidebarRight","remote","remote.workspaceFiles"]'
-        + '（打开 tab 要导航面；数据面要 remote + 其 workspaceFiles 子域显式声明）');
-    assert.equal(typeof exports.apply, 'function', '模块必须导出 apply(ctx)');
+// ── 加载与模块表 ──
+
+test('加载契约：__ModuleLoader__ id 与包名一致，导出 { inject, apply }', () => {
+    const { mod } = boot();
+    assert.equal(mod.id, 'dsh-novel-forge', 'load id 必须等于插件名');
+    assert.equal(typeof mod.exports.apply, 'function', '必须导出 apply(ctx)');
+    assert.deepEqual(Array.from(mod.exports.inject),
+        ['slots', 'sidebarRightTabs', 'sidebarRight', 'sessions'],
+        '右侧栏三步契约需要 slots / sidebarRightTabs / sidebarRight，会话过滤需要 sessions');
 });
 
-test('client headless: apply() 先注册 tab 类型（含 guide 入口），再注册面板与标题 seat（id/key 同源）', () => {
-    const { exports } = loadClientBundle();
-    const { ctx, injected, registered, tabTypes } = makeCtxStub();
-    exports.apply(ctx);
-    // ① 必须注册右侧栏 tab 类型（没有它就不会有 tab 入口）
-    assert.equal(tabTypes.length, 1, 'apply() 必须调用 sidebarRightTabs.register 恰好一次');
-    const def = tabTypes[0];
-    assert.equal(def.id, 'novel-forge', 'tab 类型 id 必须为 novel-forge');
-    assert.equal(def.kind, 'novel-forge', 'tab 类型 kind 必须唯一且稳定');
-    assert.equal(typeof def.title, 'function', 'tab 类型必须带 title()');
-    assert.equal(def.title(), '锻炉', 'tab 标题必须为 锻炉');
-    // ①b page type：不声明 patterns（页面由 kind 打开，不认领地址）
-    assert.equal(def.patterns, undefined, 'page 类型不应声明 patterns');
-    // ①c guide 条目：右侧栏 guide 页的常驻入口（任何 session 都能从这里点开）
-    assert.ok(Array.isArray(def.guide) && def.guide.length === 1, 'tab 类型必须带 1 个 guide 条目');
-    const entry = def.guide[0];
-    assert.equal(typeof entry.order, 'number', 'guide 条目必须带数字 order');
-    assert.equal(typeof entry.title, 'function', 'guide 条目 title 必须是 thunk');
-    assert.ok(entry.title().includes('锻炉'), 'guide 条目 title 必须点出锻炉');
-    // ② 两个必须出现的槽位注入点
-    const names = injected.map((i) => i.name).sort();
-    assert.deepEqual(names, ['sidebar.right.pane.tab', 'sidebar.right.pane.tab.title'],
-        'apply() 必须注入 tab 面板与 tab 标题两个槽位点',
-    );
-    // ③ 每个槽位注入的回调，执行时恰好触发一次 slots.register，name 同名、key 同 tab id
-    for (const { name, fn } of injected) {
-        const before = registered.length;
-        fn(); // 触发注入回调 → 内部调用 ctx.slots.register
-        const added = registered.slice(before);
-        assert.equal(added.length, 1, `槽位 ${name} 应产出恰好一次 register`);
-        assert.equal(added[0].meta.name, name, `register 元数据 name 必须等于槽位 ${name}`);
-        assert.equal(added[0].meta.key, 'novel-forge', 'register 的 key 必须与 tab 类型 id 一致（sidebarRightTabs 按 id 派发）');
-        assert.equal(typeof added[0].comp, 'function', 'register 必须带一个组件');
+test('模块取用：只向宿主播种的模块表要东西（不得 require 表外模块）', () => {
+    const { mod } = boot();
+    const allowed = new Set(['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', 'cordis']);
+    for (const spec of mod.required) {
+        assert.ok(allowed.has(spec), `★ 不得不经宿主模块表直接 require("${spec}")`);
     }
 });
 
-test('client headless: 第三步 openTab —— seat 未挂载时重试，挂载后打开「锻炉」tab', () => {
-    const { exports, timers } = loadClientBundle();
-    const stub = makeCtxStub({ seatMounted: false });
-    exports.apply(stub.ctx);
-
-    // ③a apply() 必须排一个延迟尝试（此刻 seat 还没挂载，不能当场 open）
-    assert.equal(timers.length, 1, 'apply() 应排 1 个启动延迟，而不是立刻 openTab');
-    assert.equal(stub.opened.length, 0, 'apply() 当场不应打开 tab');
-    assert.equal(typeof timers[0].fn, 'function', '启动延迟必须带回调');
-
-    // ③b seat 未挂载：触发 → 抛 → 再排下一次重试
-    timers[0].fn();
-    assert.deepEqual(stub.openFailures, ['novel-forge'], 'seat 未挂载时 openTab 应以 kind 调用并失败');
-    assert.equal(stub.opened.length, 0, '失败后不应记为已打开');
-    assert.equal(timers.length, 2, '失败后必须排下一次重试');
-
-    // ③c seat 挂载后：触发 → 打开成功，且不再排重试（开成即停，不打扰用户手动关闭）
-    stub.mountSeat();
-    timers[1].fn();
-    assert.deepEqual(stub.opened, ['novel-forge'], 'seat 挂载后必须成功打开 novel-forge tab');
-    assert.equal(timers.length, 2, '打开成功后不应再排重试');
-
-    // ③d 已打开后再触发遗留定时器，不应重复打开
-    timers[1].fn();
-    assert.equal(stub.opened.length, 1, '已打开后不应重复打开');
+test('★ 不再自建全屏层：apply() 不往 document.body 挂任何容器', () => {
+    const { dom } = boot();
+    assert.equal(dom.body.children.length, 0,
+        '★ 0.5.0 起面板由右侧栏 slot 框架渲染，不应再出现自建的全屏遮罩（那是「空白页」的来源）');
 });
 
-test('client headless: 面板注册带 inject 工厂，向组件注入 sessionId（数据面定位工作区的官方姿势）', () => {
-    const { exports } = loadClientBundle();
-    const { ctx, injected, registered } = makeCtxStub();
-    exports.apply(ctx);
-    for (const { fn } of injected) fn();
+// ── ① 声明 tab 类型 ──
 
-    const pane = registered.find((r) => r.meta.name === 'sidebar.right.pane.tab');
-    assert.ok(pane, '必须注册 tab 面板');
-    assert.equal(typeof pane.meta.inject, 'function',
-        '面板注册必须带 inject 工厂 —— 这是拿到 sessionId 的唯一官方姿势（对齐 dsh-client-ui-sidebar-documentpreview）');
-
-    const props = pane.meta.inject('sess-42', { open() {} });
-    assert.equal(props.sessionId, 'sess-42', 'inject 工厂必须把 sessionId 交给组件（数据面靠它定位工作区）');
-    assert.ok('actions' in props, 'inject 工厂必须回传 actions，供面板触发导航动作');
-
-    const title = registered.find((r) => r.meta.name === 'sidebar.right.pane.tab.title');
-    assert.equal(title.meta.inject, undefined, 'chip 标题不需要会话上下文，不应挂 inject 工厂');
+test('① 声明 tab 类型：register 收到 page type（id / kind / 常量标题 / guide 入口）', () => {
+    const { registered } = boot();
+    assert.equal(registered.tabs.length, 1, '应当只注册一个 tab 类型');
+    const def = registered.tabs[0];
+    assert.equal(def.id, TAB_ID, 'definition.id 必须等于包名（它是内容 seat 的 key）');
+    assert.equal(def.kind, TAB_KIND, 'kind 是 openTab 点名的判别符');
+    assert.equal(def.priority, 'extension', '第三方类型默认 extension 档');
+    assert.equal(def.patterns, undefined, '不给 patterns ⇒ page type（由 kind 打开，不认领地址）');
+    assert.equal(typeof def.title, 'function', 'title 必须是函数（thunked copy）');
+    // page type 的 title 由 pageAddress(kind) = `sidebar://<kind>` 调用；我们返回常量
+    assert.match(def.title('sidebar://' + TAB_KIND), /锻炉/, 'tab chip 必须有可见文案');
+    assert.ok(Array.isArray(def.guide) && def.guide.length > 0, '★ 必须有 guide 入口胶囊（自动打开失败时的保底通道）');
+    assert.equal(typeof def.guide[0].title, 'function');
+    assert.equal(typeof def.guide[0].description, 'function');
 });
 
-test('client headless: 面板版本号与 package.json 同步（防版本漂移）', () => {
-    const { exports } = loadClientBundle();
-    const pkg = JSON.parse(fs.readFileSync('./package.json', 'utf8'));
-    assert.equal(exports.__internals.PLUGIN_VERSION, pkg.version,
-        'client.js 的 PLUGIN_VERSION 必须等于 package.json 的 version —— '
-        + '面板写死旧版本号是真实发生过的漂移（0.3.0 硬编码一路挂到 0.3.3），这条断言就是防线');
+// ── ② 注册内容 seat ──
+
+test('② 注册内容 seat：key 用 definition.id，且 inject 工厂能拿到 sessionId', () => {
+    const { registered, mod } = boot();
+    const seat = registered.slots.find((s) => s.spec.name === 'sidebar.right.pane.tab');
+    assert.ok(seat, '必须注册 sidebar.right.pane.tab（只声明类型 = 有格子没内容）');
+    assert.equal(seat.spec.key, TAB_ID, '内容 seat 的 key 用 definition 的 id（不是 kind）');
+    assert.equal(typeof seat.spec.inject, 'function', '★ 必须有 inject 工厂 —— sessionId 只有它能给');
+    // 注意：inject 的返回值来自 vm 沙箱（另一个 realm），断言属性而不是 deepEqual
+    //（跨 realm 的 Object.prototype 不同，strict deepEqual 会误判为不相等）
+    assert.equal(seat.spec.inject('session-abc').sessionId, 'session-abc',
+        'inject 工厂必须把 sessionId 交给面板（「项目跟会话走」的全部依据）');
+    assert.equal(seat.component, mod.exports.__internals.ForgePanel, '内容必须是面板组件');
 });
 
-test('client headless: probeRemote —— 域清单 / $host / list 形态降级 / 错误聚合', async () => {
-    const { exports } = loadClientBundle();
-    const probe = exports.__internals.probeRemote;
+// ── ③ 打开时机：有项目才显示 ──
 
-    // a) ctx.remote 缺席（inject 未生效）→ 给出可读 fatal，绝不抛
-    const noRemote = await probe(null, 's1');
-    assert.ok(noRemote.fatal && noRemote.fatal.includes('ctx.remote'), 'remote 缺席必须给出可读 fatal');
+// ── ③ 打开：锻炉是右侧栏常驻的独立 tab ──
 
-    // b) remote 在但没有 workspaceFiles 域 → 明确报出来
-    const noWf = await probe({}, 's1');
-    assert.ok(noWf.rootError && noWf.rootError.includes('workspaceFiles'), '缺 workspaceFiles 域必须报出');
-
-    // c) 有 workspaceFiles 但没有 sessionId → 不猜路径，直接报无法定位
-    const noSession = await probe({ workspaceFiles: {} }, null);
-    assert.ok(noSession.rootError && noSession.rootError.includes('sessionId'), '无 sessionId 必须明确报出');
-
-    // d) 域清单滤掉 $ 开头的内部成员，$host 事实带出
-    //    注意：返回值是 vm realm 里造的对象，原型与 node realm 不同，需先拉回再严格比较。
-    const named = await probe({ $host: { home: '/h', isLoopback: true }, workspaceFiles: {} }, 's1');
-    assert.deepEqual(Array.from(named.domains), ['workspaceFiles'], '域清单必须滤掉 $ 前缀的内部成员（$host/$stream/$mount/$on）');
-    assert.deepEqual({ ...named.host }, { home: '/h', isLoopback: true }, '$host 的 home / isLoopback 必须带出');
-
-    // e) list 的真实契约（@deepseek-ai/dsh-api-workspace-files）：
-    //    list(sessionId, path, signal?) —— path 必填非空，**且只能列会话工作区内的路径**。
-    //    根路径只能用工作区相对根 "."；绝不能用 $host.home —— home 是 Host 机器家目录，
-    //    通常正是工作区根的父目录，Host 会以 workspace-file/outside-workspace 拒绝。
-    const calls = [];
-    const wfReal = {
-        list: (...args) => {
-            calls.push(args);
-            if (args[1] === '.') {
-                return Promise.resolve({ ok: true, value: { path: '', entries: [{ name: '星海拾骨', type: 'directory' }], truncated: false } });
-            }
-            // 真实 Host 对工作区外路径的答复
-            return Promise.resolve({ ok: false, error: { code: 'workspace-file/outside-workspace', message: `"${args[1]}" is outside the workspace` } });
-        },
-    };
-    const gotRoot = await probe({ $host: { home: '/Users/someone', isLoopback: false }, workspaceFiles: wfReal }, 's1');
-    assert.ok(gotRoot.rootEntries, '工作区相对根 "." 必须列出成功');
-    assert.equal(calls[0][1], '.', '第一个尝试必须是工作区相对根 "."，而不是 $host.home');
-    assert.ok(gotRoot.rootEntries.via.includes('"."'), '必须记下命中的调用形态，便于后续收敛');
-    assert.equal(gotRoot.rootEntries.listing.entries[0].name, '星海拾骨', '根目录应列出书目目录');
-
-    // e2) 回归防线：把 $host.home 当 list 根必然被 Host 拒绝——v0.3.4~0.3.6 接真实
-    //     环境 100% 失败的真因；本地 mock 里 home 恰好等于工作区根才导致"全绿但接不上"。
-    const homeCalls = [];
-    const wfHomeOnly = {
-        list: (...args) => {
-            homeCalls.push(args);
-            return Promise.resolve({ ok: false, error: { code: 'workspace-file/outside-workspace', message: `"${args[1]}" is outside the workspace` } });
-        },
-    };
-    const homeProbe = await probe({ $host: { home: '/Users/someone', isLoopback: false }, workspaceFiles: wfHomeOnly }, 's1');
-    assert.equal(homeProbe.rootEntries, null, 'home 作根必失败，不得伪造目录');
-    assert.ok(!homeCalls.some((a) => a[1] === '/Users/someone'), '不得再把 $host.home 当作 list 根路径');
-
-    // f) 形态全失败 → 不伪造数据，错误里带原始错误码（诊断价值）
-    const allFail = await probe({
-        workspaceFiles: { list: () => Promise.resolve({ ok: false, error: { code: 'gateway/internal', message: 'boom' } }) },
-    }, 's1');
-    assert.equal(allFail.rootEntries, null, '全失败时不得伪造目录');
-    assert.ok(allFail.rootError.includes('gateway/internal'), '错误必须原样带回错误码');
-    assert.ok(allFail.rootError.includes('工作区'), '错误必须点明工作区边界这一约束');
-
-    // g) list 直接抛异常也要被吞进诊断，不能冒泡打断面板
-    const throwing = await probe({
-        workspaceFiles: { list: () => { throw new Error('kaboom'); } },
-    }, 's1');
-    assert.ok(throwing.rootError.includes('kaboom'), '抛错也要聚合进诊断，不能冒泡');
+test('★ ③ 独立 tab：锻炉常驻右侧栏——本会话没有项目也照常打开', async () => {
+    const { mod, opened } = boot({ sessionId: 's1' }, { fetch: scriptedFetch([{ value: [] }]).fetch });
+    await mod.timers.flush(1);
+    assert.ok(opened.includes(TAB_KIND),
+        '★ 独立右侧栏 tag：无任何项目也打开（不再被「会话有项目才开」门控压掉）');
 });
 
-import { summarizeBook } from '../lib/book-console.js';
+test('独立打开只发生一次：装配时开一次，开成即停不重复', async () => {
+    const { mod, opened } = boot({ sessionId: 's1' }, { fetch: scriptedFetch([{ value: [] }]).fetch });
+    await mod.timers.flush(8);
+    assert.equal(opened.length, 1, '★ 独立 tag 开成即停（关掉是用户的自由，不跟用户抢）');
+});
 
-// ── 数据面：client 内联解析与 lib/book-console.js 的 parity ────────────────────
-test('数据面 parity: client 内联 summarizeBookClient 与服务端 summarizeBook 同口径', () => {
-    const { exports } = loadClientBundle();
-    const sc = exports.__internals.summarizeBookClient;
-    assert.equal(typeof sc, 'function', '__internals 必须导出 summarizeBookClient');
+// ── session-watch 调度层自身语义（apply 不再用它做门控，但能力仍经 __internals 直测）──
 
-    const samples = [
-        {
-            name: '星尘小记',
-            novel: JSON.stringify({
-                title: '星尘小记', genre: '玄幻', stage: 'drafting',
-                approvals: { outline: { 1: 't', 2: 't' } },
-                chapters: { 1: { title: 'a', versions: [1] }, 2: { title: 'b', versions: [1] } },
-                cast: ['林晚'],
-            }),
-            facts: JSON.stringify([{ entity: '林晚', key: '境界', value: '筑基三层', chapter: 2 }]),
-            foreshadows: JSON.stringify([
-                { id: 'F1', setup: '雾', chapter: 1, plan: 2, payoffChapter: null },
-            ]),
-            style: JSON.stringify({ book: '星尘小记', chapters: 2, baseline: { dims: { syntax: { mu: 4 } } }, builtAt: 't' }),
-        },
-        { name: '空壳', novel: null, facts: null, foreshadows: null, style: null },
-        {
-            name: '坏书',
-            novel: '{ not json',
-            facts: '[]',
-            foreshadows: null,
-            style: JSON.stringify({ baseline: { dims: {} } }),
-        },
+test('★ startForgeAutoOpen：本会话有项目才开，轮询到项目出现后补开', async () => {
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE);
+    const { ctx, opened } = makeCtx({ sessionId: 's1' });
+    const { startForgeAutoOpen } = mod.exports.__internals;
+    const seq = scriptedFetch([{ value: [] }, { value: [] }, { value: [{ name: '后建的书' }] }]);
+    // startForgeAutoOpen 期望 fetchProjects 解析出数组（真实 wiring 里 apiFetch 已解好）；
+    // 这里把 {value} 包成数组，别把裸 {json()} 传进去。
+    const fetchProjects = (id) => seq.fetch(id, {}).then((r) => r.json()).then((j) => j.value ?? []);
+    startForgeAutoOpen(ctx, {
+        fetchProjects, openTab: () => opened.push(TAB_KIND),
+        setTimer: mod.timers.setTimer, clearTimer: mod.timers.clearTimer,
+    });
+    await mod.timers.flush(2);
+    assert.equal(opened.length, 0, '前置：前两轮还没有项目');
+    await mod.timers.flush(1);
+    assert.equal(opened.length, 1, '★ 轮询到项目出现后补开（书由会话里 AI 调工具创建，客户端收不到通知）');
+    assert.ok(seq.requests.length > 0, '确实走了轮询请求');
+});
+
+test('★ startForgeAutoOpen：切到有项目的会话重新判断，单会话不重复', async () => {
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE);
+    const { ctx, opened } = makeCtx({ sessionId: 's1' });
+    const { startForgeAutoOpen } = mod.exports.__internals;
+    const seq = scriptedFetch([{ value: [{ name: '书A' }] }]);
+    const fetchProjects = (id) => seq.fetch(id, {}).then((r) => r.json()).then((j) => j.value ?? []);
+    startForgeAutoOpen(ctx, {
+        fetchProjects, openTab: () => opened.push(TAB_KIND),
+        setTimer: mod.timers.setTimer, clearTimer: mod.timers.clearTimer,
+    });
+    await mod.timers.flush(1);
+    assert.equal(opened.length, 1, '前置：会话 s1 有项目已开');
+    ctx._setSession('s2');
+    await mod.timers.flush(1);
+    assert.equal(opened.length, 2, '★ 换会话重新判断（每会话各开一次）');
+    ctx._setSession('s1');
+    await mod.timers.flush(1);
+    assert.equal(opened.length, 2, '切回已开过的会话不再打扰');
+});
+
+test('③ openTab 抛错（seat 未挂载）不炸：重试链由 openForgeTab 自己兜', async () => {
+    const seq = scriptedFetch([{ value: [{ name: '书' }] }]);
+    const { mod, opened, ctx } = boot({ sessionId: 's1', openTabThrows: true }, { fetch: seq.fetch });
+    await mod.timers.flush(4);
+    assert.equal(opened.length, 0, '前置：seat 未挂载时 openTab 抛错');
+
+    ctx._setOpenTabThrows(false);             // seat 挂上了
+    await mod.timers.flush(40);               // 走内部的 250ms 重试链
+    assert.deepEqual(opened, [TAB_KIND], '★ seat 挂载后重试链必须把 tab 开出来（首次排 400ms，之后 250ms 一轮）');
+});
+
+test('★ openForgeTab 时序：抛错 → 排下一次 → 成功后不再重复', async () => {
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE);
+    const { ctx, opened } = makeCtx({ openTabThrows: true });
+    const { openForgeTab } = mod.exports.__internals;
+
+    openForgeTab(ctx, { timer: mod.timers.setTimer, maxTries: 5, log: { info() {}, warn() {} } });
+    await mod.timers.flush(1);
+    assert.equal(opened.length, 0, '前置：首次尝试抛错');
+
+    ctx._setOpenTabThrows(false);
+    await mod.timers.flush(3);
+    assert.deepEqual(opened, [TAB_KIND], '挂载后重试一次即成功');
+
+    await mod.timers.flush(5);
+    assert.equal(opened.length, 1, '★ 开成即停，绝不重复打开');
+});
+
+test('会话服务缺失时不炸（降级：不自动打开，用户仍可从 guide 进）', () => {
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, {});
+    const { ctx } = makeCtx({ withoutSessions: true });
+    assert.doesNotThrow(() => mod.exports.apply(ctx), '★ 拿不到 ctx.sessions 也必须能装配');
+    assert.equal(mod.exports.__internals.currentSessionId(ctx), null, '读不到会话 id 时返回 null（不抛）');
+});
+
+test('currentSessionId：三种快照形态都能读出当前会话', () => {
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE);
+    const { currentSessionId } = mod.exports.__internals;
+    assert.equal(currentSessionId(makeCtx({ sessionId: 's1' }).ctx), 's1', 'getSnapshot 形态');
+    assert.equal(currentSessionId(makeCtx({ sessionId: 's2', sessionsShape: 'fn' }).ctx), 's2', 'snapshot() 形态');
+    assert.equal(currentSessionId(makeCtx({ sessionId: 's3', sessionsShape: 'bare' }).ctx), 's3', '裸对象形态');
+    assert.equal(currentSessionId({}), null, '没有 sessions 服务 → null');
+});
+
+// ── 卸载 ──
+
+test('卸载：startForgeAutoOpen stop 后停止轮询（不再发请求）', async () => {
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE);
+    const { ctx } = makeCtx({ sessionId: 's1' });
+    const { startForgeAutoOpen } = mod.exports.__internals;
+    const seq = scriptedFetch([]);   // 一直无项目 → 持续轮询
+    const stop = startForgeAutoOpen(ctx, {
+        fetchProjects: seq.fetch, openTab: () => {},
+        setTimer: mod.timers.setTimer, clearTimer: mod.timers.clearTimer,
+    });
+    await mod.timers.flush(3);
+    const before = seq.requests.length;
+    assert.ok(before > 0, '前置：已发生轮询请求');
+    stop();
+    await mod.timers.flush(4);
+    assert.equal(seq.requests.length, before, '★ stop 后不得再轮询（否则每次重装都漏一条定时器）');
+});
+
+// ── 面板控制器：会话过滤（「项目跟会话走」的落点） ──
+
+test('★ 面板列表请求带会话：GET /projects?session=<id>', async () => {
+    const seq = scriptedFetch([{ value: [{ name: '书A' }] }, { value: [] }]);
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch: seq.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+
+    await controller.refreshProjects();
+
+    const urls = seq.requests.map((r) => r.url);
+    assert.ok(urls.some((u) => u === '/api/novel-forge/projects?session=s1'),
+        `★ 列表必须按会话过滤（请求：${urls.join(' , ')}）`);
+    assert.ok(urls.some((u) => u === '/api/novel-forge/projects?scope=unclaimed'),
+        '未归属的旧书要单独查一份（给认领入口）');
+    assert.equal(controller.state.projects.length, 1, '响应要落到 state.projects');
+});
+
+test('★ 创建项目带会话戳：POST /projects body 里有 session', async () => {
+    const seq = scriptedFetch([{ value: [] }, { value: [] }, { value: [] }, { value: [] }]);
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch: seq.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+    controller.state.title = '新书';
+
+    await controller.handleAction('create', { dataset: {} });
+
+    const post = seq.requests.find((r) => r.init && r.init.method === 'POST');
+    assert.ok(post, '必须发出创建请求');
+    const body = JSON.parse(post.init.body);
+    assert.equal(body.session, 's1', '★ 创建时就要打会话戳，否则新书不属于任何会话、列表里看不见');
+    assert.equal(body.title, '新书');
+});
+
+test('★ 认领未归属的书：POST /projects/claim 带 session 与 ids', async () => {
+    const seq = scriptedFetch([{ value: [] }, { value: [] }]);
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch: seq.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+
+    await controller.handleAction('claim', { dataset: { id: '星海拾骨' } });
+
+    const post = seq.requests.find((r) => r.url.endsWith('/projects/claim'));
+    assert.ok(post, '必须走认领端点');
+    const body = JSON.parse(post.init.body);
+    assert.equal(body.session, 's1');
+    assert.deepEqual(body.ids, ['星海拾骨'], '认领单本时只带这一本');
+});
+
+test('拿不到会话 id 时降级：请求不带 session（显示全部，不静默失败）', async () => {
+    const seq = scriptedFetch([{ value: [] }, { value: [] }]);
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch: seq.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: null });
+
+    await controller.refreshProjects();
+
+    assert.ok(seq.requests.some((r) => r.url === '/api/novel-forge/projects'),
+        '无会话 id 时退化成全量查询（面板顶部会提示「全部项目」）');
+});
+
+// ── 原生事件代理 ──
+
+test('★ 事件代理：attach 后 data-action 能走通，detach 后不再响应', async () => {
+    const seq = scriptedFetch([{ value: [] }, { value: [] }]);
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch: seq.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+
+    const node = new dom.El('div');
+    controller.attach(node);
+    const button = new dom.El('button');
+    button.dataset.action = 'refresh-projects';
+    node.append(button);
+
+    button.dispatch('click', { target: button });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(seq.requests.length > 0, '★ 点击必须触发动作（宿主里 React 合成事件不可靠，全走原生代理）');
+
+    const count = seq.requests.length;
+    controller.detach();
+    button.dispatch('click', { target: button });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(seq.requests.length, count, 'detach 之后不再响应（否则面板卸载后还留着一份监听）');
+});
+
+// ── 结构契约 ──
+
+test('结构契约：经典脚本 bundle、版本一致、产物由源码构建而来', () => {
+    const code = fs.readFileSync(BUNDLE, 'utf8');
+    assert.ok(code.includes('window.__ModuleLoader__.load'), '必须是 __ModuleLoader__ bundle');
+    assert.ok(!/^\s*(import|export)\s/m.test(code), '★ 不能含 ESM 语法——dsh 按经典脚本执行，混入 import/export 会整包 syntax error');
+    assert.match(code, /^\/\/ ⚠️ 自动生成/, '★ 产物必须带 generated 头——缺它说明有人直接改了产物，构建链被绕过');
+
+    const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    assert.equal(pkg.exports['./client'], './lib/client.js');
+    assert.equal(pkg.dsh.client.platform, 'web');
+    const v = code.match(/PLUGIN_VERSION\s*=\s*"([^"]+)"/);
+    assert.ok(v, 'client.js 必须有 PLUGIN_VERSION 常量');
+    assert.equal(v[1], pkg.version, '★ PLUGIN_VERSION 必须与 package.json 版本一致（防版本漂移）');
+
+    const srcVersion = fs.readFileSync(new URL('../src/client/index.js', import.meta.url), 'utf8')
+        .match(/PLUGIN_VERSION\s*=\s*['"]([^'"]+)['"]/);
+    assert.ok(srcVersion, 'src/client/index.js 必须有 PLUGIN_VERSION 字面量');
+    assert.equal(srcVersion[1], pkg.version, '★ 源码版本必须与 package.json 一致');
+});
+
+test('构建链：四视图是独立源码且被打进产物', () => {
+    const code = fs.readFileSync(BUNDLE, 'utf8');
+    const viewsDir = new URL('../src/client/views/', import.meta.url);
+    const views = [
+        ['project-list.js', 'ProjectListView'],
+        ['project-detail.js', 'ProjectDetailView'],
+        ['lorebook.js', 'LorebookView'],
+        ['settings.js', 'SettingsView'],
     ];
-    for (const s of samples) {
-        const theirs = summarizeBook({ name: s.name, novel: s.novel, facts: s.facts, foreshadows: s.foreshadows, style: s.style });
-        const ours = sc({ name: s.name, novel: s.novel, facts: s.facts, foreshadows: s.foreshadows, style: s.style });
-        // 两种实现只对齐面板要展示的量化字段口径
-        assert.equal(ours.title, theirs.title, `title 口径(${s.name})`);
-        assert.equal(ours.stage, theirs.stage, `stage 口径(${s.name})`);
-        assert.equal(ours.chapters, theirs.chapters, `chapters 口径(${s.name})`);
-        assert.equal(ours.approved, theirs.approved, `approved 口径(${s.name})`);
-        assert.equal(ours.facts, theirs.facts, `facts 口径(${s.name})`);
-        assert.equal(ours.foreshadows.total, theirs.foreshadows.total, `foreshadows.total 口径(${s.name})`);
-        assert.equal(ours.foreshadows.open, theirs.foreshadows.open, `foreshadows.open 口径(${s.name})`);
-        assert.equal(ours.styleBuilt, theirs.style.built, `styleBuilt 口径(${s.name})`);
+    for (const [file, symbol] of views) {
+        const src = fs.readFileSync(new URL(file, viewsDir), 'utf8');
+        assert.match(src, new RegExp(`export function ${symbol}`), `${file} 必须导出 ${symbol}`);
+        assert.ok(code.includes(symbol), `产物必须含 ${symbol}（视图确实被打包进来了）`);
     }
 });
 
-// ── 读盘探针：多形态 read 收敛 + 降级 ──────────────────────────────────────
-test('数据面 probeReadBook: read 命中形态即取文本并parse出摘要', async () => {
-    const { exports } = loadClientBundle();
-    const prb = exports.__internals.probeReadBook;
-    const S = {
-        novel: JSON.stringify({ title: '灰谷', genre: '悬疑', stage: 'outline', approvals: { outline: {} }, chapters: {} }),
-        facts: JSON.stringify([{ entity: '伊', key: '位置', value: '灰谷', chapter: 1 }]),
-        foreshadows: JSON.stringify([{ id: 'F1', setup: '雾', chapter: 1, plan: 3, payoffChapter: null }]),
-        style: JSON.stringify({ book: '灰谷', chapters: 0, baseline: { dims: {} }, builtAt: 't' }),
-    };
-    // 命中官方契约形态 read(sessionId, path, range, signal?) —— range 是必填对象；
-    // 返回 WorkspaceFileText 对象（非裸字符串），absolutePath 是"确实读到盘"的凭证。
-    let calls = [];
-    const wf = { read: async (sid, path, range) => {
-        calls.push({ sid, path, range });
-        if (!range || typeof range !== 'object') {
-            // 真实 Remote 面对缺参的答复：装配错误（arity）直接 reject
-            throw new Error('assembly fault: read() expects (sessionId, path, range, signal?)');
-        }
-        const name = path.split('/').pop();
-        const text = name === 'novel.json' ? S.novel
-            : name === 'facts.json' ? S.facts
-            : name === '伏笔.json' ? S.foreshadows
-            : name === 'style-baseline.json' ? S.style
-            : null;
-        if (text === null || sid !== 's1') return { ok: false, error: { code: 'workspace-file/not-found' } };
-        return { ok: true, value: { offset: 1, text, lines: 3, eof: true, absolutePath: '/ws/' + path, version: 'v1' } };
-    } };
-    const out = await prb(wf, 's1', '灰谷');
-    assert.equal(out.summary.title, '灰谷');
-    assert.equal(out.summary.stage, 'outline');
-    assert.equal(out.summary.facts, 1);
-    assert.equal(out.summary.foreshadows.open, 1);
-    assert.equal(out.summary.styleBuilt, true);
-    assert.equal(out.readError, null, '四文件都应命中，不得有读取失败');
-    assert.equal(out.files.novel, S.novel);
-    assert.equal(out.readForm, 'novel@0', '应命中官方形态 (sessionId, path, range, signal?) 并以 novel 记录');
-    assert.ok(calls.every((c) => c.range && typeof c.range === 'object'), '每次 read 都必须带 range 对象（缺参会被 arity 拒）');
-    assert.equal(out.absPath, '/ws/灰谷/novel.json', '必须带出 Host 返回的绝对路径（读到盘的凭证）');
-});
-
-test('数据面 probeReadBook: 工作区根本身是书时路径不带前导斜杠', async () => {
-    const { exports } = loadClientBundle();
-    const prb = exports.__internals.probeReadBook;
-    const paths = [];
-    const wf = { read: async (sid, path, range) => {
-        paths.push(path);
-        return { ok: true, value: { offset: 1, text: '{}', lines: 1, eof: true, absolutePath: '/ws/' + path, version: 'v1' } };
-    } };
-    const out = await prb(wf, 's1', '');
-    assert.ok(paths.length > 0, '必须发起读取');
-    assert.ok(paths.includes('novel.json'), '应读工作区根下的 novel.json');
-    // "/novel.json" 会被当作绝对路径而绕过工作区根，必须避免
-    assert.ok(paths.every((p) => !p.startsWith('/')), '工作区根即书时路径不得带前导斜杠');
-    assert.equal(out.book, '（工作区根即书）', '书名标签应标明这是工作区根本身');
-});
-
-test('数据面 loadBookConsole: 两态判定 + 非书目录预筛（不刷 not-found 噪声）', async () => {
-    const { exports } = loadClientBundle();
-    const lbc = exports.__internals.loadBookConsole;
-    // 工作区根模拟：星海拾骨/ 是锻炉书（含 novel.json），dsh-novel-forge/ 是普通仓库目录
-    const dirMap = {
-        '星海拾骨': [{ name: 'novel.json', type: 'file' }, { name: '账本', type: 'directory' }],
-        'dsh-novel-forge': [{ name: 'package.json', type: 'file' }, { name: 'lib', type: 'directory' }],
-    };
-    let readPaths = [];
-    const remote = {
-        workspaceFiles: {
-            list: async (sid, path) => (dirMap[path]
-                ? { ok: true, value: { path, entries: dirMap[path], truncated: false } }
-                : { ok: false, error: { code: 'workspace-file/outside-workspace', message: 'nope' } }),
-            read: async (sid, path, range) => {
-                readPaths.push(path);
-                return { ok: true, value: { offset: 1, text: '{}', lines: 1, eof: true, absolutePath: '/ws/' + path, version: 'v1' } };
-            },
-        },
-    };
-    // ② 根下是子目录 → 只把**含 novel.json 的**当书
-    const books = await lbc(remote, 's1', { rootEntries: { listing: { entries: [
-        { name: '星海拾骨', type: 'directory' },
-        { name: 'dsh-novel-forge', type: 'directory' },
-        { name: 'README.md', type: 'file' },
-    ] } } });
-    assert.equal(books.length, 1, '只把含 novel.json 的目录当书；普通文件与非书目录都跳过');
-    assert.equal(books[0].book, '星海拾骨');
-    assert.ok(!readPaths.some((p) => p.startsWith('dsh-novel-forge/')),
-        '非书目录不得被读盘——否则每个目录盲读 4 次，刷满 workspace-file/not-found 噪声');
-    assert.equal(books[0].readError, null, '真书不该有读盘失败');
-
-    // ① 根下直接有 novel.json → 工作区根本就**是一本书**，只读这一本
-    readPaths = [];
-    const single = await lbc(remote, 's1', { rootEntries: { listing: { entries: [
-        { name: 'novel.json', type: 'file' },
-        { name: '账本', type: 'directory' },
-    ] } } });
-    assert.equal(single.length, 1, '工作区根即书时只读这一本，不再把同级目录当书');
-    assert.equal(single[0].book, '（工作区根即书）');
-    assert.ok(readPaths.every((p) => !p.startsWith('/')), '工作区根即书时路径不得带前导斜杠');
-    assert.ok(readPaths.some((p) => p === 'novel.json'), '根即书应直读根下的 novel.json');
-
-    // list 全失败（listing 缺席）→ 空数组，不伪造
-    assert.deepEqual(Array.from(await lbc(remote, 's1', { rootEntries: null })), [], 'list 失败时不得伪造书目');
-});
-
-test('数据面 dirHasNovel: 任何异常都当"不是书"，绝不抛', async () => {
-    const { exports } = loadClientBundle();
-    const dhn = exports.__internals.dirHasNovel;
-    const ok = { list: async () => ({ ok: true, value: { entries: [{ name: 'novel.json', type: 'file' }] } }) };
-    assert.equal(await dhn(ok, 's1', 'a'), true, '含 novel.json 的目录应判为书');
-    const noNovel = { list: async () => ({ ok: true, value: { entries: [{ name: 'package.json', type: 'file' }] } }) };
-    assert.equal(await dhn(noNovel, 's1', 'a'), false, '不含 novel.json 判为非书');
-    const boom = { list: async () => { throw new Error('gateway/internal'); } };
-    assert.equal(await dhn(boom, 's1', 'a'), false, '抛错必须吞掉当非书');
-    assert.equal(await dhn({}, 's1', 'a'), false, '无 list 方法当非书');
-    assert.equal(await dhn(null, 's1', 'a'), false, 'wf 缺席当非书');
-});
-
-test('数据面 probeReadBook: 全部形态失败时降级、不伪造、带错误说明', async () => {
-    const { exports } = loadClientBundle();
-    const prb = exports.__internals.probeReadBook;
-    const wf = { read: async () => { throw new Error('gateway/internal'); } };
-    const out = await prb(wf, 's1', '灰谷');
-    assert.equal(out.summary, null, '拿不到文件就不该有摘要');
-    assert.ok(out.readError && out.readError.includes('gateway/internal'), '错误必须原样带回错误码');
-    assert.equal(Object.keys(out.files).length, 0, '不得伪造文件');
-});
-
-test('数据面 probeReadBook: read 缺位时降级说明', async () => {
-    const { exports } = loadClientBundle();
-    const prb = exports.__internals.probeReadBook;
-    const out = await prb({}, 's1', '灰谷');
-    assert.equal(out.readError, 'workspaceFiles.read 不可用');
-    assert.equal(out.summary, null);
-});
-
-test('数据面 probeReadBook: 可选文件缺失（style 未建基线）不报错、计正常摘要', async () => {
-    const { exports } = loadClientBundle();
-    const prb = exports.__internals.probeReadBook;
-    const S = {
-        novel: JSON.stringify({ title: 'X', genre: 'g', stage: 'planning', approvals: { outline: {} }, chapters: {} }),
-        facts: JSON.stringify([{ entity: 'e', key: 'k', value: 'v', chapter: 1 }]),
-        foreshadows: '[]',
-    };
-    const wf = { read: async (sid, path) => {
-        if (path.endsWith('novel.json')) return { ok: true, value: { text: S.novel } };
-        if (path.endsWith('facts.json')) return { ok: true, value: { text: S.facts } };
-        if (path.endsWith('伏笔.json')) return { ok: true, value: { text: S.foreshadows } };
-        // style-baseline.json 未建 → 服务端 not-found（抛错形态如实回来）
-        if (path.endsWith('style-baseline.json')) throw new Error('workspace-file/not-found：no entry at "X/.novel/style-baseline.json"');
-        throw new Error('unexpected path ' + path);
-    } };
-    const out = await prb(wf, 's1', 'X');
-    assert.equal(out.readError, null, '可选 style 文件 not-found 不得进 readError');
-    assert.ok(out.summary, 'novel 读到就有摘要');
-    assert.equal(out.summary.styleBuilt, false, 'style 缺失 → styleBuilt=false');
-    assert.equal(out.summary.facts, 1, 'facts 正常计入');
-    assert.equal(out.summary.foreshadows.open, 0, '空的伏笔数组 → open 0');
-});
-
-test('数据面 probeReadBook: novel.json 读不到（必需）才报错、不造摘要', async () => {
-    const { exports } = loadClientBundle();
-    const prb = exports.__internals.probeReadBook;
-    const wf = { read: async () => { throw new Error('workspace-file/not-found：no entry'); } };
-    const out = await prb(wf, 's1', 'X');
-    assert.ok(out.readError && out.readError.includes('novel'), 'novel 必需文件缺失必须报错');
-    assert.equal(out.summary, null, 'novel 缺 → 不造幽灵书目');
+test('★ 入口路线唯一：左侧栏 DOM 注入的痕迹必须退场（不许两条路线并存）', () => {
+    const code = fs.readFileSync(BUNDLE, 'utf8');
+    for (const gone of ['data-dsh-novel-forge-entry', 'newSession', 'sidebarCol', 'MutationObserver']) {
+        assert.ok(!code.includes(gone),
+            `★ 产物里还有「${gone}」——左侧栏路线（DOM 注入 + 自愈观察者）必须删干净，否则两条入口同时存在`);
+    }
+    assert.ok(code.includes('sidebarRightTabs'), '必须走官方右侧栏契约');
 });
