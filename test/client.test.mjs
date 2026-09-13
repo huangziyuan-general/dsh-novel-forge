@@ -225,3 +225,100 @@ test('client headless: probeRemote —— 域清单 / $host / list 形态降级 
     }, 's1');
     assert.ok(throwing.rootError.includes('kaboom'), '抛错也要聚合进诊断，不能冒泡');
 });
+
+import { summarizeBook } from '../lib/book-console.js';
+
+// ── 数据面：client 内联解析与 lib/book-console.js 的 parity ────────────────────
+test('数据面 parity: client 内联 summarizeBookClient 与服务端 summarizeBook 同口径', () => {
+    const { exports } = loadClientBundle();
+    const sc = exports.__internals.summarizeBookClient;
+    assert.equal(typeof sc, 'function', '__internals 必须导出 summarizeBookClient');
+
+    const samples = [
+        {
+            name: '星尘小记',
+            novel: JSON.stringify({
+                title: '星尘小记', genre: '玄幻', stage: 'drafting',
+                approvals: { outline: { 1: 't', 2: 't' } },
+                chapters: { 1: { title: 'a', versions: [1] }, 2: { title: 'b', versions: [1] } },
+                cast: ['林晚'],
+            }),
+            facts: JSON.stringify([{ entity: '林晚', key: '境界', value: '筑基三层', chapter: 2 }]),
+            foreshadows: JSON.stringify([
+                { id: 'F1', setup: '雾', chapter: 1, plan: 2, payoffChapter: null },
+            ]),
+            style: JSON.stringify({ book: '星尘小记', chapters: 2, baseline: { dims: { syntax: { mu: 4 } } }, builtAt: 't' }),
+        },
+        { name: '空壳', novel: null, facts: null, foreshadows: null, style: null },
+        {
+            name: '坏书',
+            novel: '{ not json',
+            facts: '[]',
+            foreshadows: null,
+            style: JSON.stringify({ baseline: { dims: {} } }),
+        },
+    ];
+    for (const s of samples) {
+        const theirs = summarizeBook({ name: s.name, novel: s.novel, facts: s.facts, foreshadows: s.foreshadows, style: s.style });
+        const ours = sc({ name: s.name, novel: s.novel, facts: s.facts, foreshadows: s.foreshadows, style: s.style });
+        // 两种实现只对齐面板要展示的量化字段口径
+        assert.equal(ours.title, theirs.title, `title 口径(${s.name})`);
+        assert.equal(ours.stage, theirs.stage, `stage 口径(${s.name})`);
+        assert.equal(ours.chapters, theirs.chapters, `chapters 口径(${s.name})`);
+        assert.equal(ours.approved, theirs.approved, `approved 口径(${s.name})`);
+        assert.equal(ours.facts, theirs.facts, `facts 口径(${s.name})`);
+        assert.equal(ours.foreshadows.total, theirs.foreshadows.total, `foreshadows.total 口径(${s.name})`);
+        assert.equal(ours.foreshadows.open, theirs.foreshadows.open, `foreshadows.open 口径(${s.name})`);
+        assert.equal(ours.styleBuilt, theirs.style.built, `styleBuilt 口径(${s.name})`);
+    }
+});
+
+// ── 读盘探针：多形态 read 收敛 + 降级 ──────────────────────────────────────
+test('数据面 probeReadBook: read 命中形态即取文本并parse出摘要', async () => {
+    const { exports } = loadClientBundle();
+    const prb = exports.__internals.probeReadBook;
+    const S = {
+        novel: JSON.stringify({ title: '灰谷', genre: '悬疑', stage: 'outline', approvals: { outline: {} }, chapters: {} }),
+        facts: JSON.stringify([{ entity: '伊', key: '位置', value: '灰谷', chapter: 1 }]),
+        foreshadows: JSON.stringify([{ id: 'F1', setup: '雾', chapter: 1, plan: 3, payoffChapter: null }]),
+        style: JSON.stringify({ book: '灰谷', chapters: 0, baseline: { dims: {} }, builtAt: 't' }),
+    };
+    // 命中官方形态 read(sessionId, path, signal)
+    let calls = [];
+    const wf = { read: async (sid, path, signal) => {
+        calls.push({ sid, path });
+        const name = path.split('/').pop();
+        if (name === 'novel.json' && sid === 's1') return { ok: true, value: S.novel };
+        if (name === 'facts.json' && sid === 's1') return { ok: true, value: S.facts };
+        if (name === '伏笔.json' && sid === 's1') return { ok: true, value: S.foreshadows };
+        if (name === 'style-baseline.json' && sid === 's1') return { ok: true, value: S.style };
+        return { ok: false, error: { code: 'not/found' } };
+    } };
+    const out = await prb(wf, 's1', '灰谷');
+    assert.equal(out.summary.title, '灰谷');
+    assert.equal(out.summary.stage, 'outline');
+    assert.equal(out.summary.facts, 1);
+    assert.equal(out.summary.foreshadows.open, 1);
+    assert.equal(out.summary.styleBuilt, true);
+    assert.equal(out.readError, null, '四文件都应命中，不得有读取失败');
+    assert.equal(out.files.novel, S.novel);
+    assert.equal(out.readForm, 'novel@0', '应命中第一种（sessionId, path）形态并以 novel 记录');
+});
+
+test('数据面 probeReadBook: 全部形态失败时降级、不伪造、带错误说明', async () => {
+    const { exports } = loadClientBundle();
+    const prb = exports.__internals.probeReadBook;
+    const wf = { read: async () => { throw new Error('gateway/internal'); } };
+    const out = await prb(wf, 's1', '灰谷');
+    assert.equal(out.summary, null, '拿不到文件就不该有摘要');
+    assert.ok(out.readError && out.readError.includes('gateway/internal'), '错误必须原样带回错误码');
+    assert.equal(Object.keys(out.files).length, 0, '不得伪造文件');
+});
+
+test('数据面 probeReadBook: read 缺位时降级说明', async () => {
+    const { exports } = loadClientBundle();
+    const prb = exports.__internals.probeReadBook;
+    const out = await prb({}, 's1', '灰谷');
+    assert.equal(out.readError, 'workspaceFiles.read 不可用');
+    assert.equal(out.summary, null);
+});
