@@ -127,11 +127,36 @@ Claude Desktop / Cursor 等任意 MCP 客户端——工作区根取 `NOVEL_FORG
 零依赖实现（原生 JSON-RPC 2.0 over stdio）；宿主外的 fs 后端带同样的
 containment 与版本守卫语义。锚段写作与氛围光谱均为纯本地计算。
 
+## 右侧栏「🔨 锻炉」tab（浏览器半）
+
+插件的常驻 UI 挂载点，代码在 `lib/client.js`（手写 `__ModuleLoader__.load` 格式，**无需构建链**）。
+
+**三步注册契约**（缺第三步，前两步全白做——右侧栏一格都不会多）：
+
+| 步 | API | 作用 |
+| --- | --- | --- |
+| ① | `ctx.sidebarRightTabs.register({ id, kind, title, guide })` | 声明 tab **类型**（本身不产生 tab） |
+| ② | `ctx.slots.register({ name: "sidebar.right.pane.tab", key: <id>, inject }, Panel)` + `…pane.tab.title` | 注册面板与 chip 标题 |
+| ③ | `ctx.sidebarRight.openTab(kind)` | **真正打开**（缺这步类型注册得再对也不出现） |
+
+`guide` 条目落在右侧栏常驻 guide 页，是跨 session 都能点开的保底入口。
+第 ③ 步有**时序陷阱**：seat 挂载前 `openTab` 直接抛（引擎设计：没有 session 可操作时宁可报错），
+故按 250ms 节拍重试（上限 ~30s）、开成即停。
+
+**数据通道**：面板注册的 `inject: (sessionId, actions) => …` 交出会话 id，
+数据经 `ctx.remote.workspaceFiles` 读工作区文件
+（`read` / `stat` / `list` / `changes`，签名 `(sessionId, path, …)`）。
+域是「按 Client assembly 装配」的，故面板带一张**运行时探测卡**显示实际可用域——
+不猜、不写不可验证的死代码。
+
+**改了 `client.js` 必须重启 DSH web**（client 图在 web 进程内缓存），随后浏览器硬刷新。
+排障看 console 的 `[dsh-novel-forge]` 前缀日志。
+
 ## 开发与测试
 
 ```bash
 npm run setup-dev   # 把 DSH checkout 的宿主 SDK 真包 symlink 进本地 node_modules
-npm test            # node --test：47 个用例（纯逻辑单测 + 假 fs 全链路冒烟 + 真校验器输出契约检查）
+npm test            # node --test：68 个用例（纯逻辑单测 + 假 fs 全链路冒烟 + 真校验器输出契约 + headless client 契约）
 node scripts/demo.mjs   # 端到端演示：init→细纲→写章→账本→扫描→提案 全流程
 ```
 
@@ -142,5 +167,7 @@ node scripts/demo.mjs   # 端到端演示：init→细纲→写章→账本→�
 
 - 去 AI 味词库与阈值是**启发式**，只能抓显性病，不承诺"根治"——结构性指标（节奏方差/信息稀释）是它比纯词库强的地方。
 - 审稿的"模型审"部分不内置（工具不调模型）：`novel_audit` 产出证据，审稿在会话里进行；独立审稿模型路由留给 v0.2。
-- GUI 工作台（client half）后置：提案可视化之前先用对话 + diff 文件。
+- **GUI 工作台进行中**：右侧栏「🔨 锻炉」tab 已挂载（0.3.3 打通三步注册契约），
+  0.3.4 接上 `ctx.remote` 并加了运行时探测卡。面板**尚未渲染书目/账本**——数据面在 v0.4 落地；
+  在此之前提案可视化仍走对话 + diff 文件。
 - 跨章重复检测是滑动窗口（默认前 10 章，`repetitionWindow` 可调）——超出窗口的复读抓不到；世界书递归激活限 2 轮。
