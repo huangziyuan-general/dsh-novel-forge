@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.7 (2026-09-13) — 修列目录：根目录用 $host.home 作为 list 根路径
+
+- **根因（实测错误码收敛）**：`workspaceFiles/list` 收**非空 path**——空串被 `path is required` 拒；对象实参被 `rejected "path"` 拒；实参不足被 `expected 2 business argument(s) plus an optional AbortSignal` 拒。解析逻辑是 `{startsWith("/") ? path : ROOT/path}`，根目录只能传**工作区绝对根**。
+- **修复**：`$host.home` 即工作区绝对根（连接侧 fixture 里 `host.home == WORKSPACE_FILES_ROOT`），把 `list(sessionId, host.home)` 列为第一形态，home 缺失才退回空串（诊断用）。`probeRemote` 的 list 尝试自此以 host.home 为根。
+- **read 形态校准**：`probeReadBook` 的 read 实参按"2 业务实参 + 可选 signal"口径重排，`read(sessionId, path)` 最优先。
+- 测试(e) 改为断言 `host.home` 作为 list 根路径列出成功（含书目目录浮现）。**80/80 全绿**。
+- 样例书《星海拾骨》可验证：刷新后书目卡应列入书名目录并读出摘要。
+
 ## 0.3.6 (2026-09-13) — 修数据面：remote 子域必须显式声明 inject
 
 - **根因**：`ctx.remote.workspaceFiles` 被 remote Proxy 挡住，报 `cannot get property "remote.workspaceFiles" without inject`。remote 的每个**子域**都要求消费者把 `"remote.<domain>"` 写进 client 的 `inject` 数组，只声明 `"remote"` 不够；对齐官方 sidebar-files / documentpreview（二者都显式声明 `"remote.workspaceFiles"`）。

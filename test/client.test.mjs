@@ -198,19 +198,22 @@ test('client headless: probeRemote —— 域清单 / $host / list 形态降级 
     assert.deepEqual(Array.from(named.domains), ['workspaceFiles'], '域清单必须滤掉 $ 前缀的内部成员（$host/$stream/$mount/$on）');
     assert.deepEqual({ ...named.host }, { home: '/h', isLoopback: true }, '$host 的 home / isLoopback 必须带出');
 
-    // e) 第一种调用形态失败、第二种成功 → 降级到能用的形态，并记下 via
+    // e) 实测结论：list 收非空 path，根目录用 $host.home（工作区绝对根）作为第一尝试
     const calls = [];
-    const wf = {
+    const wfH = {
         list: (...args) => {
             calls.push(args);
-            if (calls.length === 1) return Promise.resolve({ ok: false, error: { code: 'gateway/bad-request' } });
-            return Promise.resolve({ ok: true, value: { path: '', entries: [{ name: '设定', type: 'directory' }], truncated: false } });
+            if (args[1] === '/h') {
+                return Promise.resolve({ ok: true, value: { path: '', entries: [{ name: '星海拾骨', type: 'directory' }], truncated: false } });
+            }
+            return Promise.resolve({ ok: false, error: { code: 'gateway/bad-request', message: 'path is required' } });
         },
     };
-    const degraded = await probe({ workspaceFiles: wf }, 's1');
-    assert.ok(degraded.rootEntries, '第二种形态成功时必须拿到目录');
-    assert.equal(calls.length, 2, '第一次失败后必须继续尝试下一种形态');
-    assert.ok(degraded.rootEntries.via.includes('path'), '必须记下命中的调用形态，便于一次性收敛到正确写法');
+    const gotHome = await probe({ $host: { home: '/h', isLoopback: false }, workspaceFiles: wfH }, 's1');
+    assert.ok(gotHome.rootEntries, 'host.home 作为根路径必须列出成功');
+    assert.equal(calls[0][1], '/h', '第一个尝试必须用 host.home 作为 list 根路径');
+    assert.ok(gotHome.rootEntries.via.includes('home'), '必须记下命中的调用形态，便于后续收敛');
+    assert.equal(gotHome.rootEntries.listing.entries[0].name, '星海拾骨', '根目录应列出书目目录');
 
     // f) 形态全失败 → 不伪造数据，错误里带原始错误码与尝试次数（诊断价值）
     const allFail = await probe({
