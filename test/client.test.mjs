@@ -198,30 +198,47 @@ test('client headless: probeRemote —— 域清单 / $host / list 形态降级 
     assert.deepEqual(Array.from(named.domains), ['workspaceFiles'], '域清单必须滤掉 $ 前缀的内部成员（$host/$stream/$mount/$on）');
     assert.deepEqual({ ...named.host }, { home: '/h', isLoopback: true }, '$host 的 home / isLoopback 必须带出');
 
-    // e) 实测结论：list 收非空 path，根目录用 $host.home（工作区绝对根）作为第一尝试
+    // e) list 的真实契约（@deepseek-ai/dsh-api-workspace-files）：
+    //    list(sessionId, path, signal?) —— path 必填非空，**且只能列会话工作区内的路径**。
+    //    根路径只能用工作区相对根 "."；绝不能用 $host.home —— home 是 Host 机器家目录，
+    //    通常正是工作区根的父目录，Host 会以 workspace-file/outside-workspace 拒绝。
     const calls = [];
-    const wfH = {
+    const wfReal = {
         list: (...args) => {
             calls.push(args);
-            if (args[1] === '/h') {
+            if (args[1] === '.') {
                 return Promise.resolve({ ok: true, value: { path: '', entries: [{ name: '星海拾骨', type: 'directory' }], truncated: false } });
             }
-            return Promise.resolve({ ok: false, error: { code: 'gateway/bad-request', message: 'path is required' } });
+            // 真实 Host 对工作区外路径的答复
+            return Promise.resolve({ ok: false, error: { code: 'workspace-file/outside-workspace', message: `"${args[1]}" is outside the workspace` } });
         },
     };
-    const gotHome = await probe({ $host: { home: '/h', isLoopback: false }, workspaceFiles: wfH }, 's1');
-    assert.ok(gotHome.rootEntries, 'host.home 作为根路径必须列出成功');
-    assert.equal(calls[0][1], '/h', '第一个尝试必须用 host.home 作为 list 根路径');
-    assert.ok(gotHome.rootEntries.via.includes('home'), '必须记下命中的调用形态，便于后续收敛');
-    assert.equal(gotHome.rootEntries.listing.entries[0].name, '星海拾骨', '根目录应列出书目目录');
+    const gotRoot = await probe({ $host: { home: '/Users/someone', isLoopback: false }, workspaceFiles: wfReal }, 's1');
+    assert.ok(gotRoot.rootEntries, '工作区相对根 "." 必须列出成功');
+    assert.equal(calls[0][1], '.', '第一个尝试必须是工作区相对根 "."，而不是 $host.home');
+    assert.ok(gotRoot.rootEntries.via.includes('"."'), '必须记下命中的调用形态，便于后续收敛');
+    assert.equal(gotRoot.rootEntries.listing.entries[0].name, '星海拾骨', '根目录应列出书目目录');
 
-    // f) 形态全失败 → 不伪造数据，错误里带原始错误码与尝试次数（诊断价值）
+    // e2) 回归防线：把 $host.home 当 list 根必然被 Host 拒绝——v0.3.4~0.3.6 接真实
+    //     环境 100% 失败的真因；本地 mock 里 home 恰好等于工作区根才导致"全绿但接不上"。
+    const homeCalls = [];
+    const wfHomeOnly = {
+        list: (...args) => {
+            homeCalls.push(args);
+            return Promise.resolve({ ok: false, error: { code: 'workspace-file/outside-workspace', message: `"${args[1]}" is outside the workspace` } });
+        },
+    };
+    const homeProbe = await probe({ $host: { home: '/Users/someone', isLoopback: false }, workspaceFiles: wfHomeOnly }, 's1');
+    assert.equal(homeProbe.rootEntries, null, 'home 作根必失败，不得伪造目录');
+    assert.ok(!homeCalls.some((a) => a[1] === '/Users/someone'), '不得再把 $host.home 当作 list 根路径');
+
+    // f) 形态全失败 → 不伪造数据，错误里带原始错误码（诊断价值）
     const allFail = await probe({
         workspaceFiles: { list: () => Promise.resolve({ ok: false, error: { code: 'gateway/internal', message: 'boom' } }) },
     }, 's1');
     assert.equal(allFail.rootEntries, null, '全失败时不得伪造目录');
     assert.ok(allFail.rootError.includes('gateway/internal'), '错误必须原样带回错误码');
-    assert.ok(allFail.rootError.includes('四'), '错误必须说明试了几种形态');
+    assert.ok(allFail.rootError.includes('工作区'), '错误必须点明工作区边界这一约束');
 
     // g) list 直接抛异常也要被吞进诊断，不能冒泡打断面板
     const throwing = await probe({
@@ -287,16 +304,23 @@ test('数据面 probeReadBook: read 命中形态即取文本并parse出摘要', 
         foreshadows: JSON.stringify([{ id: 'F1', setup: '雾', chapter: 1, plan: 3, payoffChapter: null }]),
         style: JSON.stringify({ book: '灰谷', chapters: 0, baseline: { dims: {} }, builtAt: 't' }),
     };
-    // 命中官方形态 read(sessionId, path, signal)
+    // 命中官方契约形态 read(sessionId, path, range, signal?) —— range 是必填对象；
+    // 返回 WorkspaceFileText 对象（非裸字符串），absolutePath 是"确实读到盘"的凭证。
     let calls = [];
-    const wf = { read: async (sid, path, signal) => {
-        calls.push({ sid, path });
+    const wf = { read: async (sid, path, range) => {
+        calls.push({ sid, path, range });
+        if (!range || typeof range !== 'object') {
+            // 真实 Remote 面对缺参的答复：装配错误（arity）直接 reject
+            throw new Error('assembly fault: read() expects (sessionId, path, range, signal?)');
+        }
         const name = path.split('/').pop();
-        if (name === 'novel.json' && sid === 's1') return { ok: true, value: S.novel };
-        if (name === 'facts.json' && sid === 's1') return { ok: true, value: S.facts };
-        if (name === '伏笔.json' && sid === 's1') return { ok: true, value: S.foreshadows };
-        if (name === 'style-baseline.json' && sid === 's1') return { ok: true, value: S.style };
-        return { ok: false, error: { code: 'not/found' } };
+        const text = name === 'novel.json' ? S.novel
+            : name === 'facts.json' ? S.facts
+            : name === '伏笔.json' ? S.foreshadows
+            : name === 'style-baseline.json' ? S.style
+            : null;
+        if (text === null || sid !== 's1') return { ok: false, error: { code: 'workspace-file/not-found' } };
+        return { ok: true, value: { offset: 1, text, lines: 3, eof: true, absolutePath: '/ws/' + path, version: 'v1' } };
     } };
     const out = await prb(wf, 's1', '灰谷');
     assert.equal(out.summary.title, '灰谷');
@@ -306,7 +330,85 @@ test('数据面 probeReadBook: read 命中形态即取文本并parse出摘要', 
     assert.equal(out.summary.styleBuilt, true);
     assert.equal(out.readError, null, '四文件都应命中，不得有读取失败');
     assert.equal(out.files.novel, S.novel);
-    assert.equal(out.readForm, 'novel@0', '应命中第一种（sessionId, path）形态并以 novel 记录');
+    assert.equal(out.readForm, 'novel@0', '应命中官方形态 (sessionId, path, range, signal?) 并以 novel 记录');
+    assert.ok(calls.every((c) => c.range && typeof c.range === 'object'), '每次 read 都必须带 range 对象（缺参会被 arity 拒）');
+    assert.equal(out.absPath, '/ws/灰谷/novel.json', '必须带出 Host 返回的绝对路径（读到盘的凭证）');
+});
+
+test('数据面 probeReadBook: 工作区根本身是书时路径不带前导斜杠', async () => {
+    const { exports } = loadClientBundle();
+    const prb = exports.__internals.probeReadBook;
+    const paths = [];
+    const wf = { read: async (sid, path, range) => {
+        paths.push(path);
+        return { ok: true, value: { offset: 1, text: '{}', lines: 1, eof: true, absolutePath: '/ws/' + path, version: 'v1' } };
+    } };
+    const out = await prb(wf, 's1', '');
+    assert.ok(paths.length > 0, '必须发起读取');
+    assert.ok(paths.includes('novel.json'), '应读工作区根下的 novel.json');
+    // "/novel.json" 会被当作绝对路径而绕过工作区根，必须避免
+    assert.ok(paths.every((p) => !p.startsWith('/')), '工作区根即书时路径不得带前导斜杠');
+    assert.equal(out.book, '（工作区根即书）', '书名标签应标明这是工作区根本身');
+});
+
+test('数据面 loadBookConsole: 两态判定 + 非书目录预筛（不刷 not-found 噪声）', async () => {
+    const { exports } = loadClientBundle();
+    const lbc = exports.__internals.loadBookConsole;
+    // 工作区根模拟：星海拾骨/ 是锻炉书（含 novel.json），dsh-novel-forge/ 是普通仓库目录
+    const dirMap = {
+        '星海拾骨': [{ name: 'novel.json', type: 'file' }, { name: '账本', type: 'directory' }],
+        'dsh-novel-forge': [{ name: 'package.json', type: 'file' }, { name: 'lib', type: 'directory' }],
+    };
+    let readPaths = [];
+    const remote = {
+        workspaceFiles: {
+            list: async (sid, path) => (dirMap[path]
+                ? { ok: true, value: { path, entries: dirMap[path], truncated: false } }
+                : { ok: false, error: { code: 'workspace-file/outside-workspace', message: 'nope' } }),
+            read: async (sid, path, range) => {
+                readPaths.push(path);
+                return { ok: true, value: { offset: 1, text: '{}', lines: 1, eof: true, absolutePath: '/ws/' + path, version: 'v1' } };
+            },
+        },
+    };
+    // ② 根下是子目录 → 只把**含 novel.json 的**当书
+    const books = await lbc(remote, 's1', { rootEntries: { listing: { entries: [
+        { name: '星海拾骨', type: 'directory' },
+        { name: 'dsh-novel-forge', type: 'directory' },
+        { name: 'README.md', type: 'file' },
+    ] } } });
+    assert.equal(books.length, 1, '只把含 novel.json 的目录当书；普通文件与非书目录都跳过');
+    assert.equal(books[0].book, '星海拾骨');
+    assert.ok(!readPaths.some((p) => p.startsWith('dsh-novel-forge/')),
+        '非书目录不得被读盘——否则每个目录盲读 4 次，刷满 workspace-file/not-found 噪声');
+    assert.equal(books[0].readError, null, '真书不该有读盘失败');
+
+    // ① 根下直接有 novel.json → 工作区根本就**是一本书**，只读这一本
+    readPaths = [];
+    const single = await lbc(remote, 's1', { rootEntries: { listing: { entries: [
+        { name: 'novel.json', type: 'file' },
+        { name: '账本', type: 'directory' },
+    ] } } });
+    assert.equal(single.length, 1, '工作区根即书时只读这一本，不再把同级目录当书');
+    assert.equal(single[0].book, '（工作区根即书）');
+    assert.ok(readPaths.every((p) => !p.startsWith('/')), '工作区根即书时路径不得带前导斜杠');
+    assert.ok(readPaths.some((p) => p === 'novel.json'), '根即书应直读根下的 novel.json');
+
+    // list 全失败（listing 缺席）→ 空数组，不伪造
+    assert.deepEqual(Array.from(await lbc(remote, 's1', { rootEntries: null })), [], 'list 失败时不得伪造书目');
+});
+
+test('数据面 dirHasNovel: 任何异常都当"不是书"，绝不抛', async () => {
+    const { exports } = loadClientBundle();
+    const dhn = exports.__internals.dirHasNovel;
+    const ok = { list: async () => ({ ok: true, value: { entries: [{ name: 'novel.json', type: 'file' }] } }) };
+    assert.equal(await dhn(ok, 's1', 'a'), true, '含 novel.json 的目录应判为书');
+    const noNovel = { list: async () => ({ ok: true, value: { entries: [{ name: 'package.json', type: 'file' }] } }) };
+    assert.equal(await dhn(noNovel, 's1', 'a'), false, '不含 novel.json 判为非书');
+    const boom = { list: async () => { throw new Error('gateway/internal'); } };
+    assert.equal(await dhn(boom, 's1', 'a'), false, '抛错必须吞掉当非书');
+    assert.equal(await dhn({}, 's1', 'a'), false, '无 list 方法当非书');
+    assert.equal(await dhn(null, 's1', 'a'), false, 'wf 缺席当非书');
 });
 
 test('数据面 probeReadBook: 全部形态失败时降级、不伪造、带错误说明', async () => {
@@ -325,4 +427,37 @@ test('数据面 probeReadBook: read 缺位时降级说明', async () => {
     const out = await prb({}, 's1', '灰谷');
     assert.equal(out.readError, 'workspaceFiles.read 不可用');
     assert.equal(out.summary, null);
+});
+
+test('数据面 probeReadBook: 可选文件缺失（style 未建基线）不报错、计正常摘要', async () => {
+    const { exports } = loadClientBundle();
+    const prb = exports.__internals.probeReadBook;
+    const S = {
+        novel: JSON.stringify({ title: 'X', genre: 'g', stage: 'planning', approvals: { outline: {} }, chapters: {} }),
+        facts: JSON.stringify([{ entity: 'e', key: 'k', value: 'v', chapter: 1 }]),
+        foreshadows: '[]',
+    };
+    const wf = { read: async (sid, path) => {
+        if (path.endsWith('novel.json')) return { ok: true, value: { text: S.novel } };
+        if (path.endsWith('facts.json')) return { ok: true, value: { text: S.facts } };
+        if (path.endsWith('伏笔.json')) return { ok: true, value: { text: S.foreshadows } };
+        // style-baseline.json 未建 → 服务端 not-found（抛错形态如实回来）
+        if (path.endsWith('style-baseline.json')) throw new Error('workspace-file/not-found：no entry at "X/.novel/style-baseline.json"');
+        throw new Error('unexpected path ' + path);
+    } };
+    const out = await prb(wf, 's1', 'X');
+    assert.equal(out.readError, null, '可选 style 文件 not-found 不得进 readError');
+    assert.ok(out.summary, 'novel 读到就有摘要');
+    assert.equal(out.summary.styleBuilt, false, 'style 缺失 → styleBuilt=false');
+    assert.equal(out.summary.facts, 1, 'facts 正常计入');
+    assert.equal(out.summary.foreshadows.open, 0, '空的伏笔数组 → open 0');
+});
+
+test('数据面 probeReadBook: novel.json 读不到（必需）才报错、不造摘要', async () => {
+    const { exports } = loadClientBundle();
+    const prb = exports.__internals.probeReadBook;
+    const wf = { read: async () => { throw new Error('workspace-file/not-found：no entry'); } };
+    const out = await prb(wf, 's1', 'X');
+    assert.ok(out.readError && out.readError.includes('novel'), 'novel 必需文件缺失必须报错');
+    assert.equal(out.summary, null, 'novel 缺 → 不造幽灵书目');
 });
