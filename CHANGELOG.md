@@ -1,5 +1,199 @@
 # Changelog
 
+## 0.5.1 (2026-09-13) — 锻炉改回右侧栏常驻独立 tab（撤销"会话有项目才显示"门控）
+
+- **现象**：真机上右侧栏不再有那个单独的「🔨 锻炉」。原因：0.5.0 把打开时机收进
+  `session-watch` 的「本会话有项目才开」门控——没项目（或 `/projects?session=` API 没命中）
+  时只注册了 tab 类型和内容 seat、**不调 `openTab`**，于是右侧栏标签条里没有独立 tab。
+- **修复**：`src/client/index.js` 的 `apply` 在注册后**无条件 `openForgeTab(ctx)`**——锻炉恢复成
+  右侧栏**常驻独立 tab**（恢复 0.3.x 的行为）。面板内仍按会话语义过滤项目列表，空会话
+  渲染引导空态（project-list.js 已有"本会话还没有项目…"），不会露丑。
+- `session-watch.js` 的调度能力保留并仍经 `__internals` 导出，但**不再由 apply 门控打开**；
+  其"有项目才开 / 切会话重判 / stop 停止轮询"语义改为直接在测试里调 `startForgeAutoOpen` 验证。
+- 客户端行为测试同步改写：新增「无项目也独立打开」「独立打开只发生一次」；原「本会话没有项目
+  时不显示」断言反转为常驻打开。**94/94 全绿**。
+- 见 AGENTS：`npm run build`（pretest 已跑）→ **重启 DSH web**（bundle 进程启动时快照）→ 浏览器硬刷新。
+
+## 0.5.0 (2026-09-13) — 入口回到右侧栏；项目跟会话走
+
+两条产品决定（仙尊定）：**入口放右侧栏**，**且只有用过工具的会话才显示**；
+项目 = 会话里的项目，会话里创建了几本就几本。
+
+### ① 入口：左侧栏 DOM 注入 → 官方右侧栏 tab（三步契约）
+
+- **删掉路线 B**：`src/client/sidebar-entry.js`（入口 DOM 注入 + 双观察自愈）与
+  `src/client/drawer.js`（自建 root 的全屏抽屉）整体退场 —— 产物里不再出现
+  `data-dsh-novel-forge-entry` / `sidebarCol` / `MutationObserver`（测试有一条反向断言守着，
+  防两条入口路线并存）。
+- **改走官方三步契约**（`src/client/forge-tab.js`）：
+  ① `ctx.sidebarRightTabs.register({ id, kind, priority, title, guide })` 声明类型；
+  ② `ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({ name, key: <id>, inject }, Panel))`
+  注册内容 seat；③ `ctx.sidebarRight.openTab(kind)` 才真正上屏。
+  **只做①②不做③的话，一格都不多、也不报任何错** —— 这一条写进注释，别再误判成加载问题。
+- **`openTab` 延迟重试**：seat 未挂载时 `openTab` 直接抛错，故首次延迟 400ms、
+  之后每 250ms 重试、窗口 30 秒。
+- **`guide` 入口胶囊**：跨会话常驻的手动通道，自动打开失败 / 被关掉时的保底。
+- **面板改由 slot 框架渲染**（`src/client/panel.js`）：不再自己 `createRoot`，
+  于是 0.4.3 的「点一次没反应、再点一次整屏空白」那一类事故从根上消失。
+  控制器（状态 / 业务动作 / 原生事件代理）与组件（ForgePanel）分离，
+  控制器是纯闭包 → headless 测试可直接驱动断言。
+- `inject` 声明补齐：`['slots', 'sidebarRightTabs', 'sidebarRight', 'sessions']`。
+
+### ② 显示时机：本会话有项目才出现
+
+- 新增 `src/client/session-watch.js`：当前会话 id 从 `ctx.sessions.list`
+  （`ObservableSnapshot<SessionListState>.current`）读 —— 不猜 URL、不抠 DOM；
+  兼容 `getSnapshot()` / `snapshot()` / 裸对象三种快照形态。
+- **有项目才自动打开**：没写过小说的会话不打扰；
+- 书是会话里的 AI 调工具建的，客户端收不到通知 → **会话切换立刻查一次 + 未打开时每 8 秒轮询一次**，
+  一旦为某个会话开过就不再重复（关掉是用户的自由）。
+- 服务端不可达 / 面板未挂载都静默重试，不炸装配。
+
+### ③ 数据：项目跟会话走
+
+- `novel.json` 新增 `sessions: []` —— 「拥有这本书的会话」集合（`lib/store.js`）。
+  新增纯函数 `bookInSession` / `isUnclaimed` / `addBookSession`（服务端与面板共用一份判据）。
+- **创建时打戳**：`novel_project init`、`novel_import`、`novel_clone_project` 写入创建会话
+  （`io.sessionId` ← `exec.agent.session.header.id`，见 `lib/fsio.js` 的 `sessionIdOf`）。
+- **碰到就补录**：`requireBook` 里统一补录当前会话（`lib/tools/common.js` 的 `rememberSession`）——
+  17 个工具一处接线，另一个会话接续写同一本书也看得见；老书（无 `sessions` 字段）因此自动认领。
+  拿不到会话 id 时不写（headless 场景不得凭空造归属），写盘失败静默不阻断写作。
+- **REST 按会话过滤**（`lib/server-api.js`）：
+  - `GET /projects?session=<id>` 只回本会话的书；`?scope=unclaimed` 回未归属的旧书；不带参数回全量（curl 调试用）；
+  - `POST /projects` 接受 `session` 并把戳写进新书；
+  - 新增 `POST /projects/claim`：把未归属的书认领到本会话（只动未归属的，不抢别人已归属的书）。
+- 面板所有列表/创建/认领请求带 `session`；无会话 id 时降级为全量（头部提示「全部项目」）。
+
+### 测试与工程
+
+- `test/client.test.mjs` **重写为右侧栏契约 + 会话语义的行为测试**（22 例）：
+  三步契约逐项断言、`inject` 工厂交 sessionId、`openTab` 时机（无项目不开 / 有项目开一次 /
+  换会话重判 / 项目后到补开 / 抛错重试）、控制器请求带会话、创建/认领写会话戳、事件代理 attach/detach、
+  以及「左侧栏痕迹退场」的反向断言。
+- `test/helpers/dom.mjs` 换成 **headless 装载体**：`makeCtx()`（真语义 `ctx.effect`、
+  可控 `openTab`、可切会话的 `sessions.list`）+ 记账式假定时器（时序断言无 flake）
+  + 沿 parentElement 冒泡的极简 DOM（真跑事件代理）。
+- 三条**反向验证**（退化即红，证明测试有牙齿）：去掉「有项目才开」→ 2 红；
+  请求不带 session → 1 红；`init` 不写会话戳 → 1 红。
+- 契约自检脚本两处修正：page type（无 `patterns`）有 `definition.title` 时不再误报
+  「缺 pane.tab.title」；入口选择器判据放宽到「只有属性名」（打包产物里常见）。
+- 全量 94/94 通过。
+
+## 0.4.3 (2026-09-13) — 修「点击无反应 / 变空白页」与「左侧栏 8 个锻炉」
+
+两个真机症状，两个独立根因，**都不是加载链路问题**（产物与重启时间线都对得上）。
+
+### ① 点击入口没反应，或整屏空白 → `createRoot` 取错了包
+
+- **根因**：`mountDrawer` 写的是 `react.createRoot(container)`，而 **React 核心包没有
+  `createRoot`** —— 它在 `react-dom/client` 里。官方插件一律
+  `let react_dom_client = require("react-dom/client"); react_dom_client.createRoot(node)`；
+  宿主播种的模块表（`CHUNK_EXTERNALS`）也是 `react` / `react/jsx-runtime` / `react-dom` /
+  `react-dom/client` 四件套。
+- **症状为什么这么怪**：第 1 次点击 → `createRoot` 抛 TypeError → 容器已 append 但停在
+  `display:none` → **看起来毫无反应**；第 2 次点击 → `container` 已存在，于是只切了 `display`
+  → 露出空的 fixed 全屏层 → **整屏空白**。两种表现交替出现，极易误判为「构建没生效」。
+- **修复**：
+  - 新增 `src/client/react.js` —— **React 与 createRoot 的唯一取用口**
+    （`react` 取 `createElement`/`Component`/`Fragment`，`createRoot` 只从 `react-dom/client` 取），
+    并带 `diagnoseRenderer()` 把「宿主到底给了什么」摊开。
+  - 四个视图与 `drawer.js` 统一改为 `import { h } from './react.js'`，消灭散落的 `react.createElement`。
+  - `mountDrawer` 前置守卫：缺 `createRoot` 时**明确抛错**（带缺失清单与 react 实际导出）。
+  - `toggleDrawer` 失败时**回收半成品容器** + 弹原生故障卡（`data-dsh-novel-forge-fatal`）——
+    **失败必须可见，绝不再留空白遮罩**。
+  - 加渲染错误边界 + `render()` try/catch：视图抛错只替换该区域文案，
+    不再让 React 卸载整棵树（那是「整屏空白」的第二种成因）。
+  - `window.__novelForge.toggle()`：入口挂不上时的保底开关。
+- **构建**：`build-client.mjs` 的 `external` 补齐宿主模块表
+  （`react` / `react/jsx-runtime` / `react-dom` / `react-dom/client` / `cordis`）。
+
+### ② 左侧栏冒出一列 8 个「小说锻炉」→ 去重路径走不到
+
+- **根因有两层**：
+  1. **去重写在 `placeEntry` 里，而已就位的挂载会在 `tryPlace` 里提前 `return`** ——
+     那条去重路径**永远走不到**，历史重复节点再怎么刷也洗不掉；
+  2. `apply` **没注册 disposer**，插件每重装一次（dsh 重启 / 热更新 / 会话重建）
+     就漏一份入口 + 两个观察者，越积越多。
+- **修复**：
+  - 入口改为**DOM 单例收养**：`acquireEntry` 若发现已有同类节点，就**复用**它并
+    把点击处理器换成最新实例的（处理器存在节点的 `__novelForgeOnClick` 上，
+    避免收养来的节点还指着上一个实例的幽灵抽屉），同时把多余节点**清扫**掉。
+    仲裁权放 DOM 而不是模块变量 —— cordis 反复装配时上一个模块实例还活着，模块变量挡不住跨实例。
+  - `tryPlace` / `rootObserver` 里**无条件** `sweep()`，不依赖 `placeEntry` 是否被执行。
+  - `mountDrawer` / `disposeDrawer` 按 `data-dsh-novel-forge-drawer` 清扫其它实例遗留的抽屉容器，
+    保证页面上只有一个全屏层。
+  - `apply` 用 `ctx.effect(() => dispose)` 注册清理（cordis 语义：回调立刻执行、返回值登记为清理函数）。
+
+### ③ 测试：把「假前提」从替身里挖掉
+
+- 旧 headless 替身的 `require` **顺手给 `react` 挂了 `createRoot`** —— 与真机相反，
+  等于把「`react.createRoot` 能用」这个假前提固化成绿灯。现在替身的模块表**严格镜像宿主**
+  （`react` 明令不给 `createRoot`，`createRoot` 只在 `react-dom/client`），
+  并新增断言：**产物只许 require 宿主播种的模块**。
+- 旧 `ctx.effect` 替身写成 `(f) => f()`（登记 f 本身且立刻调用），与真机语义相反，
+  导致「注册 disposer」这类改动**根本测不出来**。现按官方写法
+  （`ctx.effect(() => () => {...})`）复刻：立刻执行、登记返回值。
+- 新增 8 条用例：模块取用契约、渲染器缺失不留空白遮罩、同实例反复 apply 唯一、
+  跨实例收养唯一、历史 8 个重复被清扫、后冒出的重复被自愈清掉、`ctx.dispose` 后入口移除。
+- **反向验证**（证明测试真有牙齿）：把 `createRoot` 改回从 `react` 取 → 2 条变红；
+  拆掉收养 → 1 条变红；拆掉无条件清扫 → 1 条变红；还原后全绿。**86/86**。
+
+## 0.4.2 (2026-09-13) — 补上构建链：客户端源码模块化，四视图落地
+
+- **背景**：0.4.0/0.4.1 把浏览器半改成「左侧栏 DOM 注入 + 全屏抽屉」后，按设计文档写的
+  `lib/client/drawer.js` / `lib/client/sidebar-entry.js` 是 **ESM**，而 dsh **只加载**
+  `exports["./client"]`（`lib/client.js`）—— 这两个文件是**不可达的死代码**；更糟的是
+  `sidebar-entry.js` 里的自愈还是 **0.4.1 修掉前的旧语义**（`if (!placed) place()`），
+  一旦有人误把它当源码打包进去，入口消失的 bug 会原样复活。设计文档 Step 4-7 的四个视图
+  文件（project-list / project-detail / lorebook / settings）也一个都没落地。**三份实现互相分叉。**
+- **根因**：缺**构建步骤**。dsh 官方 `dsh-client-modules` 明确「宿主提供的是**已构建的**客户端
+  bundle，启动前必须已产出每个 `lib/client.js`」—— 源码可以是 ESM，但发布物必须是经典脚本。
+- **修复**：
+  - 新增 **`src/client/` 源码树**（ESM，唯一真相）：`index.js`（入口）· `sidebar-entry.js` ·
+    `drawer.js` · `views/{project-list,project-detail,lorebook,settings}.js` · `api.js` ·
+    `state.js` · `styles.js`。以活跃的 `lib/client.js` 为**行为基准**（保存/导出/写章引导等功能
+    一个不少），吸收 `lib/client/drawer.js` 的参数化与 `dispose` 设计。
+  - 新增构建脚本 **`scripts/build-client.mjs`**（esbuild）：`src/client/` → `lib/client.js`，
+    产出与官方插件一致的 `window.__ModuleLoader__.load({ id, factory })` 经典脚本；
+    `react` 走 external，由宿主 `PLATFORM_MODULES` 基座提供（不重复打包）。
+  - 加 **`npm run build`** 与 **`pretest`**（测试永远跑当前源码构建出的产物）；
+    构建脚本内置**版本守卫**：源码 `PLUGIN_VERSION` ≠ package.json version → 直接构建失败。
+  - **移出 `lib/client/` 目录** —— 它与产物 `lib/client.js` 同名，是歧义与分叉的温床。
+    源码改用 `src/`（dsh 生态惯例），`lib/` 从此只放产物与 node 半侧。
+- **顺带修的两处真问题**：
+  - `ENTRY_SELECTOR` 原来只导出、无人使用，会被 esbuild **tree-shake 掉**（连带让契约自检脚本
+    误判「没有入口选择器」）。现在 `placeEntry` 用它做**幂等去重**（清掉重复入口），常量变成真用途。
+  - `package.json` 的 `dsh.client.inject` 还写着 `@deepseek-ai/dsh-client-ui-sidebar-right` ——
+    那是右侧栏 tab 路线的遗留声明，DOM 注入不需要它，已移除。
+- **测试**：新增「构建链：四视图已拆成独立源码，产物由 src/client/ 构建而来」用例（四视图源文件存在
+  + 产物 generated 头 + 源码/产物版本一致）；更新 smoke 的结构契约断言 —— 不再绑死手写 IIFE 的
+  `exports.apply = apply` 形态，改为断言 esbuild 的导出**表内容**。**79/79 全绿**。
+- **反向验证**（证明新断言有牙齿，不是"看起来绿"）：手动去掉产物的 generated 头 → 相关用例立刻变红
+  （8 pass / 1 fail）；把源码版本改成 `9.9.9` → `npm run build` 以 **exit=1** 拒绝并打印版本漂移。
+- **一个教训**：`src/client/sidebar-entry.js` 的注释里为了解释旧 bug 原样写着 `if (!placed) place()`，
+  于是「源码不得退回旧自愈语义」那条**文本断言把注释当成了代码**命中（假阳性）。
+  该语义本就由行为用例真跑守住 —— 已删掉那条文本断言。**能跑就别 grep。**
+
+## 0.4.1 (2026-09-13) — 修「左侧栏入口被 React 冲掉后永不复生」
+
+- **现象**：0.4.0 把入口从官方右侧栏 tab 换成左侧栏 DOM 注入后，真机上右侧栏不再有「🔨 锻炉」（**这是设计使然**），但**左侧栏那个「小说锻炉」入口也没出现** —— 等于整个锻炉入口消失。
+- **根因**：宿主侧栏是 **React 托管**的。旧实现 `mountSidebarEntry` 只走一次：
+  ```js
+  const tryPlace = () => { try { if (!placed) place(); } catch {} };
+  tryPlace();
+  if (!placed) { observer = new MutationObserver(...); }   // 插成功就根本不建 observer
+  ```
+  - 首次插入若落在 React 下一次 reconcile 会整棵替换掉的过渡容器上 → 节点被冲掉；
+  - 此时 `placed` 仍是 `true`，`tryPlace` 永远早退，**observer 又压根没建** → 入口**再也回不来**。
+- **修复**（对齐参考实现 `dsh-mnemon/lib/client.js` 的写法）：
+  - `placeEntry(root, entry)`：以 `newSession` 按钮为锚，且用**族选择器**（`[data-dsh-taskboard-entry], [data-dsh-ssh-entry], [data-dsh-mnemon-entry], [data-dsh-novel-forge-entry]`）排队，避免与其它第三方入口互相顶位；
+  - **双观察自愈**：`waitObserver`（等侧栏出现，observe `document.body`）+ `rootObserver`（常驻守着，`!root.contains(entry)` 就重插，`!root.isConnected` 就重解析 root）；
+  - 判据从「插过没有」改成「**现在还在不在**」（`document.body.contains(entry)`），这才是幂等的正确写法；
+  - 新增 `data-dsh-plugin` / `data-dsh-part` 标记；`apply()` 加 `console.info` 分诊日志（**没有这行 = apply 压根没被调用，问题在加载链路而非本文件**）。
+- **测试重写（关键）**：旧 `test/client.test.mjs` 全是 `code.includes('mountSidebarEntry')` 式的**字符串断言** —— 只要有这个名字就绿，于是上面这个真 bug 一路 77/77 绿灯。现改为**行为测试**：`test/helpers/dom.mjs` 提供照抄 dsh 真机 DOM 的仿真环境（`pI_x6G_sidebarCol` / `hHd-Xa_root` / `logoRow` / `newSession`），**真跑 `apply()`**，覆盖：插在正确位置、**被冲掉后自愈**、侧栏后到、**整棵替换后重挂**、点入口挂抽屉、经典脚本结构。**78/78 全绿**；反向验证：把自愈退化回旧语义 → 相关用例立刻变红。
+- **诊断教训**：`node --check` 在本包会按 **ESM** 解析（`"type": "module"`），而 dsh 按**经典脚本**执行 bundle —— 混入 `import/export` 会让整包 syntax error 却检查不出来。新自检脚本已把这条做成硬检查。
+- **注意**：`lib/client/drawer.js`、`lib/client/sidebar-entry.js` 是 **ESM**，dsh **只加载** `exports["./client"]`（`lib/client.js`），这两个文件目前是**不可达的死代码**，与 bundle 内联版本存在分叉风险。
+
 ## 0.3.10 (2026-09-13) — 可选文件缺失不算错：去梢余的可选 read 报错
 
 - **问题**：0.3.9 真机上《星海拾骨》读盘成功，唯独 `style-baseline.json` 如实报出 `workspace-file/not-found`——那是**正常状态**（该书从没跑过 `novel_style build`，基线文件本就不存在）。但 `probeReadBook` 把"没读到"一律推成 `readError`，面板刷了一道红，掩盖了"这书没基线"这个本可正常表达的信息。

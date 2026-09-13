@@ -8,7 +8,7 @@ import { gateChapterWrite, advanceStage } from '../lib/gate.js';
 import { applyFactUpdates, queryFacts, factsDigest, assertLedgerChapter, foreshadowSetup, foreshadowPayoff, openForeshadows, foreshadowDigest, overdueForeshadows } from '../lib/ledger.js';
 import { computeAudit, auditVerdict } from '../lib/audit.js';
 import { matchWorldEntries, buildContextPack, renderPack } from '../lib/contextpack.js';
-import { pathsFor, defaultNovel, chapterRecord, normalizeWorldEntry } from '../lib/store.js';
+import { pathsFor, defaultNovel, chapterRecord, normalizeWorldEntry, bookInSession, isUnclaimed, addBookSession } from '../lib/store.js';
 import { scanAiFlavor } from '../lib/noai.js';
 import { roughOutline, splitIntoChapters, isChapterHeading } from '../lib/import.js';
 import { diagnoseIntro, computeChapterDiagnosis } from '../lib/diagnose.js';
@@ -231,6 +231,29 @@ test('store: 章节记录版本追踪与路径表', () => {
     assert.deepEqual(rec.versions, [1, 2]);
     assert.equal(rec.latest, 2);
     assert.equal(rec.files.length, 2);
+});
+
+test('store: 会话归属——bookInSession / isUnclaimed / addBookSession', () => {
+    const n = defaultNovel({ title: 'x', genre: 'y', session: 's1' });
+    assert.deepEqual(n.sessions, ['s1'], '创建时带上会话戳');
+    assert.equal(bookInSession(n, 's1'), true);
+    assert.equal(bookInSession(n, 's2'), false);
+    assert.equal(bookInSession(n, ''), false, '★ 空会话 id 不能命中任何书（否则面板会全量显示）');
+    assert.equal(bookInSession(n, undefined), false);
+    assert.equal(isUnclaimed(n), false);
+
+    assert.equal(addBookSession(n, 's1'), false, '已归属的会话不重复追加');
+    assert.equal(addBookSession(n, 's2'), true);
+    assert.equal(addBookSession(n, null), false, '没有会话 id 时不得写入');
+    assert.deepEqual(n.sessions, ['s1', 's2'], '一本书可以被多个会话拥有（多会话接续同一本书）');
+
+    const fresh = defaultNovel({ title: 'l', genre: 'g' });
+    assert.deepEqual(fresh.sessions, [], '不传 session → 空归属集');
+    assert.equal(isUnclaimed(fresh), true);
+
+    // 0.5.0 之前的书完全没有 sessions 字段：必须按「未归属」处理，而不是炸
+    assert.equal(isUnclaimed({ title: 'legacy', chapters: {} }), true);
+    assert.equal(bookInSession({ title: 'legacy' }, 's1'), false);
 });
 
 test('store: 世界书条目校验', () => {
