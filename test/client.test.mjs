@@ -40,40 +40,50 @@ function loadClientBundle() {
 function makeCtxStub() {
     const injected = [];
     const registered = [];
+    const tabTypes = [];
     const ctx = {
         slots: {
             inject: (name, fn) => { injected.push({ name, fn }); return fn; },
             register: (meta, comp) => { registered.push({ meta, comp }); },
         },
+        sidebarRightTabs: { register: (def) => { tabTypes.push(def); return () => {}; } },
         effect: (fn) => fn(),
     };
-    return { ctx, injected, registered };
+    return { ctx, injected, registered, tabTypes };
 }
 
-test('client headless: 通过 __ModuleLoader__ 语义加载，inject 声明 slots 服务', () => {
+test('client headless: 通过 __ModuleLoader__ 语义加载，inject 声明 slots+sidebarRightTabs 服务', () => {
     const exports = loadClientBundle();
     // 注意：exports.inject 是 vm realm 里建的数组，原型不同于 node，需 Array.from 拉回
-    assert.deepEqual(Array.from(exports.inject), ['slots'], '模块必须声明 inject=["slots"]');
+    assert.deepEqual(Array.from(exports.inject).sort(), ['sidebarRightTabs', 'slots'],
+        '模块必须声明 inject=["slots","sidebarRightTabs"]');
     assert.equal(typeof exports.apply, 'function', '模块必须导出 apply(ctx)');
 });
 
-test('client headless: apply() 把 tab 面板与 tab 标题注册进右侧栏槽位', () => {
+test('client headless: apply() 先注册 tab 类型，再注册面板与标题 seat（id/key 同源）', () => {
     const { apply } = loadClientBundle();
-    const { ctx, injected, registered } = makeCtxStub();
+    const { ctx, injected, registered, tabTypes } = makeCtxStub();
     apply(ctx);
-    // 两个必须出现的槽位注入点
+    // ① 必须注册右侧栏 tab 类型（没有它就不会有 tab 入口）
+    assert.equal(tabTypes.length, 1, 'apply() 必须调用 sidebarRightTabs.register 恰好一次');
+    const def = tabTypes[0];
+    assert.equal(def.id, 'novel-forge', 'tab 类型 id 必须为 novel-forge');
+    assert.equal(def.kind, 'novel-forge', 'tab 类型 kind 必须唯一且稳定');
+    assert.equal(typeof def.title, 'function', 'tab 类型必须带 title()');
+    assert.equal(def.title(), '锻炉', 'tab 标题必须为 锻炉');
+    // ② 两个必须出现的槽位注入点
     const names = injected.map((i) => i.name).sort();
     assert.deepEqual(names, ['sidebar.right.pane.tab', 'sidebar.right.pane.tab.title'],
         'apply() 必须注入 tab 面板与 tab 标题两个槽位点',
     );
-    // 每个槽位注入的回调，执行时必须恰好触发一次 slots.register，且带同名槽位名
+    // ③ 每个槽位注入的回调，执行时恰好触发一次 slots.register，name 同名、key 同 tab id
     for (const { name, fn } of injected) {
         const before = registered.length;
         fn(); // 触发注入回调 → 内部调用 ctx.slots.register
         const added = registered.slice(before);
         assert.equal(added.length, 1, `槽位 ${name} 应产出恰好一次 register`);
         assert.equal(added[0].meta.name, name, `register 元数据 name 必须等于槽位 ${name}`);
-        assert.equal(added[0].meta.key, 'novel-forge', 'register 的 key 必须稳定为 novel-forge');
+        assert.equal(added[0].meta.key, 'novel-forge', 'register 的 key 必须与 tab 类型 id 一致（sidebarRightTabs 按 id 派发）');
         assert.equal(typeof added[0].comp, 'function', 'register 必须带一个组件');
     }
 });

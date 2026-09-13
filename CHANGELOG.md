@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2 (2026-09-12) — 修复"锻炉"tab 不出现：缺 sidebarRightTabs tab 类型注册
+
+- **根因**：右侧栏 tab 是"tab 类型 + 内容 seat"两层。光注册 `sidebar.right.pane.tab` seat（0.3.0 所写）不会生成 tab 入口；必须先 `ctx.sidebarRightTabs.register({ id, kind, title })` 创建 tab 类型，内容才按 **id** 派发进 seat（对齐 dsh-client-ui-sidebar-files 的 tab-types+pane 体系）。0.3.0 只做了后一半 → 真机"没有🔨锻炉"。
+- **修复**：`lib/client.js` 现在 `inject:["slots","sidebarRightTabs"]`，apply 先 `sidebarRightTabs.register({id:"novel-forge",kind:"novel-forge",title:()=>"锻炉"})`，tab id 同时作为两个 seat 的 key。
+- `test/client.test.mjs` 增强：断言 apply 调用 `sidebarRightTabs.register` 恰好一次、id/kind 唯一、title="锻炉"，且 seat key 与 id 同源。64/64 全绿。
+- ⚠️ client 图/负判定在 web 进程内缓存，需再次**重启 DSH web** 装载新 bundle（link 已同步，无需重装）后右侧栏应出现"🔨 锻炉"tab。
+
 ## 0.3.1 (2026-09-12) — client-half headless 注册验证门禁
 
 - **新增 `test/client.test.mjs`**：用 `node:vm` 以 `__ModuleLoader__` 真实语义加载 `lib/client.js`，物化 `{ inject, apply }`，再用 slots/effect stub 跑 `apply(ctx)` 断言右侧栏两个槽位（`sidebar.right.pane.tab` / `sidebar.right.pane.tab.title`）各注册一次、meta.name 与槽位同名、key=novel-forge、带组件函数。**把"假 ctx 载不了浏览器半"的验证坑填成可命令复现的门禁**——即便无浏览器也能确定性验证 client load 不炸、注册调用正确。

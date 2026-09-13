@@ -512,7 +512,14 @@ test('client 结构契约：package.json 声明 ./client + dsh.client，产物�
     const pkg = JSON.parse(fs.readFileSync('./package.json', 'utf8'));
     assert.equal(pkg.exports['./client'], './lib/client.js', 'exports["./client"] 必须指向 lib/client.js');
     assert.equal(pkg.dsh.client.platform, 'web', 'dsh.client 必须声明 platform=web');
-    assert.ok(Array.isArray(pkg.dsh.client.inject) && pkg.dsh.client.inject.length > 0, 'dsh.client.inject 必须非空');
+    // dsh.client.inject 是「信息性包名依赖」（打包器 external 解析用，非 Cordis 服务注入）：
+    // 组合阶段会按它从插件目录解析包，声明了不存在的包会被整体拒绝。本插件只
+    // require react（平台种子表），必须保持 inject 缺省/为空。
+    const inject = pkg.dsh.client.inject;
+    // inject 是打包器信息性依赖（external 解析用），宿主 peer 包（@deepseek-ai/*）不必存在于本地 node_modules
+    const isPeer = (x) => x.startsWith('@deepseek-ai/');
+    assert.ok(inject === undefined || (Array.isArray(inject) && inject.every((x) => isPeer(x) || fs.existsSync(path.join('./node_modules', x)))),
+        'dsh.client.inject 只能声明本地可达包或 @deepseek-ai/* 宿主 peer 包，或省略');
     const src = fs.readFileSync('./lib/client.js', 'utf8');
     assert.match(src, /^window\.__ModuleLoader__\.load\(/, 'client.js 必须以 __ModuleLoader__.load( 开头');
     assert.match(src, /id:\s*"dsh-novel-forge"/, 'client.js 的 load id 必须等于插件名');
