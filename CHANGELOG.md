@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.5 (2026-09-13) — 数据面渲染：书目控制台（真实读取 + 解析）
+
+- **读盘收敛**：新增 `probeReadBook`，对书目目录读取 4 个机器文件（`novel.json` / `账本/facts.json` / `账本/伏笔.json` / `.novel/style-baseline.json`），`read` 签名同样按多形态降级逐一尝试（对齐 0.3.4 的 list 收敛法）；能读到就顺手 parse——"读盘签名"与"真实渲染"一次收敛，失败带原始错误码不伪造。
+- **纯解析层 `lib/book-console.js`（新）**：把文件文本解析成紧凑书目摘要（标题/阶段/已写章/已批准细纲/账本条数/伏笔开没与超期/基线有无），`summarizeBook` 全容错（缺失、非法 JSON、结构不符一律降级不抛）。8 例 node --test 直测（用插件真实数据结构）。
+- **client 面渲染**：`ForgePanel` 新增「书目」卡，列出工作区里每本书的量化摘要；`loadBookConsole` 枚举 `list` 出的书目录逐个读盘。面板注册的 `inject` 工厂把 sessionId 带进来。
+- **parity 门禁**：client 内联解析（`summarizeBookClient`，浏览器半无 import、需内联）与服务端 `lib/book-console.js` 用同一批样本断言**同口径**，封死"两处实现漂移"。
+- **细节修正**：novel 缺失时 client 侧 chapters/approved 与 server 对齐为 `null`（不塌成 0）；一章都没读到时不造幽灵书目，只留 readError。
+- 新增 12 例（解析 8 + parity 1 + 读盘收敛 3）。**80/80 全绿**。
+- ⚠️ client bundle 按内容 hash 拉取，**刷新 DSH web 页面**即可装载（无需进程重启）；数据面是否读盘成功看「书目」卡的 read 行。
+
 ## 0.3.4 (2026-09-13) — 数据面开工：接上 Client Remote + 修面板版本硬编码
 
 - **修版本漂移（真 bug）**：面板徽章硬编码 `v0.3.0`，0.3.1→0.3.3 三轮都没跟着改，界面上挂了三版旧号。
