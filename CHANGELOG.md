@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.3.10 (2026-09-13) — 可选文件缺失不算错：去梢余的可选 read 报错
+
+- **问题**：0.3.9 真机上《星海拾骨》读盘成功，唯独 `style-baseline.json` 如实报出 `workspace-file/not-found`——那是**正常状态**（该书从没跑过 `novel_style build`，基线文件本就不存在）。但 `probeReadBook` 把"没读到"一律推成 `readError`，面板刷了一道红，掩盖了"这书没基线"这个本可正常表达的信息。
+- **修复**：specs 加"必需/可选"标记——`novel.json` **必需**（定义一本书，读不出不算书）；`账本/facts.json`、`账本/伏笔.json`、`.novel/style-baseline.json` **可选**（数据累计后才生成，缺失=零/未建，静默跳过、不进 readError）。摘要里缺失可选文件自然降级（facts=0、伏笔 open/0、styleBuilt=false）。
+- 摘要门槛收紧：只有在读到 `novel.json` 时才造摘要（可选文件全读到也只算陪衬），杜绝幽灵书目。
+- 新增 2 例锁定行为（可选 style not-found 不进 readError + novel 必需缺失才报错）。**85/85 全绿**。
+- 刷新 DSH web 页面即可：书目卡《星海拾骨》的红 read 行应消失，行情变成 `规划 · 账本 3 · 伏笔 1/1`（无"有基线"）。
+
+## 0.3.9 (2026-09-13) — 书目发现加预筛：非书目录不再被盲读
+
+- **实机验证结果：0.3.8 的数据面在真实 dsh 上跑通了。** `list(sessionId, ".")` 成功列出工作区根内容；`read` 成功读到书并带出 `absolutePath`；面板如实显示工作区内真书《星海拾骨》的 `planning · 账本 3 · 伏笔 1/1`，并**如实**报出 `style-baseline.json` 的 `workspace-file/not-found`（那本书确实还没建基线）。**面板功能验证通过。**
+- **修掉一个真缺陷**：`loadBookConsole` 原先把工作区根下**所有**一级目录都当书，每个盲读 4 个机器文件。实机里工作区根是 `~/Documents/other/`，含 `dsh-novel-forge/`（插件仓库）等非书目录 → 刷出满屏 `workspace-file/not-found`，把真实错误淹没。
+- **修复**：新增 `dirHasNovel(wf, sessionId, dir)`——先用 1 次轻量 `list` 判断目录里有没有 `novel.json`，只对真正的锻炉书读盘。**1 次 list 换掉 4 次 read**，既省请求又去噪。任何异常（无 `list` 方法 / `ok:false` / 抛错）一律当"不是书"，候选筛选宁缺勿滥、绝不抛。
+- 加扫描上限 `MAX_SCAN=30` / `MAX_BOOKS=12`，防工作区被塞进巨型目录时打爆面板。
+- 新增 2 例（非书目录不被误读 + `dirHasNovel` 全异常降级）。**83/83 全绿**。
+- **诊断教训**：本次一度误判「面板读到旧数据」，真相是我把验证样本建到了**工作区根的子目录**（`dsh-novel-forge/星海拾骨/`）而不是工作区根下。**dsh 的工作区根 = dsh 进程的启动目录**，样本必须放在它能 `list` 到的那一层。这也是**插件开发目录常在数据目录的子层**时的典型陷阱。先 `list(sessionId, ".")` 把工作区真实内容打出来，比任何猜测都快。
+
+## 0.3.8 (2026-09-13) — 纠正数据面根路径：list 受工作区边界限制，read 不受限
+
+- **推翻 0.3.7 的结论**。0.3.7 从本地 mock 归纳出"根目录只能传工作区绝对根、`$host.home` 就是它"——**这个前提是错的**。它在真实 Host 上 100% 失败，错误码 `workspace-file/outside-workspace`：`"/Users/huangshengju" is outside the workspace`。
+- **真契约**（源：依赖包自带文档 `@deepseek-ai/dsh-api-workspace-files` 的 README + types，非猜测）：
+  - `list(sessionId, path, signal?)` —— **path 必须落在会话工作区内**（`list` 与 `changes` 受限）；空串是 `gateway/bad-request`。
+  - `read(sessionId, path, range, signal?)` / `stat` / `readBytes` / `readAll` / `readRelated` —— **不受工作区边界限制**，接受绝对路径，可读工作区外。原文：「文件读取可以指向工作区外路径；目录列举与已埋点的文件系统观察仍限定于工作区」。
+  - 工作区根 = `SessionHeader.cwd`（**单根、不可变**）；`process.cwd()` 只是无 cwd 会话的兜底，且明确"不支持额外可写根"（源：`dsh-sandbox-policy`）。
+  - `$host.home` 是 **Host 机器的家目录**，通常正是工作区根的**父目录**——拿它当 list 根必被拒。
+- **修复**：
+  1. `probeRemote` 的 list 根改用**工作区相对根 `"."`**（备用 `"./"`）；删掉 `$host.home` 形态与空串形态，并在错误里点明"list 只能列会话工作区内的路径"。
+  2. `probeReadBook` 的 read 形态改为真实 arity：`read(sessionId, path, {}, signal?)`——**range 是必填对象**，缺参或传 undefined 会以装配错误（arity）reject；0.3.7 的 `read(sessionId, path)` 与 `(sessionId, path, undefined)` 都属缺参。
+  3. read 返回值按 `WorkspaceFileText` 取 `text` 字段（不再假定裸字符串），并带出 `absolutePath`；面板新增「盘」行 ＝ 确实读到真实文件的凭证。
+  4. `loadBookConsole` 加**两态判定**：工作区根下直接有 `novel.json` ⇒ 根本身就是一本书（bookName 传空串，路径**不带前导斜杠**，否则会变成绝对路径绕过工作区根）；否则把一级子目录当候选书。
+  5. 面板「书目」空态给出可执行的修复指引：`DSH_PROJECT=<书库目录> ~/restart-dsh.sh`；`host` 行标注"机器 home，非工作区根"。
+- **测试**：改掉"跟着自己实现走"的 mock，让 mock 复刻真实契约——list 对工作区外路径回 `outside-workspace`、read 缺 range 直接抛装配错误。新增 e2) 反向防线（禁止再把 `$host.home` 当根）+ 两个用例（空 bookName 路径无前导斜杠、两态判定）。**82/82 全绿**。
+- **教训**：本地 mock 若跟着自己的实现写、而不是跟着被集成的真实接口写，就会产出「全绿但接不上」的假象——0.3.4~0.3.7 连续四版都栽在这一件事上。凡猜调用形态，先读依赖包自带的 README/types。
+
 ## 0.3.7 (2026-09-13) — 修列目录：根目录用 $host.home 作为 list 根路径
 
 - **根因（实测错误码收敛）**：`workspaceFiles/list` 收**非空 path**——空串被 `path is required` 拒；对象实参被 `rejected "path"` 拒；实参不足被 `expected 2 business argument(s) plus an optional AbortSignal` 拒。解析逻辑是 `{startsWith("/") ? path : ROOT/path}`，根目录只能传**工作区绝对根**。
