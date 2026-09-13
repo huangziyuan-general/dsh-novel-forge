@@ -76,12 +76,13 @@ function makeCtxStub({ seatMounted = false } = {}) {
     return { ctx, injected, registered, tabTypes, opened, openFailures, mountSeat: () => { state.seatMounted = true; } };
 }
 
-test('client headless: 通过 __ModuleLoader__ 语义加载，inject 声明 slots + sidebarRightTabs + sidebarRight + remote', () => {
+test('client headless: 通过 __ModuleLoader__ 语义加载，inject 声明 slots + sidebarRightTabs + sidebarRight + remote + remote.workspaceFiles', () => {
     const { exports } = loadClientBundle();
     // 注意：exports.inject 是 vm realm 里建的数组，原型不同于 node，需 Array.from 拉回
-    assert.deepEqual(Array.from(exports.inject).sort(), ['remote', 'sidebarRight', 'sidebarRightTabs', 'slots'],
-        '模块必须声明 inject=["slots","sidebarRightTabs","sidebarRight","remote"]'
-        + '（打开 tab 要导航面；数据面要 remote）');
+    assert.deepEqual(Array.from(exports.inject).sort(),
+        ['remote', 'remote.workspaceFiles', 'sidebarRight', 'sidebarRightTabs', 'slots'],
+        '模块必须声明 inject=["slots","sidebarRightTabs","sidebarRight","remote","remote.workspaceFiles"]'
+        + '（打开 tab 要导航面；数据面要 remote + 其 workspaceFiles 子域显式声明）');
     assert.equal(typeof exports.apply, 'function', '模块必须导出 apply(ctx)');
 });
 

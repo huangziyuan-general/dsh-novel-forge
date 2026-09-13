@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.6 (2026-09-13) — 修数据面：remote 子域必须显式声明 inject
+
+- **根因**：`ctx.remote.workspaceFiles` 被 remote Proxy 挡住，报 `cannot get property "remote.workspaceFiles" without inject`。remote 的每个**子域**都要求消费者把 `"remote.<domain>"` 写进 client 的 `inject` 数组，只声明 `"remote"` 不够；对齐官方 sidebar-files / documentpreview（二者都显式声明 `"remote.workspaceFiles"`）。
+- **修复**：inject 增 `"remote.workspaceFiles"`（数据面的唯一读盘通道，缺它整块数据面起不来）。同时测试断言从 4 项扩到 5 项（含 `remote.workspaceFiles`），杜绝回退。
+- **实证确认调用形态**：服务端 RPC 是 `workspaceFiles/list|read|stat|changes`，收**工作区相对 path**；client 调用为 `workspaceFiles.list(sessionId, path, signal)`——0.3.5 的 `probeReadBook` 形态 0 正好命中。
+- 样例书《星海拾骨》（novel.json + 账本 3 条 + 伏笔 1 开）已就位，供刷新后验证书目卡。
+- 80/80 全绿。⚠️ 刷新 DSH web 页面装载即可。
+
 ## 0.3.5 (2026-09-13) — 数据面渲染：书目控制台（真实读取 + 解析）
 
 - **读盘收敛**：新增 `probeReadBook`，对书目目录读取 4 个机器文件（`novel.json` / `账本/facts.json` / `账本/伏笔.json` / `.novel/style-baseline.json`），`read` 签名同样按多形态降级逐一尝试（对齐 0.3.4 的 list 收敛法）；能读到就顺手 parse——"读盘签名"与"真实渲染"一次收敛，失败带原始错误码不伪造。
