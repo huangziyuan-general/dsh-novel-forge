@@ -140,15 +140,15 @@ const GOOD_CHAPTER = [
     '她忽然吹熄了灯。',
 ].join('\n');
 
-test('装载：18 个工具注册 + 系统提示注入', () => {
+test('装载：19 个工具注册 + 系统提示注入', () => {
     assert.equal(hasSdk, true, '缺宿主 SDK symlink：先 npm run setup-dev');
-    assert.equal(ctx._registered.length, 18);
+    assert.equal(ctx._registered.length, 19);
     assert.deepEqual(
         ctx._registered.map((t) => t.name),
         ['novel_project', 'novel_outline', 'novel_character', 'novel_worldbook', 'novel_scene', 'novel_briefing',
          'novel_write_chapter', 'novel_ledger', 'novel_noai_scan', 'novel_audit', 'novel_style',
          'novel_propose', 'novel_import', 'novel_export', 'novel_glossary', 'novel_clone_project',
-         'novel_diagnose', 'novel_polish'],
+         'novel_diagnose', 'novel_polish', 'novel_search'],
     );
     assert.equal(ctx._sections.length, 1);
     assert.ok(ctx._sections[0].text.includes('代码强制') === false);
@@ -1042,4 +1042,97 @@ test('★ C4/C5：平台审稿与敏感自查接进 novel_audit（可选维度�
         () => audit.execute({ book: '熔断测试书', chapter: 1, platform: '未知平台' }, exec),
         /未知平台/,
     );
+});
+
+// ── G1 长篇检索（第五批）：走真实工具注册，覆盖 build → query → 幂等 → 派生物可重建 ──
+// 这条链是「零依赖 + 中文自切分」唯一端到端证据：batch5 单测只覆盖纯函数，
+// sqlite/FTS5 那一层（node:sqlite + fts5 + 二元切分入库）只有这里真跑。
+test('★ G1 长篇检索：build 建索引 → query 按记忆碎片找回 → 索引可删可重建', async () => {
+    const project = tool('novel_project');
+    const outline = tool('novel_outline');
+    const write = tool('novel_write_chapter');
+    const search = tool('novel_search');
+
+    const BOOK = '检索试点书';
+    await project.execute({ action: 'init', book: BOOK, title: BOOK }, exec);
+
+    // 两章刻意用**不同**词汇分布，好验证「碎片 → 章」的指向性
+    const CH1 = [
+        '周砚把斗笠的系带解开，随手搁在码头的石阶上。风灯在桅杆之间摇晃，把江面照成一条条抖动的碎金。他数着远处的更鼓，一声，两声，直到夜风把他的衣角掀起来，又落下。',
+        '他等的人没有来。倒是江心有艘乌篷船悄悄靠了岸，船头立着个戴斗笠的身影，一动不动地望了他许久，像是在确认什么。岸上的纤夫收工了，绳索在石桩上勒出细响。',
+        '「你是周砚？」那人终于开口。周砚没有应声，只是把袖中的短刃往里收了半寸。脚下的石阶被夜露浸得发滑，他退半步，靴底碾过一粒碎石。',
+        '他把斗笠檐往下压了压，遮住半张脸。江风穿过桅杆，带起一阵铁锈味，那是上游船坞里新补的船板在滴桐油。远处有狗吠，吠了两声，很快又停了。',
+        '他忽然想起师父临走前那句没头没尾的话，说这一带的水底下埋着不该埋的东西。那时他只当是醉话，如今站在码头上，竟也觉着江风里带着一股散不去的腥气。',
+    ].join('\n\n');
+    const CH2 = [
+        '天亮时雾散了，义庄的后墙塌了个角。周砚蹲在被雨水泡软的泥土里，翻出三口空棺材，棺盖上的漆皮一碰就掉，露出底下发黑的木纹。',
+        '棺底刻着同样的记号——一枚被划掉的铜钱。这记号他见过，在三年前师父失踪的那一夜，也在师父留下的那本残卷的最后一页。',
+        '他把记号描在纸上，折好塞进衣襟。远处传来更鼓，一声闷响，惊起满树的寒鸦，扑棱棱地掠过青灰的屋顶，落向西边的乱葬岗。',
+        '义庄的门框上还挂着去年的白幡，布边烂成流苏。周砚站起身拍了拍膝上的泥，回头望了一眼那三口棺材，心里那点疑惑像水渍一样慢慢洇开。',
+        '他把那页纸对着天光又看了一遍。笔迹是他自己的，可他怎么也想不起来是什么时候描下的——昨夜他分明早早睡下了，连窗纸都没揭过，更不曾点灯。',
+    ].join('\n\n');
+
+    for (const n of [1, 2]) {
+        await outline.execute({ action: 'save_chapter', book: BOOK, chapter: n, outline: `## 本章必写场景\n1. 试点场景${n}\n` }, exec);
+        await outline.execute({ action: 'approve', book: BOOK, chapter: n }, exec);
+    }
+    await write.execute({ book: BOOK, chapter: 1, title: '码头夜会', content: CH1, summary: '周砚夜会神秘人', cast: '周砚' }, exec);
+    await write.execute({ book: BOOK, chapter: 2, title: '义庄空棺', content: CH2, summary: '发现空棺与记号', cast: '周砚' }, exec);
+
+    const built = await search.execute({ action: 'build', book: BOOK }, exec);
+    if (built.degraded) {
+        // 运行时没有 node:sqlite：检索整体退化为关键词匹配（设计红线，不报错）
+        const r = await search.execute({ action: 'query', book: BOOK, q: '斗笠' }, exec);
+        assert.equal(r.degraded, true);
+        assert.equal(r.mode, 'substring');
+        assert.ok(r.hits.length >= 1, '降级路径也要能把段落找回来');
+        return;
+    }
+
+    assert.equal(built.scanned, 2, '两章都应被扫入索引');
+    assert.ok(built.chunks >= 2, `两章至少切出两块，实际 ${built.chunks}`);
+    assert.equal(built.chapters, 2);
+
+    // ★ 索引必须落在 书/.novel/index.db —— 跟着书走，删书即删索引
+    const indexPath = path.join(root, BOOK, '.novel', 'index.db');
+    assert.ok(fs.existsSync(indexPath), `索引文件必须落盘在 ${path.relative(root, indexPath)}`);
+
+    // ★ 核心断言：查询是**记忆碎片**「戴斗笠的人」，正文里的原文是「戴斗笠的身影」——
+    //   字面不完全重合，靠二元切分才召得回（这正是 FTS5 默认分词器做不到的那件事）
+    const r1 = await search.execute({ action: 'query', book: BOOK, q: '戴斗笠的人' }, exec);
+    assert.ok(r1.hits.length >= 1, '记忆碎片必须能召回（这是 G1 的全部意义）');
+    assert.equal(r1.hits[0].chapter, 1, '「戴斗笠的人」应指向码头夜会那章');
+    assert.ok(r1.hits[0].hitRatio >= 0.75, `命中比例应较高，实际 ${r1.hits[0].hitRatio}`);
+    assert.equal(r1.degraded, false);
+
+    // 换一个碎片 → 指向第二章
+    const r2 = await search.execute({ action: 'query', book: BOOK, q: '义庄空棺材' }, exec);
+    assert.ok(r2.hits.some((h) => h.chapter === 2), '「义庄空棺材」应命中第二章');
+    assert.ok(r2.hits[0].hitRatio > 0);
+
+    // 没命中不抛错，且给出可操作的召回建议
+    const r3 = await search.execute({ action: 'query', book: BOOK, q: '赛博朋克霓虹灯' }, exec);
+    assert.equal(r3.hits.length, 0, '无关查询不该硬凑命中');
+    assert.ok(r3.notes.some((n) => n.includes('min_hit')), '未命中要提示怎么调召回');
+
+    // ★ 增量：内容没动 → 一块都不重写（指纹判等）
+    const again = await search.execute({ action: 'build', book: BOOK }, exec);
+    assert.equal(again.added, 0, '未改动的块不得重复入索引');
+    assert.equal(again.updated, 0);
+    assert.equal(again.chunks, built.chunks);
+
+    // ★ 派生物可重建：直接删掉索引库，重跑 build 应得到一模一样的块数
+    const { openIndex, indexStats } = await import('../lib/retrieval.js');
+    const opened = await openIndex(indexPath);
+    const before = indexStats(opened.db).chunks;
+    opened.db.close();
+    fs.rmSync(indexPath);
+    const rebuilt = await search.execute({ action: 'build', book: BOOK }, exec);
+    assert.equal(rebuilt.chunks, before, '索引删了重跑即得——它只是派生物，不是真相来源');
+
+    // status 看得到索引概览
+    const st = await search.execute({ action: 'status', book: BOOK }, exec);
+    assert.equal(st.degraded, false);
+    assert.equal(st.chapters, 2);
+    assert.equal(st.chunks, before);
 });

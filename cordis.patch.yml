@@ -11,3 +11,9 @@
         scanTopK: 8
         repetitionWindow: 10
         skipPresetDeploy: false
+        # D1 旁路引擎（面板一键润色/校对）：通道默认继承当前会话路由，想分流就这样覆写——
+        # engine:
+        #   retries: 2
+        #   attachSession: false
+        #   channels:
+        #     polish: { provider: deepseek, model: deepseek-chat, maxTokens: 8192, timeoutMs: 180000 }
