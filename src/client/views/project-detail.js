@@ -1,20 +1,45 @@
-// src/client/views/project-detail.js — 项目详情（写章 / 保存 / 导出 / 诊断）。
+// src/client/views/project-detail.js — 项目详情：两个标签（基本信息 / 章节听书）。
 //
+// 「基本信息」＝ 原来的详情页（选章 / 编辑 / 保存 / 导出 / 诊断）；
+// 「章节听书」＝ 目录 + 语音连播（views/chapters.js）。
 // 「一键写章 / 润色 / 诊断」需要模型参与，面板只能给引导 —— 真正的动作
-// 在会话里由 novel_* 工具完成。面板负责的是确定性部分：读章、改稿、存稿、导出。
+// 在会话里由 novel_* 工具完成。面板负责的是确定性部分：读章、改稿、存稿、导出、听书。
 import { h } from '../react.js';
 import { btnStyle, inputStyle, errStyle, okStyle, hintStyle, miniBtnStyle, dangerBtnStyle, primaryBtnStyle } from '../styles.js';
+import { ChapterListView } from './chapters.js';
+import { ProjectOverviewView } from './overview.js';
+
+/** 标签按钮；激活态用主色描边。 */
+const tabBtnStyle = (active) => ({
+	...btnStyle,
+	padding: '4px 12px',
+	fontSize: '12px',
+	...(active ? {
+		borderColor: 'var(--dsw-alias-accent-strong, #8ab4ff)',
+		color: 'var(--dsw-alias-accent-strong, #8ab4ff)',
+		fontWeight: 700,
+	} : {}),
+});
 
 export function ProjectDetailView({ state: s }) {
 	const chapterCount = s.detail?.chapters ? Object.keys(s.detail.chapters).length : 0;
-	return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-		h('button', { 'data-action': 'back', style: btnStyle }, '← 返回'),
 
-		s.detail ? h('div', {},
-			h('div', { style: { fontWeight: 700 } }, s.detail.title || s.selected),
-			h('div', { style: { ...hintStyle, fontSize: '12px' } },
-				`${s.detail.stage ? '阶段:' + s.detail.stage + ' · ' : ''}${chapterCount} 章`),
-		) : null,
+	// ── 标签条 ──
+	const tabBar = h('div', { style: { display: 'flex', gap: '6px' } },
+		h('button', { 'data-action': 'detail-tab', 'data-tab': 'info', style: tabBtnStyle(s.detailTab !== 'chapters') },
+			'📋 基本信息'),
+		h('button', { 'data-action': 'detail-tab', 'data-tab': 'chapters', style: tabBtnStyle(s.detailTab === 'chapters') },
+			'🎧 章节听书'),
+	);
+
+	// ── 标签一：基本信息（要素总览 + 本章编辑） ──
+	const infoView = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+
+		// 小说基本要素：档案 / 大纲 / 角色卡 / 设定 / 时间线
+		ProjectOverviewView({ state: s }),
+
+		h('div', { style: { fontWeight: 600, fontSize: '13px', borderTop: '1px solid var(--dsw-alias-border-l3, #333)', paddingTop: '8px' } },
+			'✍️ 本章编辑'),
 
 		// 章节选择 + 需要模型的动作
 		h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
@@ -86,5 +111,13 @@ export function ProjectDetailView({ state: s }) {
 		h('div', { style: { display: 'flex', gap: '6px' } },
 			h('button', { 'data-action': 'goto-lorebook', 'data-id': s.selected, style: miniBtnStyle }, '本书世界书'),
 		),
+	);
+
+	return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+		h('button', { 'data-action': 'back', style: btnStyle }, '← 返回'),
+		tabBar,
+		s.detailTab === 'chapters'
+			? h(ChapterListView, { state: s })
+			: infoView,
 	);
 }

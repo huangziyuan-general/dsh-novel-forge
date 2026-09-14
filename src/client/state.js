@@ -29,6 +29,12 @@ export function initialState() {
 		draft: '', draftVersion: 0,
 		polishing: false, polishPreview: null,
 		diagnosing: false, report: null,
+		// 小说基本要素（基本信息标签：档案/大纲/角色卡/设定/账本时间线）
+		elements: null, elementsLoading: false,
+		// 详情页两个标签：'info'（基本信息）| 'chapters'（章节听书）
+		detailTab: 'info',
+		chapterList: [], chapterListLoading: false,
+		playback: { status: 'idle', currentNo: null },
 		// 世界书
 		loreEntries: [], loreForm: emptyLoreForm(), loreBusy: false,
 		// 导出 / 删除

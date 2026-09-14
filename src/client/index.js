@@ -15,10 +15,12 @@
 import { registerForgeTab, openForgeTab, tabDefinition, TAB_ID, TAB_KIND } from './forge-tab.js';
 import { startForgeAutoOpen, currentSessionId } from './session-watch.js';
 import { ForgePanel, createForgeController } from './panel.js';
+import { chunkText, createTtsPlayer, resolveSynth } from './tts.js';
+import { apiFetch, FETCH_TIMEOUT_MS } from './api.js';
 
 // 版本号：必须与 package.json 的 version 一致。
 // build-client.mjs 会把它与 package.json 对账，不一致直接构建失败（防发行漂移）。
-const PLUGIN_VERSION = '0.5.1';
+const PLUGIN_VERSION = '0.6.3';
 
 // 供视图头部徽标读取 —— 让视图层不必反向 import 入口（避免循环依赖）。
 window.__NOVEL_FORGE_VERSION__ = PLUGIN_VERSION;
@@ -82,4 +84,6 @@ export { inject, apply, PLUGIN_VERSION };
 export const __internals = {
 	TAB_ID, TAB_KIND, tabDefinition, openForgeTab,
 	currentSessionId, startForgeAutoOpen, ForgePanel, createForgeController,
+	chunkText, createTtsPlayer, resolveSynth,
+	apiFetch, FETCH_TIMEOUT_MS,
 };

@@ -312,6 +312,299 @@ test('★ 事件代理：attach 后 data-action 能走通，detach 后不再响�
     assert.equal(seq.requests.length, count, 'detach 之后不再响应（否则面板卸载后还留着一份监听）');
 });
 
+// ── 章节听书（0.6.0）：两个标签 + 语音连播 ──
+
+/** 朗读对象构造器（镜像真机：Web Speech 只收 SpeechSynthesisUtterance 实例）。 */
+class SpeechSynthesisUtterance {
+    constructor(text = '') { this.text = String(text); this.lang = 'zh-CN'; this.rate = 1; }
+}
+
+/** 语音引擎替身：speak 只入队，onend 由测试手动触发（真机里是异步回调）。
+ *  ⚠️ 按真机契约收口：只收 SpeechSynthesisUtterance 实例，普通对象直接 TypeError ——
+ *  否则"真机炸"会一路绿灯（见 0.4.2/0.4.3 两次学费）。 */
+function makeSynth() {
+    const spoken = [];
+    return {
+        spoken,
+        cancelCount: 0, pauseCount: 0, resumeCount: 0,
+        speak(u) {
+            if (!(u instanceof SpeechSynthesisUtterance)) {
+                throw new TypeError("The provided value is not of type 'SpeechSynthesisUtterance'");
+            }
+            spoken.push(u);
+        },
+        cancel() { this.cancelCount += 1; },
+        pause() { this.pauseCount += 1; },
+        resume() { this.resumeCount += 1; },
+    };
+}
+
+/** 按路径分发的假 fetch：目录 3 章、每章同一段正文、要素齐全。 */
+function makeFetchRouter(requests) {
+    const CHAPTERS = [
+        { no: 1, title: '初入龙渊', chars: 20 },
+        { no: 2, title: '夜训', chars: 20 },
+        { no: 3, title: '飞刀', chars: 20 },
+    ];
+    const CHAPTER_TEXT = '龙渊的清晨来得比城市早。\n操场上已经站满了人。';
+    const ELEMENTS = {
+        meta: { title: '星海拾骨', genre: '玄幻', logline: '在星海捡骨头的人。', stage: 'planning', createdAt: '2026-09-13T04:55:48Z', updatedAt: '2026-09-13T04:55:48Z', cast: ['林晚'] },
+        outline: { full: null, chapterOutlines: [] },
+        characters: [{ name: '林晚', text: '主角卡内容' }],
+        worldbookCount: 0, glossaryCount: 0,
+        facts: [{ entity: '林晚', key: '境界', value: '拾骨锻体一炉', chapter: 1 }],
+        foreshadows: [],
+    };
+    return (url, init) => {
+        // 路径里的书名是 encodeURIComponent 过的 —— decode 后好断言
+        const u = decodeURIComponent(String(url));
+        requests.push({ url: u, init });
+        const respond = (value) => Promise.resolve({ json: () => Promise.resolve({ ok: true, value }) });
+        if (/\/elements($|\?)/.test(u)) return respond(ELEMENTS);
+        if (/\/chapters\/\d+($|\?)/.test(u)) return respond(CHAPTER_TEXT);
+        if (/\/chapters($|\?)/.test(u)) return respond(CHAPTERS);
+        if (/\/projects\/[^/?]+($|\?)/.test(u)) return respond({ title: '星海拾骨', stage: 'planning', chapters: {} });
+        if (u.includes('scope=unclaimed')) return respond([]);
+        return respond([{ name: '星海拾骨' }]);
+    };
+}
+
+/** 开一本书：语音替身挂在沙箱 globalThis 上（resolveSynth 从那里取）。 */
+function bootBook({ withSynth = true } = {}) {
+    const synth = withSynth ? makeSynth() : null;
+    const requests = [];
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, {
+        fetch: makeFetchRouter(requests),
+        // 镜像真机：speechSynthesis + SpeechSynthesisUtterance 都在全局（defaultUtteranceFactory 从 globalThis 取）
+        ...(withSynth ? { sandboxExtra: { speechSynthesis: synth, SpeechSynthesisUtterance } } : {}),
+    });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+    return { synth, requests, mod, controller };
+}
+
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+test('★ 听书目录：openProject 拉章节目录；两个标签可来回切', async () => {
+    const { requests, controller } = bootBook();
+    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    assert.ok(requests.some((r) => /\/projects\/星海拾骨\/chapters($|\?)/.test(r.url)),
+        '★ 打开书必须拉章节目录（它既是听书清单，也是连播的边界）');
+    assert.equal(controller.state.chapterList.length, 3, '目录落到 state.chapterList');
+    assert.equal(controller.state.detailTab, 'info', '默认落在「基本信息」标签');
+
+    await controller.handleAction('detail-tab', { dataset: { tab: 'chapters' } });
+    assert.equal(controller.state.detailTab, 'chapters', '★ 能切到「章节听书」标签');
+    await controller.handleAction('detail-tab', { dataset: { tab: 'info' } });
+    assert.equal(controller.state.detailTab, 'info', '能切回「基本信息」');
+});
+
+test('★ 基本要素：openProject 拉 /elements（档案/大纲/角色卡/设定/账本），失败置空不炸', async () => {
+    const { requests, controller } = bootBook();
+    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    assert.ok(requests.some((r) => /\/projects\/星海拾骨\/elements($|\?)/.test(r.url)),
+        '★ 打开书必须拉基本要素（基本信息标签就是要素总览）');
+    const el = controller.state.elements;
+    assert.ok(el && el.meta, '要素落到 state.elements');
+    assert.equal(el.meta.title, '星海拾骨');
+    assert.equal(el.characters.length, 1, '角色卡列表落地');
+    assert.equal(el.facts.length, 1, '账本事实落地（时间线数据源）');
+
+    // elements 接口挂了也不能影响打开书 —— 置空、视图给空态
+    const requests2 = [];
+    const dom = createDom();
+    const failElements = (url) => {
+        const u = decodeURIComponent(String(url));
+        requests2.push(u);
+        if (/\/elements($|\?)/.test(u)) return Promise.reject(new Error('boom'));
+        if (/\/chapters\/\d+($|\?)/.test(u)) return Promise.resolve({ json: () => Promise.resolve({ ok: true, value: '' }) });
+        if (/\/chapters($|\?)/.test(u)) return Promise.resolve({ json: () => Promise.resolve({ ok: true, value: [] }) });
+        if (/\/projects\/[^/?]+($|\?)/.test(u)) return Promise.resolve({ json: () => Promise.resolve({ ok: true, value: { title: '书', chapters: {} } }) });
+        return Promise.resolve({ json: () => Promise.resolve({ ok: true, value: [] }) });
+    };
+    const mod2 = loadClient(dom, BUNDLE, { fetch: failElements });
+    const c2 = mod2.exports.__internals.createForgeController({ sessionId: 's1' });
+    await c2.handleAction('open', { dataset: { id: '书' } });
+    assert.equal(c2.state.elements, null, '★ 要素接口失败 → 置 null（视图渲染空态），书照常打开');
+    assert.equal(c2.state.detail?.title, '书', '书的主体数据不受影响');
+});
+
+test('★ 连播：从指定章开始，读完自动接下一章，目录尽头自动停', async () => {
+    const { synth, requests, controller } = bootBook();
+    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+
+    // 指定从第 2 章开始听
+    await controller.handleAction('play-from', { dataset: { no: '2' } });
+    assert.equal(controller.state.playback.currentNo, 2, '★ 「从哪章听」由用户指定');
+    assert.equal(controller.state.playback.status, 'playing');
+    assert.equal(synth.spoken.length, 1, '第 2 章正文已入朗读队列');
+    assert.ok(synth.spoken[0].text.includes('龙渊的清晨'), '读的是取回来的章节文本');
+
+    // 读完第 2 章（触发末块 onend）→ 自动取并读第 3 章
+    synth.spoken[synth.spoken.length - 1].onend();
+    await tick();
+    assert.ok(requests.some((r) => /\/chapters\/3($|\?)/.test(r.url)), '★ 读完一章自动去取下一章（连播的核心）');
+    assert.equal(synth.spoken.length, 2, '第 3 章继续朗读');
+    assert.equal(controller.state.playback.currentNo, 3);
+
+    // 第 3 章是目录尽头 → 读完收工，不空转
+    synth.spoken[synth.spoken.length - 1].onend();
+    await tick();
+    assert.equal(controller.state.playback.status, 'idle', '★ 目录尽头自动停');
+    assert.equal(controller.state.playback.currentNo, null);
+});
+
+test('★ stop 即停：必须 cancel 语音引擎，迟到的 onend 不复活播放', async () => {
+    const { synth, controller } = bootBook();
+    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    await controller.handleAction('play-from', { dataset: { no: '1' } });
+    assert.equal(controller.state.playback.status, 'playing', '前置：已在播放');
+
+    const spokenCount = synth.spoken.length;
+    await controller.handleAction('playback-stop', { dataset: {} });
+    assert.equal(controller.state.playback.status, 'idle');
+    assert.ok(synth.cancelCount >= 1, '★ stop 必须 cancel 引擎 —— 不 cancel 声音停不下来');
+
+    // 真实浏览器 cancel 之后仍可能补发 onend —— 必须被代际计数作废
+    synth.spoken[spokenCount - 1]?.onend?.();
+    await tick();
+    assert.equal(synth.spoken.length, spokenCount, '★ 迟到的 onend 不得触发下一块（防「停了又活过来」）');
+    assert.equal(controller.state.playback.status, 'idle');
+});
+
+test('暂停 / 继续：状态机 playing ↔ paused', async () => {
+    const { synth, controller } = bootBook();
+    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    await controller.handleAction('play-from', { dataset: { no: '1' } });
+
+    await controller.handleAction('playback-pause', { dataset: {} });
+    assert.equal(controller.state.playback.status, 'paused');
+    assert.ok(synth.pauseCount >= 1, '暂停要透传给语音引擎');
+
+    await controller.handleAction('playback-resume', { dataset: {} });
+    assert.equal(controller.state.playback.status, 'playing');
+    assert.ok(synth.resumeCount >= 1, '继续要透传给语音引擎');
+});
+
+test('★ 无语音引擎：给可读报错而不是静默炸掉', async () => {
+    const { controller } = bootBook({ withSynth: false });
+    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    controller.state.error = '';
+    await controller.handleAction('play-from', { dataset: { no: '1' } });
+    assert.match(controller.state.error, /语音|speechSynthesis/, '★ 报错要说人话（用户能看懂为什么没声音）');
+    assert.notEqual(controller.state.playback.status, 'playing', '没引擎就不能进入播放态');
+});
+
+test('★ 真机契约：speak 只收 SpeechSynthesisUtterance 实例，普通对象被引擎拒也不卡死', async () => {
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE);
+    const strictSynth = makeSynth();   // 严格替身：普通对象必抛 TypeError（镜像真机）
+    const player = mod.exports.__internals.createTtsPlayer({
+        synth: strictSynth,
+        loadChapter: async () => '第一段。\n第二段。',
+        hasChapter: () => false,
+        nextChapterAfter: () => null,
+        makeUtterance: (t) => ({ text: t, lang: 'zh-CN', rate: 1 }),  // 故意给普通对象
+        onChange() {},
+        chunkLimit: 40,
+    });
+    await player.playFrom(1);   // 普通对象 → speak 抛 TypeError → speakNext 的 try/catch 吞掉并自动收工
+    await tick();
+    assert.equal(player.status, 'idle', '★ 普通对象被引擎拒绝后不能卡死在 playing（正常收工）');
+});
+
+test('★ 连播按目录跳缺口：章号不连续时从上一章跳到下一存在的章', async () => {
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { sandboxExtra: { SpeechSynthesisUtterance } });  // 让默认工厂产真实例
+    const synth = makeSynth();
+    const nos = [1, 3, 5];   // 只有 1、3、5 —— 老逻辑 currentNo+1 会在缺口 2 处早停
+    const player = mod.exports.__internals.createTtsPlayer({
+        synth,
+        loadChapter: (no) => Promise.resolve(`第 ${no} 章正文。`),
+        hasChapter: (no) => nos.includes(no),
+        nextChapterAfter: (no) => nos.find((n) => n > no) ?? null,
+        onChange() {},
+        chunkLimit: 60,
+    });
+    await player.playFrom(1);
+    await tick();
+    assert.equal(player.currentNo, 1, '从第 1 章起播');
+    synth.spoken[synth.spoken.length - 1].onend();
+    await tick();
+    assert.equal(player.currentNo, 3, '★ 章号有缺口也跳到下一存在的章（3），不在 2 早停');
+    synth.spoken[synth.spoken.length - 1].onend();
+    await tick();
+    assert.equal(player.currentNo, 5, '★ 继续跳到 5');
+    synth.spoken[synth.spoken.length - 1].onend();
+    await tick();
+    assert.equal(player.status, 'idle', '★ 目录尽头正常收工');
+});
+
+test('chunkText：>limit 的段落按句末标点断开、多句合并到 limit 内；空行/纯空白被滤掉', () => {
+    const { chunkText } = loadClient(createDom(), BUNDLE).exports.__internals;
+    // 短句合并：贴 limit 切成几块，小块不放超
+    const text = '甲句。乙句。丙句。丁句。';
+    const chunks = chunkText(text, 6);
+    assert.ok(chunks.length >= 2, '短句应合并成几块');
+    for (const c of chunks) assert.ok(c.length <= 7, `小块 ${JSON.stringify(c)} 不应超 7`);
+    assert.equal(chunks.join(''), text, '合并后内容不丢字不漏字');
+    // 空行 / 纯空白 paragraph 要过滤，不留空块
+    assert.equal(chunkText('\n\n   \n第一句。\n\n').length, 1, '空白段落不产生空块');
+    // 单个无标点的超长句：limit 拦不住就得整句成块，但不能丢
+    const long = '没有标点会被整句保留的那么长一句话这样的话不能硬切断'.repeat(2);
+    const c2 = chunkText(long, 10);
+    assert.equal(c2.join(''), long.replace(/\n/g, '').trim(), '超长单句成块后内容一致');
+});
+
+// ── apiFetch 的健壮性（0.6.2：不许出现「永远加载中」） ──
+
+test('★ 请求卡死：超时后必须变成可读错误，而不是永远 pending', async () => {
+    const dom = createDom();
+    // 真 setTimeout/clearTimeout/AbortController：让 30ms 超时真实走一遍；
+    // fetch 永不 resolve，只能靠 signal 中止 —— 服务端不回包的镜像。
+    const mod = loadClient(dom, BUNDLE, {
+        fetch: (url, init) => new Promise((resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+                const e = new Error('The operation was aborted.');
+                e.name = 'AbortError';
+                reject(e);
+            });
+        }),
+        sandboxExtra: { AbortController, setTimeout, clearTimeout },
+    });
+    await assert.rejects(
+        mod.exports.__internals.apiFetch('/projects', { timeoutMs: 30 }),
+        /超时/,
+        '★ 卡死的请求超时后必须给「超时」错误，不许永远 pending',
+    );
+});
+
+test('★ 响应不是 JSON（401 文本 / 代理 HTML）：报错要指向「硬刷新」而不是 SyntaxError 天书', async () => {
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, {
+        fetch: () => Promise.resolve({
+            status: 401,
+            json: () => Promise.reject(new SyntaxError('Unexpected token \'d\'... is not valid JSON')),
+        }),
+    });
+    await assert.rejects(
+        mod.exports.__internals.apiFetch('/projects'),
+        /响应不是 JSON/,
+        '★ 非 JSON 响应要给出可读错误（指引硬刷新）',
+    );
+});
+
+test('★ ok:false 照旧抛服务端 message（原有契约不回归）', async () => {
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, {
+        fetch: () => Promise.resolve({
+            status: 500,
+            json: () => Promise.resolve({ ok: false, error: { code: 'IO_FAILURE', message: '磁盘炸了' } }),
+        }),
+    });
+    await assert.rejects(mod.exports.__internals.apiFetch('/projects'), /磁盘炸了/);
+});
+
 // ── 结构契约 ──
 
 test('结构契约：经典脚本 bundle、版本一致、产物由源码构建而来', () => {
@@ -339,6 +632,8 @@ test('构建链：四视图是独立源码且被打进产物', () => {
     const views = [
         ['project-list.js', 'ProjectListView'],
         ['project-detail.js', 'ProjectDetailView'],
+        ['chapters.js', 'ChapterListView'],
+        ['overview.js', 'ProjectOverviewView'],
         ['lorebook.js', 'LorebookView'],
         ['settings.js', 'SettingsView'],
     ];
