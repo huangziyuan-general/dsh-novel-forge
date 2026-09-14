@@ -24,6 +24,8 @@ export function initialState() {
 		// 项目列表
 		projects: [], unclaimed: [], loading: true, error: '', notice: '',
 		creating: false, busy: false, title: '', genre: 'fantasy',
+		// 列表内联改名 / 删除：rename = {id, value} | null；listDeleteId = 待确认删除的书 id | null
+		rename: null, renaming: false, listDeleteId: null,
 		// 项目详情
 		detail: null, chapterNo: 1, writing: false,
 		draft: '', draftVersion: 0,

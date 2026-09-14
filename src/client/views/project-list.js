@@ -7,7 +7,7 @@
 // 0.5.0 之前建的书没有会话戳，会落在 state.unclaimed 里 —— 底部给一条认领通道，
 // 免得老书从此看不见。
 import { h } from '../react.js';
-import { btnStyle, inputStyle, errStyle, footerStyle, okStyle, hintStyle, itemCardStyle, miniBtnStyle, accentBtnStyle } from '../styles.js';
+import { btnStyle, inputStyle, errStyle, footerStyle, okStyle, hintStyle, itemCardStyle, miniBtnStyle, accentBtnStyle, primaryBtnStyle, dangerBtnStyle } from '../styles.js';
 
 export function ProjectListView({ state: s }) {
 	return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
@@ -58,7 +58,35 @@ export function ProjectListView({ state: s }) {
 								'data-action': 'goto-lorebook', 'data-id': p.name,
 								style: miniBtnStyle,
 							}, '世界书'),
+							h('button', { 'data-action': 'rename-open', 'data-id': p.name, style: miniBtnStyle }, '改名'),
+							h('button', {
+								'data-action': 'list-delete', 'data-id': p.name,
+								style: dangerBtnStyle,
+							}, '删除'),
 						),
+						// 列表内联改名表单（目录名=id 不动，只改标题）
+						s.rename && s.rename.id === p.name
+							? h('div', { style: { display: 'flex', gap: '6px', marginTop: '6px' } },
+								h('input', {
+									'data-field': 'rename-value', value: s.rename.value,
+									placeholder: '新书名', style: { ...inputStyle, flex: 1, fontSize: '12px' },
+								}),
+								h('button', { 'data-action': 'rename-confirm', disabled: s.renaming, style: primaryBtnStyle },
+									s.renaming ? '保存中…' : '确定'),
+								h('button', { 'data-action': 'rename-cancel', style: btnStyle }, '取消'),
+							)
+							: null,
+						// 删除二次确认（误触可取消）
+						s.listDeleteId === p.name
+							? h('div', { style: { display: 'flex', gap: '6px', marginTop: '6px', alignItems: 'center' } },
+								h('span', { style: { fontSize: '12px' } }, '删除这本书？'),
+								h('button', {
+									'data-action': 'list-delete', 'data-id': p.name,
+									disabled: s.listDeleteId === 'busy', style: dangerBtnStyle,
+								}, s.listDeleteId === 'busy' ? '删除中…' : '确认删除'),
+								h('button', { 'data-action': 'list-delete-cancel', style: btnStyle }, '取消'),
+							)
+							: null,
 					)),
 				),
 
