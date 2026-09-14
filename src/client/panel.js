@@ -17,9 +17,11 @@
 import { h, Component, useState, useRef, useEffect } from './react.js';
 import { initialState, emptyLoreForm } from './state.js';
 import { apiFetch } from './api.js';
+import { createTtsPlayer, resolveSynth } from './tts.js';
 import { headerStyle, badgeStyle, btnStyle, hintStyle } from './styles.js';
 import { ProjectListView } from './views/project-list.js';
 import { ProjectDetailView } from './views/project-detail.js';
+import { ChapterListView } from './views/chapters.js';
 import { LorebookView } from './views/lorebook.js';
 import { SettingsView } from './views/settings.js';
 
@@ -70,13 +72,54 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		return `${path}${sep}session=${encodeURIComponent(state.sessionId)}`;
 	};
 
+	// ── 章节听书（0.6.0）──
+	// 播放器先建好；onChange 把播放状态写进 state 再触发重渲染。
+	// synth 可能为 null（无语音引擎的环境）：playFrom 会抛可读错误，面板转成提示。
+	const player = createTtsPlayer({
+		synth: resolveSynth(),
+		loadChapter: (no) => apiFetch(`/projects/${encodeURIComponent(state.selected)}/chapters/${no}`),
+		hasChapter: (no) => state.chapterList.some((c) => c.no === no),
+		// 连播/空章跳过都要"下一个存在的章"，不是 currentNo+1 —— 章号有缺口不能早停
+		//（chapterList 服务端已按 no 升序排）
+		nextChapterAfter: (no) => {
+			const n = state.chapterList.find((c) => c.no > no);
+			return n ? n.no : null;
+		},
+		onChange: (playback) => { state.playback = playback; notify(); },
+	});
+
+	/** 拉小说基本要素（基本信息标签的展示数据）；缺失要素是常态，失败置空即可。 */
+	const loadElements = async (id) => {
+		const bookId = id || state.selected;
+		if (!bookId) return;
+		state.elementsLoading = true; notify();
+		try {
+			state.elements = await apiFetch(`/projects/${encodeURIComponent(bookId)}/elements`);
+		} catch { state.elements = null; }
+		finally { state.elementsLoading = false; notify(); }
+	};
+
+	/** 拉章节目录（听书列表 + 连播边界）。 */
+	const loadChapterList = async (id) => {
+		const bookId = id || state.selected;
+		if (!bookId) return;
+		state.chapterListLoading = true; notify();
+		try {
+			state.chapterList = await apiFetch(`/projects/${encodeURIComponent(bookId)}/chapters`);
+		} catch { state.chapterList = []; }
+		finally { state.chapterListLoading = false; notify(); }
+	};
+
 	// ── 业务动作 ──
 	const refreshProjects = async () => {
 		state.loading = true; state.error = ''; notify();
+		// 探针日志：用户卡「加载中」时，console 里有没有这行 + 后面有没有收尾，直接分诊
+		console.info('[novel-forge] GET /projects' + (state.sessionId ? `?session=${state.sessionId}` : '（无会话）'));
 		try {
 			state.projects = await apiFetch(withSession('/projects'));
 		} catch (error) {
 			state.error = String(error?.message ?? error);
+			console.warn('[novel-forge] 项目列表加载失败：', state.error);
 		} finally {
 			state.loading = false; notify();
 		}
@@ -103,13 +146,17 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 
 	const openProject = async (id) => {
 		state.selected = id; state.view = 'detail'; state.detail = null; state.chapterNo = 1;
-		state.draft = ''; state.report = null; state.error = ''; notify();
+		state.draft = ''; state.report = null; state.error = ''; state.detailTab = 'info';
+		state.elements = null;
+		player.stop();
+		notify();
 		try {
 			state.detail = await apiFetch(`/projects/${encodeURIComponent(id)}`);
 			const text = await apiFetch(`/projects/${encodeURIComponent(id)}/chapters/1`);
 			state.baseline = text ?? ''; state.draft = text ?? ''; state.draftVersion++;
 		} catch (error) { state.error = String(error?.message ?? error); }
-		notify();
+		await loadChapterList(id);
+		await loadElements(id);
 	};
 
 	const loadChapter = async (no) => {
@@ -169,7 +216,8 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		state.deleteState = 'busy'; notify();
 		try {
 			await apiFetch(`/projects/${encodeURIComponent(state.selected)}`, { method: 'DELETE' });
-			state.selected = null; state.view = 'projects'; state.detail = null;
+			player.stop();
+			state.selected = null; state.view = 'projects'; state.detail = null; state.chapterList = [];
 			await refreshProjects();
 		} catch (error) { state.error = String(error?.message ?? error); }
 		finally { state.deleteState = null; notify(); }
@@ -224,8 +272,25 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 			case 'refresh-projects': await refreshProjects(); break;
 			case 'create': await createProject(); break;
 			case 'open': await openProject(target.dataset.id); break;
-			case 'back': state.view = 'projects'; state.selected = null; state.detail = null; await refreshProjects(); break;
+			case 'back': player.stop(); state.view = 'projects'; state.selected = null; state.detail = null; await refreshProjects(); break;
 			case 'claim': await claimProject(target.dataset.id || null); break;
+			// 详情页两个标签：基本信息 / 章节听书
+			case 'detail-tab': {
+				const tab = target.dataset.tab === 'chapters' ? 'chapters' : 'info';
+				if (state.detailTab !== tab) state.detailTab = tab;
+				if (tab === 'chapters') await loadChapterList();
+				notify(); break;
+			}
+			case 'play-from': {
+				state.detailTab = 'chapters';
+				const no = Number(target.dataset.no);
+				try { await player.playFrom(no); }
+				catch (error) { state.error = String(error?.message ?? error); notify(); }
+				break;
+			}
+			case 'playback-pause': player.pause(); notify(); break;
+			case 'playback-resume': player.resume(); notify(); break;
+			case 'playback-stop': player.stop(); notify(); break;
 			case 'goto-lorebook':
 				state.view = 'lorebook'; state.selected = target.dataset.id || state.selected;
 				await loadLoreEntries(state.selected || 'default'); break;
@@ -314,13 +379,15 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		const id = next ?? null;
 		if (state.sessionId === id) return;
 		state.sessionId = id;
-		state.selected = null; state.detail = null; state.view = 'projects';
+		player.stop();
+		state.selected = null; state.detail = null; state.view = 'projects'; state.chapterList = [];
 		started = true;
 		notify();
 		void refreshProjects();
 	};
 
-	return { state, notify, attach, detach, start, setSession, refreshProjects, handleAction };
+	return { state, notify, attach, detach, start, setSession, refreshProjects, handleAction,
+		stopPlayback: () => player.stop() };
 }
 
 /**
@@ -344,12 +411,13 @@ export function ForgePanel(props) {
 	// 会话切换（同一个面板实例被复用到别的会话）
 	useEffect(() => { controller.setSession(sessionId); }, [sessionId]);
 
-	// 挂载：绑事件代理 + 首次拉数据；卸载：解绑
+	// 挂载：绑事件代理 + 首次拉数据；卸载：停播 + 解绑
+	//（面板被宿主拆掉时朗读必须跟着停 —— 否则 tab 关了还在出声）
 	useEffect(() => {
 		const node = nodeRef.current;
 		if (node) controller.attach(node);
 		controller.start();
-		return () => controller.detach();
+		return () => { controller.stopPlayback(); controller.detach(); };
 	}, []);
 
 	const s = controller.state;
