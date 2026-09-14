@@ -140,15 +140,15 @@ const GOOD_CHAPTER = [
     '她忽然吹熄了灯。',
 ].join('\n');
 
-test('装载：19 个工具注册 + 系统提示注入', () => {
+test('装载：20 个工具注册 + 系统提示注入', () => {
     assert.equal(hasSdk, true, '缺宿主 SDK symlink：先 npm run setup-dev');
-    assert.equal(ctx._registered.length, 19);
+    assert.equal(ctx._registered.length, 20);
     assert.deepEqual(
         ctx._registered.map((t) => t.name),
         ['novel_project', 'novel_outline', 'novel_character', 'novel_worldbook', 'novel_scene', 'novel_briefing',
          'novel_write_chapter', 'novel_ledger', 'novel_noai_scan', 'novel_audit', 'novel_style',
          'novel_propose', 'novel_import', 'novel_export', 'novel_glossary', 'novel_clone_project',
-         'novel_diagnose', 'novel_polish', 'novel_search'],
+         'novel_diagnose', 'novel_polish', 'novel_search', 'novel_library'],
     );
     assert.equal(ctx._sections.length, 1);
     assert.ok(ctx._sections[0].text.includes('代码强制') === false);
@@ -1135,4 +1135,120 @@ test('★ G1 长篇检索：build 建索引 → query 按记忆碎片找回 → 
     assert.equal(st.degraded, false);
     assert.equal(st.chapters, 2);
     assert.equal(st.chunks, before);
+});
+
+// ⚠️ 下面两条依赖前面用例累积的账本状态（「星海拾骨」第1章 城南义庄 → 第2章 城西），
+//    所以必须留在文件末尾；在中间插用例会改掉它们的输入。
+
+test('★ B2 账本时点推演：status_at 看「当时的值」，timeline 看演化线', async () => {
+    const book = '星海拾骨';
+    const at1 = await tool('novel_ledger').execute({ action: 'status_at', book, at: 1 }, exec);
+    assert.deepEqual(at1.facts.map((f) => f.entity).sort(), ['布鞋', '林晚'], '第1章快照=当章为止落账的全部实体');
+    assert.equal(at1.facts.find((f) => f.key === '位置').value, '城南义庄', '第1章时人在义庄');
+    assert.deepEqual(at1.timeline, [], 'status_at 不回 timeline');
+
+    const at2 = await tool('novel_ledger').execute({ action: 'status_at', book, at: 2, entity: '林晚' }, exec);
+    assert.equal(at2.facts.length, 1, '实体过滤只留林晚');
+    assert.equal(at2.facts[0].value, '城西', '第2章才换到城西');
+    assert.equal(at2.facts[0].chapter, 2, '带出该值从哪一章起生效');
+
+    // 核心区别：query 只给「最新值」。写第 80 章时要回溯第 1 章的状态，只有 status_at 做得到
+    const q = await tool('novel_ledger').execute({ action: 'query', book, entity: '林晚' }, exec);
+    assert.equal(q.facts.find((f) => f.key === '位置').value, '城西');
+    assert.equal(at1.facts.find((f) => f.key === '位置').value, '城南义庄', '同一份账本，两个时点两个答案');
+
+    const tl = await tool('novel_ledger').execute({ action: 'timeline', book, entity: '林晚' }, exec);
+    assert.deepEqual(tl.timeline.map((r) => r.chapter), [1, 2], '演化线按章升序');
+    assert.deepEqual(tl.timeline.map((r) => r.value), ['城南义庄', '城西']);
+    assert.deepEqual(tl.facts, [], 'timeline 不回 facts');
+
+    await assert.rejects(() => tool('novel_ledger').execute({ action: 'status_at', book, entity: '林晚' }, exec), /at/);
+    await assert.rejects(() => tool('novel_ledger').execute({ action: 'timeline', book }, exec), /entity/);
+});
+
+test('★ B2 死后状态变更（账本级）：死亡后的新状态被一致性校验揪出', async () => {
+    const book = '星海拾骨';
+    await tool('novel_ledger').execute({ action: 'update', book, chapter: 1, updates: '陈九|状态|阵亡' }, exec);
+    await tool('novel_ledger').execute({ action: 'update', book, chapter: 2, updates: '陈九|境界|金丹' }, exec);
+
+    const aud = await tool('novel_audit').execute({ book, chapter: 1, continuity: true }, exec);
+    const hit = aud.continuityResult.issues.find((i) => i.code === 'posthumous-change');
+    assert.ok(hit, '死亡后账本又记新状态 → 必须报出（B1 的名字扫描抓不到这条）');
+    assert.equal(hit.severity, 'warning', '可能是遗物/传闻/闪回，故 warning 而非 error');
+    assert.ok(hit.where.includes('陈九'));
+
+    // 只有死亡记录、没有任何后续状态变更 → 不误报
+    await tool('novel_ledger').execute({ action: 'update', book, chapter: 2, updates: '沈砚|状态|阵亡' }, exec);
+    const aud2 = await tool('novel_audit').execute({ book, chapter: 1, continuity: true }, exec);
+    assert.ok(
+        !aud2.continuityResult.issues.some((i) => i.code === 'posthumous-change' && i.where.includes('沈砚')),
+        '同章死亡且无后续变更 → 不误报',
+    );
+});
+
+test('★ G2 书库：导入饲料 → 拆结构 → 与本书并排 → 只移索引不删原文', async () => {
+    const lib = tool('novel_library');
+    const FEED = [
+        '第一章 雪夜',
+        '雪落了一夜。',
+        '「你来了。」周砚说。',
+        '「来了。」那人答。',
+        '青铜古灯在案上跳了一下，火苗歪向门口，像在指路。',
+        '',
+        '第二章 铜灯',
+        '青铜古灯又亮了一次，火苗这次没有歪。',
+        '「灯里有东西。」周砚说。',
+        '他没有说完。窗外忽然传来一声闷响——',
+        '',
+        '第三章 长夜',
+        '青铜古灯熄了，屋子里只剩呼吸声。他数着自己的心跳，一颗，两颗，三颗。',
+        '「谁。」他说。',
+        '「我。」门外有人应。',
+    ].join('\n');
+
+    assert.deepEqual((await lib.execute({ action: 'list' }, exec)).entries, [], '书库初始为空');
+
+    // 导入（text 通道）；原文必须真的落盘，否则 analyze 无从谈起
+    const imported = await lib.execute({ action: 'import', title: '对标样本', text: FEED }, exec);
+    assert.equal(imported.entries[0].chapters, 3);
+    assert.ok(imported.entries[0].chars > 0);
+    assert.equal(fs.existsSync(path.join(root, '书库', '对标样本', '原文.txt')), true);
+
+    assert.deepEqual(
+        (await lib.execute({ action: 'list' }, exec)).entries.map((e) => e.title),
+        ['对标样本'],
+    );
+    await assert.rejects(
+        () => lib.execute({ action: 'import', title: '对标样本', text: FEED }, exec),
+        /已有/,
+        '同名不得覆盖——饲料删错了没法找回，宁可让用户显式 delete',
+    );
+
+    // analyze：结构画像（零 token，纯本地）
+    const an = await lib.execute({ action: 'analyze', id: '对标样本' }, exec);
+    assert.equal(an.report.chapters, 3);
+    assert.ok(an.report.dialogueRatio > 0, '有对白必须算出对话密度');
+    assert.equal(an.report.hookRate, 0.333);
+    assert.equal(an.report.topPhrases[0].term, '青铜古灯');
+    assert.equal(an.compare, undefined, '没给 compare_book 就不出对比');
+    assert.ok(an.note.includes('对标样本'));
+
+    // 与本书并排：这才是「拆书」的用处——数字对着看
+    const cmp = await lib.execute({ action: 'analyze', id: '对标样本', compare_book: '星海拾骨' }, exec);
+    assert.equal(cmp.compare.length, 9);
+    assert.ok(cmp.compare.some((r) => r.label === '章末钩子率'));
+    assert.ok(cmp.compare.every((r) => typeof r.mine === 'string' && typeof r.theirs === 'string'));
+
+    // read：分章概览
+    const rd = await lib.execute({ action: 'read', id: '对标样本', from: 2, to: 3 }, exec);
+    assert.deepEqual(rd.chapters.map((c) => c.n), [2, 3]);
+    assert.ok(rd.chapters[0].excerpt.length <= 200);
+    await assert.rejects(() => lib.execute({ action: 'read', id: '对标样本', from: 9 }, exec), /读不到/);
+    await assert.rejects(() => lib.execute({ action: 'analyze', id: '不存在的书' }, exec), /书库里没有/);
+
+    // delete：宿主 fs 无删除能力 → 只移索引，原文保留（返回里必须说清楚）
+    const del = await lib.execute({ action: 'delete', id: '对标样本' }, exec);
+    assert.deepEqual(del.entries, []);
+    assert.ok(del.note.includes('手工删'), '必须告诉用户原文还在磁盘上');
+    assert.equal(fs.existsSync(path.join(root, '书库', '对标样本', '原文.txt')), true, 'delete 不得删原文');
 });
