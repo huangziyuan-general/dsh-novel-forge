@@ -144,10 +144,42 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		finally { state.busy = false; notify(); }
 	};
 
+	/** 改名：只改 novel.json.title（目录名=id 是稳定身份，不挪），改完刷新列表并同步正在看的书。 */
+	const renameProject = async () => {
+		const r = state.rename;
+		if (!r || !r.id) return;
+		const title = String(r.value ?? '').trim();
+		if (!title) { state.error = '书名不能为空'; notify(); return; }
+		state.renaming = true; state.error = ''; notify();
+		try {
+			await apiFetch(`/projects/${encodeURIComponent(r.id)}/rename`, {
+				method: 'POST', body: JSON.stringify({ title }),
+			});
+			state.notice = `已改名：${title}`;
+			state.rename = null;
+			await refreshProjects();
+			if (state.selected === r.id) await openProject(r.id); // 详情页正开着这本书，回头刷标题
+		} catch (error) { state.error = String(error?.message ?? error); }
+		finally { state.renaming = false; notify(); }
+	};
+
+	/** 列表删除：软删（服务端清 novel.json 标记非书）。 */
+	const deleteListProject = async (id) => {
+		state.listDeleteId = 'busy'; notify();
+		try {
+			await apiFetch(`/projects/${encodeURIComponent(id)}`, { method: 'DELETE' });
+			state.notice = `已删除：${id}`;
+			if (state.selected === id) { state.selected = null; state.detail = null; state.chapterList = []; }
+			state.listDeleteId = null;
+			await refreshProjects();
+		} catch (error) { state.error = String(error?.message ?? error); }
+		finally { state.listDeleteId = null; notify(); }
+	};
+
 	const openProject = async (id) => {
 		state.selected = id; state.view = 'detail'; state.detail = null; state.chapterNo = 1;
 		state.draft = ''; state.report = null; state.error = ''; state.detailTab = 'info';
-		state.elements = null; state.discardPending = null;
+		state.elements = null; state.discardPending = null; state.rename = null; state.listDeleteId = null;
 		player.stop();
 		notify();
 		// detail 与 第 1 章正文并行拉；elements/chapters 由以下并行加载
@@ -284,7 +316,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 	/** 真正返回项目列表。 */
 	const goBack = async () => {
 		player.stop(); state.view = 'projects'; state.selected = null; state.detail = null;
-		state.discardPending = null; state.draftModified = false;
+		state.discardPending = null; state.draftModified = false; state.rename = null; state.listDeleteId = null;
 		await refreshProjects();
 	};
 
@@ -294,6 +326,19 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 			case 'refresh-projects': await refreshProjects(); break;
 			case 'create': await createProject(); break;
 			case 'open': await openProject(target.dataset.id); break;
+			case 'rename-open': {
+				const id = target.dataset.id;
+				const p = state.projects.find((x) => x.name === id) || state.unclaimed.find((x) => x.name === id);
+				state.rename = { id, value: p?.title || p?.name || '' };
+				state.listDeleteId = null; notify(); break;
+			}
+			case 'rename-confirm': await renameProject(); break;
+			case 'rename-cancel': state.rename = null; notify(); break;
+			case 'list-delete':
+				if (state.listDeleteId === target.dataset.id) await deleteListProject(target.dataset.id);
+				else { state.listDeleteId = target.dataset.id; state.rename = null; notify(); }
+				break;
+			case 'list-delete-cancel': state.listDeleteId = null; notify(); break;
 			case 'back':
 				if (!intentLeave({ kind: 'back' })) break;
 				await goBack(); break;
@@ -372,6 +417,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		const field = e.target?.dataset?.field;
 		if (field === 'title') { state.title = e.target.value; notify(); }
 		else if (field === 'draft') { state.draft = e.target.value; state.draftModified = e.target.value !== state.baseline; }
+		else if (field === 'rename-value') { if (state.rename) state.rename.value = e.target.value; }
 		else if (field === 'chapterNo') {
 			const no = Number(e.target.value);
 			if (no > 0) {
@@ -423,6 +469,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		state.sessionId = id;
 		player.stop();
 		state.selected = null; state.detail = null; state.view = 'projects'; state.chapterList = [];
+		state.rename = null; state.listDeleteId = null;
 		started = true;
 		notify();
 		void refreshProjects();

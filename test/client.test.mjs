@@ -432,7 +432,48 @@ test('★ 删除有取消出口：误触「删除」后点「取消」不删书'
     assert.equal(controller.state.deleteState, 'confirm', '第一次点只进确认态，不删');
     await controller.handleAction('delete-cancel', { dataset: {} });
     assert.equal(controller.state.deleteState, null, '取消后离开确认态');
-    assert.ok(!requests.some((r) => r.method === 'DELETE'), '取消后没发出删除请求');
+    assert.ok(!requests.some((r) => r.init?.method === 'DELETE'), '取消后没发出删除请求');
+});
+
+test('★ 列表改名：确认后 POST /projects/:id/rename 带新书名；空名被拦', async () => {
+    const { requests, controller } = bootBook();
+    await controller.refreshProjects(); // 载入列表，让 rename 能拿当前书名做预填
+    // 打开改名表单
+    await controller.handleAction('rename-open', { dataset: { id: '星海拾骨' } });
+    assert.equal(controller.state.rename?.id, '星海拾骨', '改名表单打开');
+    assert.equal(controller.state.rename.value, '星海拾骨', '预填当前书名');
+    // 空名被拦，不发请求
+    controller.state.rename.value = '   ';
+    await controller.handleAction('rename-confirm', { dataset: {} });
+    assert.equal(controller.state.error, '书名不能为空', '空书名被拦');
+    assert.ok(!requests.some((r) => r.url.includes('/rename')), '空名没发 rename 请求');
+    // 填名字提交
+    controller.state.rename.value = '新书名';
+    await controller.handleAction('rename-confirm', { dataset: {} });
+    const req = requests.find((r) => r.url.includes('/rename'));
+    assert.ok(req, '发出了 rename 请求');
+    assert.equal(req.init.method, 'POST', 'rename 是 POST');
+    assert.equal(JSON.parse(req.init.body).title, '新书名', 'body 带新书名');
+    assert.equal(controller.state.rename, null, '改名后表单关闭');
+});
+
+test('★ 列表删除：两步确认走 DELETE；取消不删', async () => {
+    const { requests, controller } = bootBook();
+    // 第一次点只进确认，不发删除
+    await controller.handleAction('list-delete', { dataset: { id: '星海拾骨' } });
+    assert.equal(controller.state.listDeleteId, '星海拾骨', '第一次点只进确认态');
+    assert.ok(!requests.some((r) => r.init?.method === 'DELETE'), '确认前没删');
+    // 取消后离开确认态、仍不删
+    await controller.handleAction('list-delete-cancel', { dataset: {} });
+    assert.equal(controller.state.listDeleteId, null, '取消后离开确认态');
+    assert.ok(!requests.some((r) => r.init?.method === 'DELETE'), '取消后没删');
+    // 再来一遍并确认删除 → 发 DELETE，目标书正确
+    await controller.handleAction('list-delete', { dataset: { id: '星海拾骨' } });
+    await controller.handleAction('list-delete', { dataset: { id: '星海拾骨' } });
+    const del = requests.find((r) => r.init?.method === 'DELETE');
+    assert.ok(del, '确认后发出 DELETE');
+    assert.ok(del.url.includes('/projects/星海拾骨'), 'DELETE 目标书正确');
+    assert.equal(controller.state.listDeleteId, null, '删完回到非确认态');
 });
 
 test('★ 基本要素：openProject 拉 /elements（档案/大纲/角色卡/设定/账本），失败置空不炸', async () => {
