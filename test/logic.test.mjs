@@ -10,7 +10,7 @@ import { detectVolumePlan } from '../lib/phase-io.js';
 import { breakerState, recordRejection, recordSuccess, clearBreaker, breakerDigest } from '../lib/circuit-breaker.js';
 import { reviewForPlatform, longestSufferingRun, sentenceCv } from '../lib/platform-review.js';
 import { scanSensitive, CENSOR_KEYS } from '../lib/censor.js';
-import { applyFactUpdates, queryFacts, factsDigest, assertLedgerChapter, foreshadowSetup, foreshadowPayoff, openForeshadows, foreshadowDigest, overdueForeshadows } from '../lib/ledger.js';
+import { applyFactUpdates, queryFacts, factsDigest, assertLedgerChapter, factsAt, statusTimeline, foreshadowSetup, foreshadowPayoff, openForeshadows, foreshadowDigest, overdueForeshadows } from '../lib/ledger.js';
 import { computeAudit, auditVerdict } from '../lib/audit.js';
 import { matchWorldEntries, buildContextPack, renderPack } from '../lib/contextpack.js';
 import { pathsFor, defaultNovel, chapterRecord, normalizeWorldEntry, bookInSession, isUnclaimed, addBookSession } from '../lib/store.js';
@@ -18,6 +18,7 @@ import { scanAiFlavor } from '../lib/noai.js';
 import { roughOutline, splitIntoChapters, isChapterHeading } from '../lib/import.js';
 import { diagnoseIntro, computeChapterDiagnosis } from '../lib/diagnose.js';
 import { parseFactLines, foreshadowView } from '../lib/tools/common.js';
+import { chaptersFromText, analyzeStructure, repeatedPhrases, compareStructures, libraryId, coefficientOfVariation, chapterMetrics } from '../lib/library.js';
 import { parseWorldbookImport } from '../lib/worldbook-io.js';
 import { splitSentences, measureStyleMetrics, measureMood, computeBaseline, judgeAgainstBaseline } from '../lib/style.js';
 import { validateContinuity, isDeathRecord, deathTimeline } from '../lib/continuity.js';
@@ -106,6 +107,49 @@ test('ledger: 章号护栏——不得超前于已写章节+1', () => {
     assert.throws(() => assertLedgerChapter(3, 1), /超前/);
     assert.doesNotThrow(() => assertLedgerChapter(1, 0), '全书无章节时不拦');
     assert.throws(() => assertLedgerChapter(0, 5), /正整数/);
+});
+
+test('ledger: 时点推演——第 n 章看到的是当时的值，不是最新值', () => {
+    const facts = [
+        { entity: '林晚', key: '境界', value: '练气三层', chapter: 3, note: '' },
+        { entity: '林晚', key: '境界', value: '筑基一层', chapter: 12, note: '' },
+        { entity: '林晚', key: '境界', value: '练气九层', chapter: 8, note: '' }, // 补录：章号居中、写入最后
+        { entity: '林晚', key: '位置', value: '青云峰', chapter: 5, note: '' },
+        { entity: '沈砚', key: '境界', value: '金丹', chapter: 4, note: '' },
+    ];
+    const at10 = factsAt(facts, 10);
+    assert.equal(at10.find((r) => r.key === '境界').value, '练气九层', '取章号 ≤10 里最大的那条，与写入顺序无关');
+    assert.equal(at10.find((r) => r.key === '位置').value, '青云峰', '第5章的位置记到第10章仍有效');
+    assert.equal(factsAt(facts, 12).find((r) => r.key === '境界').value, '筑基一层', '第12章之后才是最新值');
+    assert.equal(factsAt(facts, 2).length, 0, '第2章时还没人登场');
+    assert.equal(factsAt(facts, 5).length, 3, '第5章：林晚两键 + 沈砚一键');
+    assert.deepEqual(factsAt(facts, 6, { entities: ['林晚'] }).map((r) => r.key).sort(), ['位置', '境界'].sort(), '实体过滤');
+    assert.deepEqual(factsAt(facts, 6, { keys: ['境界'] }).map((r) => r.entity).sort(), ['林晚', '沈砚'].sort(), '键过滤');
+    assert.throws(() => factsAt(facts, 0), /正整数/);
+});
+
+test('ledger: 时点推演——同章多条取最后写入的那条', () => {
+    const facts = [
+        { entity: 'A', key: 'k', value: 'v1', chapter: 7, note: '' },
+        { entity: 'A', key: 'k', value: 'v2', chapter: 7, note: '' },
+    ];
+    assert.equal(factsAt(facts, 7)[0].value, 'v2');
+});
+
+test('ledger: statusTimeline——按章升序给演化线', () => {
+    const facts = [
+        { entity: '林晚', key: '境界', value: '筑基一层', chapter: 12, note: '突破' },
+        { entity: '林晚', key: '境界', value: '练气三层', chapter: 3, note: '' },
+        { entity: '林晚', key: '位置', value: '青云峰', chapter: 5, note: '' },
+        { entity: '沈砚', key: '境界', value: '金丹', chapter: 4, note: '' },
+    ];
+    const t = statusTimeline(facts, '林晚');
+    assert.deepEqual(t.map((r) => r.chapter), [3, 5, 12], '章号升序，与写入顺序无关');
+    assert.deepEqual(t.map((r) => r.key), ['境界', '位置', '境界']);
+    assert.equal(t[2].note, '突破');
+    assert.deepEqual(statusTimeline(facts, '林晚', { keys: ['境界'] }).map((r) => r.chapter), [3, 12]);
+    assert.deepEqual(statusTimeline(facts, '查无此人'), [], '查无此人不报错');
+    assert.throws(() => statusTimeline(facts, ''), /entity/);
 });
 
 test('ledger: 伏笔埋设/回收/重复回收拒绝', () => {
@@ -987,4 +1031,83 @@ test('★ C5 敏感自查：七类红线 + 未成年邻近共现 + 题材豁免'
     assert.ok(!exempted.categories.some((c) => c.key === 'feudal'), '玄幻题材可豁免');
 
     assert.match(clean.note, /启发式预筛/, '定位要写清楚：不是合规判定');
+});
+
+// ── G2 书库（外部小说饲料的结构分析）────────────────────────────────────────
+
+const LIB_TEXT = [
+    '第一章 雪夜',
+    '雪落了一夜。',
+    '「你来了。」周砚说。',
+    '「来了。」那人答。',
+    '青铜古灯在案上跳了一下，火苗歪向门口，像在指路。',
+    '',
+    '第二章 铜灯',
+    '青铜古灯又亮了一次，火苗这次没有歪。',
+    '「灯里有东西。」周砚说。',
+    '他没有说完。窗外忽然传来一声闷响——',
+    '',
+    '第三章 长夜',
+    '青铜古灯熄了，屋子里只剩呼吸声。他数着自己的心跳，一颗，两颗，三颗，四颗，五颗。',
+    '「谁。」他说。',
+    '「我。」门外有人应。',
+].join('\n');
+
+test('G2 书库：切章与结构画像（零 token）', () => {
+    const chapters = chaptersFromText(LIB_TEXT);
+    assert.deepEqual(chapters.map((c) => c.title), ['雪夜', '铜灯', '长夜'], '复用正文导入的标题识别');
+    const a = analyzeStructure(chapters);
+    assert.equal(a.chapters, 3);
+    assert.equal(a.chars, chapters.reduce((n, c) => n + c.content.replace(/\s/g, '').length, 0));
+    assert.ok(a.length.mean > 0 && a.length.min <= a.length.median && a.length.median <= a.length.max);
+    assert.ok(a.length.cv >= 0);
+    assert.ok(a.dialogueRatio > 0, '有对白就必须算出对话密度');
+    assert.equal(a.hookRate, 0.333, '三章只有第二章末是省略号钩子');
+    assert.deepEqual(a.hookKinds, { ellipsis: 1 });
+    assert.equal(a.perChapter[0].hookKind, null);
+    assert.equal(a.topPhrases[0].term, '青铜古灯', '重复意象应被挖出来');
+    assert.ok(a.freeform.meanSentence > 0);
+});
+
+test('G2 书库：重复短语不报错位窗口；空输入不炸', () => {
+    // 连续重复会顺带产生「古灯青铜」「灯青铜古」这类错位窗口，必须被抑制
+    const r = repeatedPhrases('青铜古灯青铜古灯青铜古灯灯下有人', { minCount: 2, minLen: 3, maxLen: 4 });
+    assert.deepEqual(r, [{ term: '青铜古灯', count: 3 }]);
+    assert.deepEqual(repeatedPhrases('', {}), []);
+    assert.deepEqual(repeatedPhrases('短', {}), []);
+
+    const empty = analyzeStructure([]);
+    assert.equal(empty.chapters, 0);
+    assert.equal(empty.hookRate, 0);
+    assert.deepEqual(empty.topPhrases, []);
+    assert.equal(empty.length.mean, 0);
+    assert.deepEqual(analyzeStructure(null).perChapter, []);
+});
+
+test('G2 书库：作品 id 净化与并排对比', () => {
+    assert.equal(libraryId('斗破/苍穹 精校版'), '斗破_苍穹_精校版');
+    assert.equal(libraryId('../etc/passwd'), '_etc_passwd', '前导点必须去掉，防目录穿越');
+    assert.throws(() => libraryId('   '), /不能为空/);
+
+    assert.equal(coefficientOfVariation([100, 100, 100]), 0, '完全均匀波动为 0');
+    assert.ok(coefficientOfVariation([100, 200, 300]) > 0.3);
+
+    const mine = analyzeStructure([{ title: 'a', content: '短。' }]);
+    const theirs = analyzeStructure([{ title: 'b', content: '长一点的一章。' }]);
+    const rows = compareStructures(mine, theirs);
+    assert.equal(rows.length, 9);
+    assert.ok(rows.every((r) => 'label' in r && 'mine' in r && 'theirs' in r), '对比只给数字不做评分');
+    assert.ok(rows.some((r) => r.label === '章末钩子率'));
+    assert.ok(rows.some((r) => r.label === '长度波动 cv'));
+});
+
+test('G2 书库：单章指标——段落/对话/句长', () => {
+    const m = chapterMetrics('第一段。\n\n「你说什么？」他问。\n\n第三段在这里。');
+    assert.equal(m.paragraphs, 3);
+    assert.ok(m.dialogueChars > 0);
+    assert.ok(m.dialogueRatio > 0 && m.dialogueRatio < 1);
+    assert.equal(m.sentenceCount, 4, '问号在引号内也算句读，故是 4 句');
+    assert.equal(m.hookKind, null);
+    assert.equal(chapterMetrics('').paragraphs, 0);
+    assert.equal(chapterMetrics('').dialogueRatio, 0);
 });

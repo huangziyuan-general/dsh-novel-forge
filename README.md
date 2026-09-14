@@ -44,13 +44,13 @@ dsh plugin --profile web add npm:dsh-novel-forge
 dsh plugin --profile web add github:<owner>/dsh-novel-forge
 ```
 
-安装后重启 DSH web 即生效：19 个 `novel_*` 工具进入工具目录，agent 预设「小说锻炉」
+安装后重启 DSH web 即生效：20 个 `novel_*` 工具进入工具目录，agent 预设「小说锻炉」
 自动部署到 `~/.dsh/.agent-presets/novel-forge/`（已存在则跳过，永不覆盖；
 `DSH_NOVEL_FORGE_REDEPLOY=1` 强制重铺，`DSH_NOVEL_FORGE_SKIP_DEPLOY=1` 关闭）。
 
 宿主版本要求与依赖面清单见 [COMPATIBILITY.md](./COMPATIBILITY.md)。
 
-## 19 个工具
+## 20 个工具
 
 | 工具 | 职责 | 硬约束 |
 | --- | --- | --- |
@@ -61,7 +61,7 @@ dsh plugin --profile web add github:<owner>/dsh-novel-forge
 | `novel_scene` | 场景契约（save/get/list/delete）：本章场景/出场人物/**隐藏人物**/世界书白名单/禁项 | 隐藏人物档案不进上下文且正文不许出现其名；契约外人物不注入（省 token） |
 | `novel_briefing` | 写前上下文包（细纲→承诺书→**场景契约**→人物卡→**语言基因卡**→账本→伏笔→世界书→上章结尾→锚段） | 一致性供给侧；按契约裁剪 cast 与世界书 |
 | `novel_write_chapter` | 写章落盘 | 门禁→机审→账本→**内容门禁（六维）**→**细纲契约指标**→版本化；契约指标落盘到章节索引 |
-| `novel_ledger` | 事实账本（含 note）+ 伏笔埋/收/改期 | 同章改值拒绝；章号超前拒绝；超期伏笔告警 |
+| `novel_ledger` | 事实账本（含 note）+ **时点推演**（`status_at` 第 n 章快照 / `timeline` 演化线）+ 伏笔埋/收/改期 | 同章改值拒绝；章号超前拒绝；超期伏笔告警；推演按章号累加（同章取后写），补录不改历史 |
 | `novel_noai_scan` | 六维去 AI 味扫描 | 纯本地零费用 |
 | `novel_audit` | 确定性章节审计 + 契约指标（覆盖率/偏离度）+ `continuity` 全书一致性 + `voice` 语言基因核对 + `platform` **起点/番茄双平台审稿** + `censor` **敏感自查七类** | 机审证据；平台体检表给出可执行改法 |
 | `novel_style` | 文笔六维基线（μ±σ 带）+ **氛围光谱 12 轴**（热血/悬疑/惊悚/压抑/甜宠/温情/悲情/诙谐/爽感/神秘/肃杀/苍凉）：build 建基线 / check 对照（含主导氛围漂移） | 纯本地零费用；只报数不贴标签 |
@@ -71,6 +71,7 @@ dsh plugin --profile web add github:<owner>/dsh-novel-forge
 | `novel_diagnose` | 黄金三章四维诊断（钩子/开场/冲突/灌输） | 确定性数字，机审与模型审分离 |
 | `novel_polish` | 段落级病灶定位 + 润色提案提交 | 润色也走提案制，永不覆盖旧稿 |
 | `novel_search` | 长篇检索（build 建/增量建索引 / query 按记忆碎片找回 / annotate 补语义标签 / status）：返回章号+摘录+命中比例 | 索引是**派生物**（`书/.novel/index.db`），删了重跑即得——不作为事实来源；无 sqlite 运行时自动退化 |
+| `novel_library` | **书库饲料**（import/list/read/analyze/delete）：拆对标作品的结构画像——章长曲线（含波动 cv）/对话密度/段落节奏/章末钩子率/高频意象；给 `compare_book` 与自己的书**并排**给数 | 零 token 全本地；只读饲料，**不参与本书一致性判定**；`delete` 只移索引（宿主 fs 无删除能力） |
 | `novel_glossary` | 术语表（add/remove/list） | 随上下文包注入，防专有名词乱译 |
 | `novel_clone_project` | 整书克隆为模板 | 阶段重置立意、提案与熔断计数清空；世界书/账本/伏笔/术语表/**场景契约/语言基因**一并带走 |
 
@@ -96,6 +97,14 @@ dsh plugin --profile web add github:<owner>/dsh-novel-forge
    ├─ audit.jsonl         # 全动作审计（谁在哪章做了什么、何时被拒）
    ├─ index.db            # 检索索引（派生物：删了重跑 novel_search build 即得，不进 Git 更好）
    └─ proposals/P3-xxx.json
+```
+
+工作区根下还可以有一个与各书目**平级**的 `书库/`——外部小说饲料，多本书共享：
+
+```
+书库/
+├─ library.json           # [{id, title, origin, chapters, chars, importedAt}]
+└─ 对标样本/原文.txt        # 只读饲料：不进上下文包、不参与本书一致性判定
 ```
 
 全部在会话工作区内、走宿主 `ctx.fs`（受沙箱与审批策略约束），可直接进 Git / Obsidian。
@@ -158,6 +167,51 @@ novel_search build  →  novel_search query q:"戴斗笠的人"
 - **索引是派生物**：落在 `书/.novel/index.db`，删了重跑 `build` 即得，
   **永不参与一致性判定**——正文与 `novel.json` 才是真相。
 - **无 sqlite 的运行时**自动退化为子串匹配：功能弱但「找一段」仍可用，且不报错。
+
+## 第六批：收官两件事（状态时点推演 / 书库饲料）
+
+第五批之后回查总览表，发现 18 条里还剩两条没落地，本批补齐（另两条 H1/H2 判定不做，
+理由见 [`docs/FUSION-PLAN-2026-09-14.md`](./docs/FUSION-PLAN-2026-09-14.md) 的「未落地项盘点」）。
+**A~G 的 18 条至此 18/18。**
+
+### B2 · 状态时点推演：回答「第 12 章时他是什么状态」
+
+`query` 只给**最新值**——写到第 80 章想回溯第 12 章他在哪、什么境界，或者核对
+「第 40 章断腿、第 50 章还能跑」，拿最新值是算不出来的。新增两个动作：
+
+- `novel_ledger status_at at:12`：**第 12 章时点快照**。取 `chapter ≤ 12` 的记录里章号最大的
+  一条（同章取最后写入）。**不能取数组最后一条**——补录早期章节是常态（先写第 12 章、
+  后补第 3 章），那样会把新值覆盖成旧值。
+- `novel_ledger timeline entity:林晚`：单实体状态演化线（按章升序），
+  对账「这个值是哪一章被改掉的」。
+
+配套：`novel_audit continuity:true` 新增**账本级**的「死后仍在活动」判定——与既有的
+正文名字扫描互补：那个会误伤「有人提起亡者」「灵位遗物」，这个扫模型主动落的账，
+误报率低得多，且能抓到名字压根没出现的状态矛盾。
+
+### G2 · 书库饲料：把「凭感觉学」换成看数字
+
+全插件唯一**不服务于「写下去」**的能力（学别人怎么写）。所以刻意与书目体系隔离：
+饲料不是稿件，没有审计、**不进上下文包**、**不参与本书一致性判定**
+（对照标准是别人，不是本书）。
+
+```
+novel_library import（给 path 读工作区文本文件，或直接粘 text）
+→ novel_library analyze（结构画像）
+→ novel_library analyze compare_book:我的书（与自己的书并排给数）
+```
+
+`analyze` 出的是**纯本地零 token** 的可参照数字：章节长度曲线（均值/中位/极值/**波动 cv**）、
+对话密度、段落节奏、**章末钩子率**（复用 `hook.js` 四类判定）、前 3 章均长、单句均长、
+高频意象。拆 1–2 部同题材对标，就知道「该写多长、多少对话、章末怎么收」——
+不是照抄，是有参照。落点在**工作区根的 `书库/`**（与各书目平级，多本书共享）。
+
+两个刻意的设计：
+- **`delete` 只移索引，不删原文**——宿主 `ctx.fs` 服务**不提供删除能力**
+  （只有 resolve/stat/readText/streamText/listDir/writeText），所以返回里明确说清原文还在磁盘上。
+  同名导入也直接拒绝：饲料删错了没法找回，宁可让用户显式 delete。
+- **重复短语不做分词**（无依赖可用，且中文分词器对网文特有名词更差）：3–4 字 n-gram 频次 +
+  抑制周期串的**错位窗口**（「青铜古灯」重复三次会顺带产生「古灯青铜」「灯青铜古」）。
 
 ## 配置（cordis.patch.yml）
 
