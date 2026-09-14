@@ -40,9 +40,14 @@ export function ProjectListView({ state: s }) {
 				? h('div', { style: hintStyle }, '本会话还没有项目。输入书名创建一个，或在会话里让 AI 调 novel_project init。')
 				: h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
 					s.projects.map((p) => h('div', { key: p.name, style: itemCardStyle },
-						h('div', {
+						h('button', {
 							'data-action': 'open', 'data-id': p.name,
-							style: { cursor: 'pointer' },
+							// 打开整卡：button 才能进 Tab 序 / 被读屏读到 / 回车触发
+							style: {
+								display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
+								background: 'transparent', border: 'none', padding: 0,
+								font: 'inherit', color: 'inherit',
+							},
 						},
 							h('div', { style: { fontWeight: 600 } }, p.title || p.name),
 							h('div', { style: { ...hintStyle, fontSize: '12px' } },

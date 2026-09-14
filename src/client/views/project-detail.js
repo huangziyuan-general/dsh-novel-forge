@@ -54,12 +54,27 @@ export function ProjectDetailView({ state: s }) {
 			}, s.writing ? '写作中…' : '一键写章'),
 			h('button', {
 				'data-action': 'polish', disabled: s.writing || s.polishing,
-				style: { ...btnStyle, borderColor: '#a06', color: '#a06' },
+				style: { ...btnStyle, borderColor: 'var(--dsw-alias-accent-strong, #c084fc)', color: 'var(--dsw-alias-accent-strong, #c084fc)' },
 			}, s.polishing ? '润色中…' : '一键润色'),
 		),
 
 		s.error ? h('div', { style: errStyle }, s.error) : null,
 		s.notice ? h('div', { style: okStyle }, s.notice) : null,
+
+		// 未保存离开确认：返回 / 换章前有改动时，先问一句
+		s.discardPending
+			? h('div', {
+				style: {
+					display: 'flex', gap: '6px', alignItems: 'center',
+					border: '1px solid var(--dsw-alias-border-l3, #333)',
+					background: 'rgba(255,170,0,.08)', borderRadius: '6px', padding: '6px 8px',
+				},
+			},
+				h('span', { style: { flex: 1, fontSize: '12px' } }, '本章有未保存的改动，确认丢弃吗？'),
+				h('button', { 'data-action': 'discard-confirm', style: dangerBtnStyle }, '丢弃改动'),
+				h('button', { 'data-action': 'discard-cancel', style: btnStyle }, '取消'),
+			)
+			: null,
 
 		// 编辑区（key 带版本号，刷新章节时强制重建以吸收新的 defaultValue）
 		h('textarea', {
@@ -75,6 +90,9 @@ export function ProjectDetailView({ state: s }) {
 			h('button', { 'data-action': 'goto-lorebook', 'data-id': s.selected, style: btnStyle }, '世界书'),
 			h('button', { 'data-action': 'delete', style: dangerBtnStyle },
 				s.deleteState === 'confirm' ? '确认删除？' : '删除'),
+			s.deleteState === 'confirm'
+				? h('button', { 'data-action': 'delete-cancel', style: btnStyle }, '取消')
+				: null,
 		),
 
 		// 结构诊断
@@ -90,7 +108,8 @@ export function ProjectDetailView({ state: s }) {
 			s.report ? h('span', {
 				style: {
 					fontSize: '13px', fontWeight: 700,
-					color: s.report.score >= 70 ? '#2a7' : s.report.score >= 50 ? '#c90' : '#c33',
+					color: s.report.score >= 70 ? 'var(--dsw-alias-accent-strong, #4ade80)'
+						: s.report.score >= 50 ? '#fbbf24' : 'var(--dsw-alias-label-danger, #ff8a8a)',
 				},
 			}, `得分 ${s.report.score}`) : null,
 		),

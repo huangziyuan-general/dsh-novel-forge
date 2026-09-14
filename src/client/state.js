@@ -41,5 +41,7 @@ export function initialState() {
 		exporting: false, deleteState: null,
 		// 撤销栈与基线（保存判定依据）
 		undoStack: [], baseline: '', draftModified: false,
+		// 未保存离开确认：null | {kind:'back'} | {kind:'chapter', no:number}
+		discardPending: null,
 	};
 }

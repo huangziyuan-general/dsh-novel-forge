@@ -399,6 +399,42 @@ test('★ 听书目录：openProject 拉章节目录；两个标签可来回切'
     assert.equal(controller.state.detailTab, 'info', '能切回「基本信息」');
 });
 
+test('★ 未保存草稿：返回前先确认（丢弃改动才离开，取消留在原地）', async () => {
+    const { controller } = bootBook();
+    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    assert.equal(controller.state.view, 'detail');
+    // 模拟用户在草稿里打字产生未保存改动（onInput field=draft 的等价结果）
+    controller.state.draft = '写了一半的字'; controller.state.draftModified = true;
+
+    // 点返回 → 不离开，挂起确认
+    await controller.handleAction('back', { dataset: {} });
+    assert.equal(controller.state.view, 'detail', '有改动时返回必须先确认');
+    assert.equal(controller.state.discardPending?.kind, 'back', '挂起的是返回意图');
+
+    // 取消 → 留在原地、草稿不丢
+    await controller.handleAction('discard-cancel', { dataset: {} });
+    assert.equal(controller.state.view, 'detail', '取消后仍在详情');
+    assert.equal(controller.state.discardPending, null, '取消后提示消失');
+    assert.equal(controller.state.draft, '写了一半的字', '取消后草稿不丢');
+
+    // 再返回并确认丢弃 → 回项目列表、提示清空
+    controller.state.draftModified = true;
+    await controller.handleAction('back', { dataset: {} });
+    await controller.handleAction('discard-confirm', { dataset: {} });
+    assert.equal(controller.state.view, 'projects', '确认丢弃后返回列表');
+    assert.equal(controller.state.discardPending, null, '确认后挂起清空');
+});
+
+test('★ 删除有取消出口：误触「删除」后点「取消」不删书', async () => {
+    const { requests, controller } = bootBook();
+    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    await controller.handleAction('delete', { dataset: {} });
+    assert.equal(controller.state.deleteState, 'confirm', '第一次点只进确认态，不删');
+    await controller.handleAction('delete-cancel', { dataset: {} });
+    assert.equal(controller.state.deleteState, null, '取消后离开确认态');
+    assert.ok(!requests.some((r) => r.method === 'DELETE'), '取消后没发出删除请求');
+});
+
 test('★ 基本要素：openProject 拉 /elements（档案/大纲/角色卡/设定/账本），失败置空不炸', async () => {
     const { requests, controller } = bootBook();
     await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
