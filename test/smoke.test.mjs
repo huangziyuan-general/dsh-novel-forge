@@ -7,8 +7,20 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createFsio, auditLine } from '../lib/fsio.js';
+import * as proposals from '../lib/proposals.js';
 
 const hasSdk = fs.existsSync(path.join(import.meta.dirname, '..', 'node_modules', '@deepseek-ai', 'dsh-tools'));
+
+/** 插件配置（apply 与「服务端通道」直测共用，避免两处漂移）。 */
+const CFG = {
+    minChapterChars: 300,
+    maxChapterChars: 5000,
+    contextBudgetChars: 4000,
+    scanTopK: 8,
+    repetitionWindow: 10,
+    skipPresetDeploy: true, // 测试绝不碰 ~/.dsh
+};
 
 let root;
 let ctx;
@@ -84,19 +96,23 @@ before(async () => {
     // 会话身份：工具层用它做「书 → 会话」归属（面板按会话过滤项目列表）
     exec = { signal: new AbortController().signal, agent: { session: { header: { cwd: root, id: 'sess-A' } } } };
 
-    apply(ctx, {
-        minChapterChars: 300,
-        maxChapterChars: 5000,
-        contextBudgetChars: 4000,
-        scanTopK: 8,
-        repetitionWindow: 10,
-        skipPresetDeploy: true, // 测试绝不碰 ~/.dsh
-    });
+    apply(ctx, CFG);
 });
 
 after(() => {
     if (root !== undefined) fs.rmSync(root, { recursive: true, force: true });
 });
+
+/**
+ * 「服务端通道」io —— 与 REST 端点（lib/server-api.js）同款构造。
+ *
+ * 提案的 apply / discard / prune 是**用户主权动作**，刻意不在工具面暴露
+ * （见 lib/proposals.js）。所以测试里它们不走 tool(...)，而走这里 ——
+ * 这本身就是门禁设计的体现：模型够不到这些动作。
+ */
+function serverIo() {
+    return createFsio(ctx, exec, root);
+}
 
 function tool(name) {
     const t = ctx._registered.find((x) => x.name === name);
@@ -124,12 +140,12 @@ const GOOD_CHAPTER = [
     '她忽然吹熄了灯。',
 ].join('\n');
 
-test('装载：17 个工具注册 + 系统提示注入', () => {
+test('装载：18 个工具注册 + 系统提示注入', () => {
     assert.equal(hasSdk, true, '缺宿主 SDK symlink：先 npm run setup-dev');
-    assert.equal(ctx._registered.length, 17);
+    assert.equal(ctx._registered.length, 18);
     assert.deepEqual(
         ctx._registered.map((t) => t.name),
-        ['novel_project', 'novel_outline', 'novel_character', 'novel_worldbook', 'novel_briefing',
+        ['novel_project', 'novel_outline', 'novel_character', 'novel_worldbook', 'novel_scene', 'novel_briefing',
          'novel_write_chapter', 'novel_ledger', 'novel_noai_scan', 'novel_audit', 'novel_style',
          'novel_propose', 'novel_import', 'novel_export', 'novel_glossary', 'novel_clone_project',
          'novel_diagnose', 'novel_polish'],
@@ -238,7 +254,8 @@ test('写章：机审通过 → 版本化落盘 → 账本落账 → 门禁放�
     const meta = JSON.parse(fs.readFileSync(path.join(root, '星海拾骨', 'novel.json'), 'utf8'));
     assert.equal(meta.approvals.outline['1'], true);
     assert.equal(meta.chapters['1'].latest, 1);
-    assert.equal(meta.stage, 'drafting');
+    assert.equal(meta.stage, 'writing', '写章后阶段推进到九阶段的 writing');
+    assert.equal(meta.gateFailures['1'], undefined, '成功落盘 → 熔断计数清零');
 });
 
 const CH2_CONTENT = [
@@ -294,17 +311,26 @@ test('质检：noai 扫描与确定性审计', async () => {
     assert.equal(typeof q.facts[0].note, 'string', '账本查询应带出 note');
 });
 
-test('提案制：修订 → apply 生成 v2，v1 保留', async () => {
+test('提案制（融合 A1）：工具面只有 propose/list；apply 是用户动作、审计留痕 actor', async () => {
+    // ① 门禁先断言：apply/prune 必须不在工具面 —— 模型无法自己批准自己的提案
+    //    parameters 是 JSON Schema（宿主据此校验 enum），故从这里读。
+    const actions = tool('novel_propose').parameters.properties.action.enum;
+    assert.deepEqual(actions, ['propose', 'list'], '工具面只留 propose/list');
+    assert.ok(!actions.includes('apply'), 'apply 必须不在工具面（批准钥匙归用户）');
+    assert.ok(!actions.includes('prune'), 'prune 同样不该在工具面');
+
+    // ② 模型侧：只能提提案，不改正文
     const p = await tool('novel_propose').execute({
         action: 'propose', book: '星海拾骨', chapter: 1,
         content: `${GOOD_CHAPTER}\n\n她把那只鞋收进了棺材底下。`,
         reason: '补一个动作收束',
     }, exec);
     assert.equal(p.status, 'pending');
+    const metaAfterPropose = JSON.parse(fs.readFileSync(path.join(root, '星海拾骨', 'novel.json'), 'utf8'));
+    assert.equal(metaAfterPropose.chapters['1'].latest, 1, 'propose 不得改动正文版本');
 
-    const applied = await tool('novel_propose').execute(
-        { action: 'apply', book: '星海拾骨', proposal_id: p.id }, exec,
-    );
+    // ③ 用户侧：apply 走服务端通道（REST 端点同款调用），生成 v2 且旧版保留
+    const applied = await proposals.applyProposal(serverIo(), '星海拾骨', p.id, CFG, 'user');
     assert.equal(applied.version, 2);
     const v1 = fs.existsSync(path.join(root, '星海拾骨', '正文', '第1章-雨夜来客-v1.md'));
     const v2 = fs.existsSync(path.join(root, '星海拾骨', '正文', '第1章-雨夜来客-v2.md'));
@@ -314,10 +340,35 @@ test('提案制：修订 → apply 生成 v2，v1 保留', async () => {
     assert.equal(meta.chapters['1'].latest, 2);
     assert.equal(meta.proposals[0].status, 'applied');
 
+    // ④ 审计留痕：能分辨「这条是谁做的」——apply 是 user，propose 是 agent
     const auditLog = fs.readFileSync(path.join(root, '星海拾骨', '.novel', 'audit.jsonl'), 'utf8');
     for (const action of ['init', 'outline/save_chapter', 'outline/approve', 'write_chapter/saved', 'write_chapter/rejected', 'propose/create', 'propose/apply']) {
-        assert.ok(auditLog.includes(`"action":"${action}"`) || auditLog.includes(action), `审计缺 ${action}`);
+        assert.ok(auditLog.includes(action), `审计缺 ${action}`);
     }
+    const rows = auditLog.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    assert.ok(rows.every((r) => typeof r.actor === 'string' && r.actor !== ''), '每行审计都必须带 actor');
+    assert.equal(rows.find((r) => r.action === 'propose/apply')?.actor, 'user', 'apply 的 actor 必须是 user');
+    assert.equal(rows.find((r) => r.action === 'propose/create')?.actor, 'agent', 'propose 的 actor 应是 agent');
+});
+
+test('提案丢弃（融合 A1）：discard 只改状态不动正文，且同样只走服务端通道', async () => {
+    const p = await tool('novel_propose').execute({
+        action: 'propose', book: '星海拾骨', chapter: 1,
+        content: `${GOOD_CHAPTER}\n\n再补一句试试丢弃。`, reason: '验证 discard',
+    }, exec);
+    const beforeMeta = JSON.parse(fs.readFileSync(path.join(root, '星海拾骨', 'novel.json'), 'utf8'));
+
+    const d = await proposals.discardProposal(serverIo(), '星海拾骨', p.id, 'user');
+    assert.equal(d.status, 'discarded');
+
+    const afterMeta = JSON.parse(fs.readFileSync(path.join(root, '星海拾骨', 'novel.json'), 'utf8'));
+    assert.equal(afterMeta.chapters['1'].latest, beforeMeta.chapters['1'].latest, 'discard 不该动正文版本');
+    assert.equal(afterMeta.proposals.find((x) => x.id === p.id).status, 'discarded');
+    // 已丢弃的提案不可再 apply
+    await assert.rejects(
+        () => proposals.applyProposal(serverIo(), '星海拾骨', p.id, CFG, 'user'),
+        /状态为 discarded/,
+    );
 });
 
 test('账本护栏：update 章号超前被拒；repair 索引-磁盘对账', async () => {
@@ -375,18 +426,19 @@ test('维护通道：世界书 update 保 id / set_stage 可回退 / propose pru
 
     // set_stage：可前进、可回退（修复只前进无撤口的缺）
     const fwd = await tool('novel_project').execute({ action: 'set_stage', book: '星海拾骨', stage: 'revising' }, exec);
-    assert.equal(fwd.stage, 'revising');
+    assert.equal(fwd.stage, 'revision', '旧名 revising 映射到九阶段 revision');
     const back = await tool('novel_project').execute({ action: 'set_stage', book: '星海拾骨', stage: 'drafting' }, exec);
-    assert.equal(back.stage, 'drafting', 'set_stage 可回退');
+    assert.equal(back.stage, 'writing', 'set_stage 可回退（旧名 drafting → writing）');
     await assert.rejects(
         () => tool('novel_project').execute({ action: 'set_stage', book: '星海拾骨', stage: '不存在的阶段' }, exec),
         /未知阶段/,
     );
 
-    // propose → apply → prune：const 索引清掉非 pending，真文件留冷归档
+    // propose → apply → prune：索引清掉非 pending，真文件留冷归档
+    // （prune 与 apply 一样属用户主权动作，工具面不提供，走服务端通道）
     const p = await tool('novel_propose').execute({ action: 'propose', book: '星海拾骨', chapter: 1, content: `${GOOD_CHAPTER}\n\n补一句收束。`, reason: '验证 prune' }, exec);
-    await tool('novel_propose').execute({ action: 'apply', book: '星海拾骨', proposal_id: p.id }, exec);
-    const pruned = await tool('novel_propose').execute({ action: 'prune', book: '星海拾骨' }, exec);
+    await proposals.applyProposal(serverIo(), '星海拾骨', p.id, CFG, 'user');
+    const pruned = await proposals.pruneProposals(serverIo(), '星海拾骨', 'user');
     assert.ok(pruned.removed >= 1, `应清理已终态提案，实际 ${pruned.removed}`);
     assert.equal(pruned.proposals.length, 0, '清完后不应再引用已终态提案');
     assert.ok(!pruned.proposals.some((x) => x.id === p.id), '被 apply 的提案索引已清');
@@ -440,7 +492,7 @@ test('资产/评审工具端到端：import → diagnose → export → glossary
     const cl = await tool('novel_clone_project').execute({ from_book: '拾骨记', new_book: '拾骨记-江南版' }, exec);
     assert.equal(cl.chapters, 2, '克隆应带 2 章文件');
     const cm = JSON.parse(fs.readFileSync(path.join(root, '拾骨记-江南版', 'novel.json'), 'utf8'));
-    assert.equal(cm.stage, 'planning', '克隆重置阶段');
+    assert.equal(cm.stage, 'topic', '克隆重置阶段到九阶段起点');
     assert.deepEqual(cm.proposals, [], '克隆清空提案');
     assert.equal(Object.keys(cm.chapters).length, 2);
     assert.ok(fs.existsSync(path.join(root, '拾骨记-江南版', '正文', '第1章-降临-v1.md')), '章节文件已复制');
@@ -569,4 +621,425 @@ test('client 结构契约：package.json 声明 ./client + dsh.client，产物�
     assert.match(src, /apply:\s*\(\)\s*=>\s*apply/, '导出表必须含 apply');
     assert.match(src, /inject:\s*\(\)\s*=>\s*inject/, '导出表必须含 inject');
     assert.ok(!/^\s*(import|export)\s/m.test(src), '产物不得含 ESM 语法——dsh 按经典脚本执行，混入 import/export 会整包 syntax error');
+});
+
+test('节奏铁律（融合 F2）：preset 与工具描述都写死「一次只写一章」', () => {
+    // 治「一句话就写到章节结束」：persona 层 + 工具描述层 + 系统提示层，三处都有。
+    const base = path.join(import.meta.dirname, '..');
+    const preset = fs.readFileSync(path.join(base, 'lib', 'preset', 'novel-forge', 'agent.cordis.yml'), 'utf8');
+    assert.ok(preset.includes('节奏铁律'), 'preset persona 必须有节奏铁律');
+    assert.ok(preset.includes('一次只写一章'), 'preset 必须写明「一次只写一章」');
+    assert.ok(preset.includes('绝不擅自连写第二章'), 'preset 必须写明不许连写下一章');
+
+    const wt = fs.readFileSync(path.join(base, 'lib', 'tools', 'writing-tools.js'), 'utf8');
+    assert.ok(wt.includes('节奏铁律'), 'novel_write_chapter 工具描述应带节奏铁律');
+
+    const idx = fs.readFileSync(path.join(base, 'lib', 'index.js'), 'utf8');
+    assert.ok(idx.includes('节奏铁律'), 'systemPrompt 纪律清单应含节奏铁律');
+});
+
+test('审计 actor：默认 agent，用户通道显式传 user', () => {
+    // 默认值必须是 agent（工具路径无需逐个改），显式传参要能覆盖。
+    const line = auditLine('propose/apply', { id: 'P1-abc' });
+    assert.equal(JSON.parse(line).actor, 'agent', '缺省 actor 应为 agent');
+    const userLine = auditLine('propose/apply', { id: 'P1-abc' }, 'user');
+    assert.equal(JSON.parse(userLine).actor, 'user');
+    // detail 不得覆盖 actor（actor 是系统字段，放在展开之后）
+    const guarded = auditLine('x', { actor: 'forged' });
+    assert.equal(JSON.parse(guarded).actor, 'agent', 'detail 里的 actor 不该覆盖系统字段');
+});
+
+// ── 第二批融合：内容门禁 / 一致性校验 / 承诺书 / 追读节奏 ────────────────────
+
+const DEAD_CH1 = [
+    '河滩上的雾比往年更重。赵擎单膝跪在碎石里，左手还死死按着那口从来不肯出鞘的刀。',
+    '',
+    '林晚是循着血腥味找过来的。她拨开芦苇时，看见他背后的血已经把整片鹅卵石染成暗褐色，像谁打翻了一整坛陈年的酒。',
+    '',
+    '她蹲下去，把他歪着的头扶正，让他能看见天。他的眼睛还睁着，瞳孔里映着一小块铅灰色的云。',
+    '',
+    '「别说话。」她说。她的手在抖，但声音很稳，稳得像在念一段背了很多年的咒。',
+    '',
+    '赵擎笑了一下。他喉咙里发出一点漏气的声音，像风穿过破了洞的窗户纸，断断续续，却还听得清字。',
+    '',
+    '「上游……第三道弯……船底……」他抬起手，指尖指了指雾气最浓的方向，又慢慢落回自己的胸口，按了按。',
+    '',
+    '「我记下了。」林晚说。她把他那只手握住，掌心很凉，凉得像刚从井里捞出来的石头。',
+    '',
+    '他的手垂下去。雾慢慢合拢，把河滩上的一切，连同那点微弱的呼吸声，一起吞了进去。',
+    '',
+    '三天后，林晚回到义庄。她洗净了那口刀上的血，把它端端正正放回供桌，然后点了一炷新香。',
+    '',
+    '香烧到一半，火苗忽然无风自偏，朝着上游的方向倒了倒。',
+].join('\n');
+
+const DEAD_CH2 = [
+    '天还没亮，赵擎就敲响了院门。他穿着一件洗得发白的旧棉袍，肩膀上落着雪，雪还没化。',
+    '',
+    '林晚没有开门。她隔着门板听他咳嗽。这咳嗽声她听过太多次，每一次都意味着一笔新的、让人不太舒服的买卖。',
+    '',
+    '「义庄又空了。」赵擎说，「这回连尸首都没留下，只剩下三口空棺，棺盖朝天翻着。」',
+    '',
+    '她把手按在门闩上，指节泛白。三年前他把师父的尸首从河里捞上来时，也是这样站在门外，这样咳嗽。',
+    '',
+    '门终究还是开了。风卷着雪扑进来，吹得供桌上的纸钱连着翻了两个身，又落回原处。',
+    '',
+    '赵擎在门槛外站着，没有进来。他低头看着自己的鞋尖，像是在等一句他自己也知道不会有的回答。',
+    '',
+    '「上游第三道弯。」林晚说。她盯着他，一字一句地问，「你怎么会知道那个地方？」',
+    '',
+    '赵擎抬起头。雪水顺着他的鬓角往下淌，他张了张嘴，什么也没说出来。',
+    '',
+    '她忽然觉得，这个人不该还站在这里。',
+].join('\n');
+
+test('★ 内容门禁：死人复活阻断落盘；force 放行记审计；check 复查出硬伤', async () => {
+    assert.equal(hasSdk, true, '缺宿主 SDK symlink：先 npm run setup-dev');
+    const project = tool('novel_project');
+    await project.execute({ action: 'init', book: '门禁测试书', title: '门禁测试书' }, exec);
+
+    await tool('novel_outline').execute(
+        { action: 'save_chapter', book: '门禁测试书', chapter: 1, outline: '第1章：河滩。赵擎重伤垂死。出场：林晚、赵擎。' }, exec,
+    );
+    await tool('novel_outline').execute({ action: 'approve', book: '门禁测试书', chapter: 1 }, exec);
+    const ch1 = await tool('novel_write_chapter').execute({
+        book: '门禁测试书', chapter: 1, title: '河滩', content: DEAD_CH1, summary: '赵擎重伤，指向上游第三道弯后死去。',
+        facts_updates: '赵擎|状态|阵亡',
+    }, exec);
+    assert.equal(ch1.contentGate.ok, true, '第1章本身没有硬伤');
+
+    await tool('novel_outline').execute(
+        { action: 'save_chapter', book: '门禁测试书', chapter: 2, outline: '第2章：夜访。来客敲门（悬念）。出场：林晚。' }, exec,
+    );
+    await tool('novel_outline').execute({ action: 'approve', book: '门禁测试书', chapter: 2 }, exec);
+
+    // ★ 门禁必须拦：赵擎已阵亡，第2章正文却让他出场
+    await assert.rejects(
+        () => tool('novel_write_chapter').execute({
+            book: '门禁测试书', chapter: 2, title: '夜访', content: DEAD_CH2, summary: '来客深夜敲门',
+        }, exec),
+        /内容门禁未通过|死亡人物复活/,
+    );
+
+    // force 放行 → 落盘，但审计里留下 force 记录
+    const forced = await tool('novel_write_chapter').execute({
+        book: '门禁测试书', chapter: 2, title: '夜访', content: DEAD_CH2, summary: '来客深夜敲门', force: true,
+    }, exec);
+    assert.equal(forced.contentGate.ok, false, 'force 放行也要如实报告门禁不通过');
+    const auditLog = fs.readFileSync(path.join(root, '门禁测试书', '.novel', 'audit.jsonl'), 'utf8');
+    assert.ok(auditLog.includes('content_gate_forced'), 'force 放行必须留痕');
+
+    // check：全书一致性校验复查出死人复活
+    const chk = await project.execute({ action: 'check', book: '门禁测试书' }, exec);
+    assert.equal(chk.continuity.ok, false);
+    assert.ok(chk.continuity.issues.some((i) => i.code === 'dead-reappear' && i.severity === 'error'),
+        `check 应报 dead-reappear，实报 ${chk.continuity.issues.map((i) => i.code).join(',')}`);
+
+    // audit continuity:true 附带同一套结论（两条通道一份实现）
+    const aud = await tool('novel_audit').execute({ book: '门禁测试书', chapter: 2, continuity: true }, exec);
+    assert.equal(typeof aud.continuityResult.ok, 'boolean');
+    assert.ok(aud.continuityResult.issues.some((i) => i.code === 'dead-reappear'));
+});
+
+test('★ 追读铁律：到期伏笔零回应却开新钩 → 内容门禁阻断', async () => {
+    const project = tool('novel_project');
+    await project.execute({ action: 'init', book: '追读测试书', title: '追读测试书' }, exec);
+    // 第1章埋一个「预计第2章回收」的伏笔
+    await tool('novel_ledger').execute({
+        action: 'foreshadow_setup', book: '追读测试书', chapter: 1, setup: '断刃的下落', plan: 2,
+    }, exec);
+
+    await tool('novel_outline').execute(
+        { action: 'save_chapter', book: '追读测试书', chapter: 1, outline: '第1章：埋下断刃的线索。出场：林晚。' }, exec,
+    );
+    await tool('novel_outline').execute({ action: 'approve', book: '追读测试书', chapter: 1 }, exec);
+    await tool('novel_write_chapter').execute({
+        book: '追读测试书', chapter: 1, title: '断刃', content: DEAD_CH1, summary: '留下断刃的线索。',
+    }, exec);
+
+    await tool('novel_outline').execute(
+        { action: 'save_chapter', book: '追读测试书', chapter: 2, outline: '第2章：来客（章末留悬念）。出场：林晚。' }, exec,
+    );
+    await tool('novel_outline').execute({ action: 'approve', book: '追读测试书', chapter: 2 }, exec);
+
+    // 第2章通篇不提断刃，结尾却开新钩 → 阻断
+    const noPayoff = DEAD_CH2.replace(/赵擎/g, '来客').replace(/这个人不该还站在这里/, '门外又响起了第三种脚步声');
+    await assert.rejects(
+        () => tool('novel_write_chapter').execute({
+            book: '追读测试书', chapter: 2, title: '来客', content: noPayoff, summary: '来客夜访',
+        }, exec),
+        /追读铁律|欠账未还/,
+    );
+
+    // 正文里回一句旧账 → 放行
+    const paid = `${noPayoff}\n\n她这才想起，供桌上那口断刃已经三天没动过了。`;
+    const ok = await tool('novel_write_chapter').execute({
+        book: '追读测试书', chapter: 2, title: '来客', content: paid, summary: '来客夜访，想起断刃',
+    }, exec);
+    assert.equal(ok.contentGate.ok, true, '回应了旧账就该放行');
+});
+
+test('★ 承诺书：写入后每次写章注入上下文（承诺写了才有人看）', async () => {
+    const project = tool('novel_project');
+    await project.execute({ action: 'init', book: '承诺测试书', title: '承诺测试书' }, exec);
+
+    const empty = await project.execute({ action: 'promise', book: '承诺测试书' }, exec);
+    assert.equal(empty.hasPromise, false, '未写时读回空');
+
+    const saved = await project.execute({
+        action: 'promise', book: '承诺测试书',
+        promise: '本书向读者承诺：每章至少一个反转；不做无脑虐主；感情线单一不摇摆；绝不烂尾。',
+    }, exec);
+    assert.equal(saved.hasPromise, true);
+
+    const again = await project.execute({ action: 'promise', book: '承诺测试书' }, exec);
+    assert.ok(again.promise.includes('每章至少一个反转'), '承诺书要能读回');
+
+    const brief = await tool('novel_briefing').execute({ book: '承诺测试书', chapter: 1 }, exec);
+    assert.ok(brief.rendered.includes('故事承诺书'), '承诺书必须进上下文包');
+    assert.ok(brief.rendered.includes('每章至少一个反转'));
+    assert.ok(brief.rendered.includes('追读节奏'), '追读节奏硬约束是固定注入项');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 融合第三批（上下文工程）：B3 场景契约 / E3 语言基因卡 / A3+A4 细纲契约指标
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 干净正文：第三人称统一、无引号、无钩子、不含既有实体——只为测「禁项」这一条门禁。 */
+const CLEAN_CHAPTER = [
+    '他在破庙里坐了一整夜。庙顶漏下的雨珠敲着青砖，一声一声，像有人在外面数着数。他把包袱垫在膝上，指尖反复摩着一个缺角。',
+    '',
+    '天亮前雨停了。他起身把火堆刨开，底下的炭还红着，风一吹就亮起来。他把包袱重新系紧，走出门槛时回头看了一眼那尊倒了半边的泥像，泥像脸上落着水，像哭过，又像笑过。',
+    '',
+    '山道上的泥是松的，踩下去要拔一下才走得动。走了约莫半个时辰，他停下来，从怀里取出一枚储物戒指，在掌心里掂了掂，又放回衣襟深处。',
+    '',
+    '林子那边的雾还没散，白得发黏，贴着地面不肯走。他想起许多年前也有人在这种雾里走丢过，后来只在河滩上找到一只鞋。',
+    '',
+    '风从岔口那边过来，带着潮气和草屑。他把衣领掩紧，继续往前走，鞋底在泥里发出轻微的响声。前面是个岔口，左边通向镇子，右边那条窄路绕进林子。',
+].join('\n');
+
+test('★ B3 场景契约：隐藏人物不进上下文，写进正文被内容门禁拦下', async () => {
+    const outline = tool('novel_outline');
+    const scene = tool('novel_scene');
+    const briefing = tool('novel_briefing');
+    const write = tool('novel_write_chapter');
+
+    const saved = await scene.execute({
+        action: 'save', book: '星海拾骨', chapter: 2,
+        scene: '雨夜断刃', participants: '林晚', hidden: '陆寒',
+        forbidden: '储物戒指', notes: '陆寒的真实身份本章不揭',
+    }, exec);
+    assert.deepEqual(saved.contract.participants, ['林晚']);
+    assert.deepEqual(saved.contract.hidden, ['陆寒']);
+    const cPath = path.join(root, '星海拾骨', '设定', '场景契约.json');
+    assert.ok(fs.existsSync(cPath), '契约文件必须落盘');
+    assert.ok(fs.readFileSync(cPath, 'utf8').includes('陆寒'), '落盘内容要含声明');
+
+    await outline.execute({
+        action: 'save_chapter', book: '星海拾骨', chapter: 2,
+        outline: '## 本章必写场景\n1. 断刃现世：断刃从江底浮起\n\n## 本章禁止偏离项\n- 禁止使用「储物戒指」\n',
+    }, exec);
+    await outline.execute({ action: 'approve', book: '星海拾骨', chapter: 2 }, exec);
+
+    const bf = await briefing.execute({ book: '星海拾骨', chapter: 2 }, exec);
+    const leaks = bf.sections.filter((x) => x.content.includes('陆寒')).map((x) => x.name);
+    assert.deepEqual(leaks, [], '★ 隐藏人物名不得进上下文（悬念保护：不知道就写不出来）');
+    assert.ok(bf.rendered.includes('林晚'), '出场人物要在场');
+    assert.equal(bf.hiddenCount, 1, '要报告「有 1 人隐藏」但不给名字');
+
+    // 正文与第1章无重合：否则机审（跨章重复率）会先于内容门禁拦下，测不到悬念保护这条
+    const bad = `${CLEAN_CHAPTER}\n\n陆寒从雾里走出来，掌中托着一柄断刃，正是从江底浮起的那一柄。`;
+    const dbgLog = fs.readFileSync(path.join(root, '星海拾骨', '.novel', 'audit.jsonl'), 'utf8');
+    const cg = (await import('../lib/content-gate.js')).contentGate;
+    const r0 = cg({ content: bad, chapter: 2, contract: { hidden: ['陆寒'] } });
+    await assert.rejects(
+        () => write.execute({ book: '星海拾骨', chapter: 2, title: '雨夜断刃', content: bad, summary: '陆寒现身', cast: '林晚' }, exec),
+        /隐藏人物|泄底/,
+        '★ 隐藏人物出现在正文必须被拦（不靠模型自觉）',
+    );
+
+    const ok = await write.execute({
+        book: '星海拾骨', chapter: 2, title: '雨夜断刃', content: bad, summary: '陆寒现身', cast: '林晚', force: true,
+    }, exec);
+    assert.equal(ok.gate.bannedHits.includes('储物戒指'), true, '命中禁项要落进指标');
+    assert.equal(ok.gate.passed, false, '违约的章不该判通过');
+
+    const meta = JSON.parse(fs.readFileSync(path.join(root, '星海拾骨', 'novel.json'), 'utf8'));
+    assert.equal(meta.chapters['2'].gate.coverage, 100, '★ 契约指标落盘到章节索引（可看趋势）');
+    assert.equal(meta.chapters['2'].gate.passed, false);
+    const auditLog = fs.readFileSync(path.join(root, '星海拾骨', '.novel', 'audit.jsonl'), 'utf8');
+    assert.ok(auditLog.includes('content_gate_forced'), '内容门禁 force 放行必须留痕');
+    assert.ok(auditLog.includes('gate_forced'), '细纲禁项 force 也要留痕');
+});
+
+test('★ A3/A4 细纲禁项：命中即拒绝落盘（判定权归代码）', async () => {
+    const outline = tool('novel_outline');
+    const write = tool('novel_write_chapter');
+    await outline.execute({
+        action: 'save_chapter', book: '星海拾骨', chapter: 3,
+        outline: '## 本章必写场景\n1. 断刃现世：断刃从江底浮起\n\n## 本章禁止偏离项\n- 禁止使用「储物戒指」\n',
+    }, exec);
+    await outline.execute({ action: 'approve', book: '星海拾骨', chapter: 3 }, exec);
+
+    await assert.rejects(
+        () => write.execute({
+            book: '星海拾骨', chapter: 3, title: '岔口', cast: '林晚', summary: '选路', content: CLEAN_CHAPTER_B,
+        }, exec),
+        /细纲禁项/,
+        '★ 细纲写死的禁项由代码拦（假阳性风险由 force 出口兜）',
+    );
+});
+
+test('★ E3 语言基因卡：建卡单独注入；角色说了自己的禁忌词被抓出', async () => {
+    const character = tool('novel_character');
+    const briefing = tool('novel_briefing');
+    const audit = tool('novel_audit');
+
+    const saved = await character.execute({
+        action: 'save', book: '星海拾骨', name: '林晚',
+        card: '外在：拾骨人，寡言。隐性欲望：查清师父死因。',
+        voice: '句长|短句为主，很少超过12字\n逻辑|先做后说\n口头禅|别急\n禁忌|香炉\n动作|敲刀柄',
+    }, exec);
+    assert.ok(saved.voiceFields.length >= 4, `语言基因卡字段要落盘，实际 ${saved.voiceFields.length}`);
+
+    const bf = await briefing.execute({ book: '星海拾骨', chapter: 2 }, exec);
+    assert.ok(bf.rendered.includes('说话方式'), '★ 语言基因卡要单独注入成区块（混在人物卡里会被滑过去）');
+    assert.equal(bf.voiceCount, 1, '契约里的出场人物有卡就注入');
+
+    const a = await audit.execute({ book: '星海拾骨', chapter: 1, voice: true }, exec);
+    assert.ok(a.voiceResult.errors >= 1, '★ 第1章正文写了「香炉」，而林晚的禁忌词就是香炉——必须抓出');
+    assert.equal(a.voiceResult.issues.some((i) => i.code === 'voice-taboo'), true);
+
+    const listed = await character.execute({ action: 'list', book: '星海拾骨' }, exec);
+    assert.ok(listed.voiced.includes('林晚'), 'list 要能看到谁建了语言基因卡');
+});
+
+
+/** 第3章专用正文：与 CLEAN_CHAPTER 无重合，含禁词「储物戒指」、无引号、无钩子。 */
+const CLEAN_CHAPTER_B = [
+    '午后日头偏西，镇口那家米铺已经上了板。他从板缝里往里看了一眼，柜台后没人，只有一只猫趴在算盘上。',
+    '',
+    '街面上还剩两三个摊子没收。卖炭的老头蹲在墙根下，用火镰敲着石头，火星溅到鞋面上也不在意。他在摊前停下，摸出几枚铜板换了一小袋盐。',
+    '',
+    '巷子深处传来磨刀的声音，一长一短，很慢。他顺着声音走过去，看见一个瘦高的人坐在小凳上，脚边摆着一只木盆，盆里的水浑得像泥汤。',
+    '',
+    '那人抬起头笑了一下，嘴唇动了动。他没有听清，只觉得后颈起了一层细密的汗。他摸了摸怀里，那枚储物戒指还在。',
+    '',
+    '他没有再往前走，转身出了巷子，朝镇外走去。天色还亮着，路上的影子拉得很长。',
+    '',
+    '镇外的坡上有一片矮松，风过时沙沙响，像有很多人在低声说话。他找了块石头坐下，把盐袋放在脚边，抬头看云。',
+    '',
+    '云走得慢，一层压着一层。他坐了很久，直到日头完全落到山后，坡下的镇子亮起零星的灯。',
+].join('\n');
+
+// ── 第四批：F1 九阶段 / E2 熔断 / C4 平台审稿 / C5 敏感自查 ─────────────────
+
+test('★ F1 九阶段：入场条件由代码判，越级拦得住、force 放行记 skipped', async () => {
+    const project = tool('novel_project');
+    await project.execute({ action: 'init', book: '阶段测试书', title: '阶段测试书', logline: '一个拾骨人查师父的死因。' }, exec);
+
+    // 看板：新书停在 topic；写作阶段入场条件是代码判的，缺什么要能列出来
+    const board0 = await project.execute({ action: 'phase', book: '阶段测试书' }, exec);
+    assert.equal(board0.stage, 'topic');
+    assert.equal(board0.phases.length, 9);
+    const w0 = board0.phases.find((x) => x.phase === 'writing');
+    assert.equal(w0.entryOk, false);
+    assert.ok(w0.missing.length >= 1, '★ 缺什么必须说出来，不能只回一个 false');
+
+    // 越级进 writing：拦（大纲/细纲/正文全缺）
+    await assert.rejects(
+        () => project.execute({ action: 'phase', book: '阶段测试书', stage: 'writing' }, exec),
+        /入场条件未满足/,
+    );
+
+    // force 放行 → 落 stage + 前置阶段记 skipped + PhaseReport 记缺口
+    const forced = await project.execute({ action: 'phase', book: '阶段测试书', stage: 'writing', force: true }, exec);
+    assert.equal(forced.stage, 'writing');
+    assert.equal(forced.forced, true);
+    const meta = JSON.parse(fs.readFileSync(path.join(root, '阶段测试书', 'novel.json'), 'utf8'));
+    assert.equal(meta.phases.topic.status, 'skipped', '★ 越级时前置阶段记 skipped —— 跳阶段这件事必须可审计');
+    assert.equal(meta.phases.writing.status, 'approved');
+    assert.ok(meta.phases.writing.report.errorCount >= 1, 'PhaseReport 记下 force 时的缺口数');
+
+    // 补齐设定（世界书条目）→ 条件齐了就不用 force
+    await tool('novel_worldbook').execute(
+        { action: 'add', book: '阶段测试书', id: 'W1', keywords: '乱葬岗', content: '城西乱葬岗的红泥带石灰。' }, exec,
+    );
+    const ok = await project.execute({ action: 'phase', book: '阶段测试书', stage: 'setting' }, exec);
+    assert.equal(ok.forced, false, '入场条件满足时应直接进入，不该记 forced');
+    assert.equal(ok.stage, 'setting');
+
+    // 旧名兼容：set_stage 'planning' → topic
+    const legacy = await project.execute({ action: 'set_stage', book: '阶段测试书', stage: 'planning' }, exec);
+    assert.equal(legacy.stage, 'topic', '旧五阶段名照旧可用，老数据零迁移');
+});
+
+test('★ E2 熔断：同章连续被驳回 3 次即拒写；重批细纲可解除', async () => {
+    const project = tool('novel_project');
+    const outline = tool('novel_outline');
+    const write = tool('novel_write_chapter');
+    const metaPath = path.join(root, '熔断测试书', 'novel.json');
+
+    await project.execute({ action: 'init', book: '熔断测试书', title: '熔断测试书', logline: '测试熔断用。' }, exec);
+    await outline.execute({
+        action: 'save_chapter', book: '熔断测试书', chapter: 1,
+        outline: '## 本章必写场景\n- 义庄夜谈：林晚与来客在义庄对谈，揭开空棺一事。\n\n## 本章禁止偏离项\n- 禁止使用「香炉」\n',
+    }, exec);
+    await outline.execute({ action: 'approve', book: '熔断测试书', chapter: 1 }, exec);
+
+    const args = { book: '熔断测试书', chapter: 1, title: '雨夜来客', content: GOOD_CHAPTER, summary: '林晚夜会来客，得知义庄空棺。' };
+
+    // 连续 3 次被细纲禁项驳回（GOOD_CHAPTER 里写了「香炉」）
+    for (let i = 1; i <= 3; i += 1) {
+        await assert.rejects(() => write.execute({ ...args }, exec), /细纲禁项被违反/, '第 ' + i + ' 次应被拦');
+        const m = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+        assert.equal(m.gateFailures['1'], i, '★ 驳回计数必须落盘（否则熔断永远数不满）');
+    }
+
+    // 第 4 次：熔断——连门禁都不跑，直接拒写，并给出解除路径
+    await assert.rejects(() => write.execute({ ...args }, exec), /熔断/, '★ 连续 3 次后必须熔断，逼回去改设定');
+    const m2 = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    assert.equal(m2.stage, 'topic', '熔断期间阶段没有推进');
+    assert.equal(m2.chapters['1'], undefined, '熔断期间没有落盘任何正文');
+
+    // 解除通道：重批细纲（去掉禁项）→ 计数清零 → 写得进去
+    await outline.execute({
+        action: 'save_chapter', book: '熔断测试书', chapter: 1,
+        outline: '## 本章必写场景\n- 义庄夜谈：林晚与来客在义庄对谈，揭开空棺一事。\n',
+    }, exec);
+    await outline.execute({ action: 'approve', book: '熔断测试书', chapter: 1 }, exec);
+
+    const ok = await write.execute({ ...args }, exec);
+    assert.equal(ok.version, 1);
+    const m3 = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    assert.equal(m3.gateFailures['1'], undefined, '★ 成功落盘后熔断计数清零');
+    assert.equal(m3.stage, 'writing', '写章顺带把阶段推到九阶段的 writing');
+});
+
+test('★ C4/C5：平台审稿与敏感自查接进 novel_audit（可选维度，不污染默认输出）', async () => {
+    const audit = tool('novel_audit');
+
+    const plain = await audit.execute({ book: '熔断测试书', chapter: 1 }, exec);
+    assert.equal(plain.platformReview, undefined, '不传 platform 就不该多算一份');
+    assert.equal(plain.censorResult, undefined);
+
+    const q = await audit.execute({ book: '熔断测试书', chapter: 1, platform: 'qidian' }, exec);
+    assert.equal(q.platformReview.platform, 'qidian');
+    assert.equal(q.platformReview.name, '起点');
+    assert.ok(q.platformReview.checks.length >= 5);
+    assert.ok(q.platformReview.checks.some((c) => c.key === 'ending-hook'));
+    assert.ok(q.platformReview.score > 0 && q.platformReview.score <= 100);
+
+    const f = await audit.execute({ book: '熔断测试书', chapter: 1, platform: 'fanqie' }, exec);
+    assert.equal(f.platformReview.name, '番茄');
+    assert.ok(f.platformReview.checks.some((c) => c.key === 'first-1k-thrill' || c.key === 'suffering-duration'));
+
+    const c = await audit.execute({ book: '熔断测试书', chapter: 1, censor: true, exempt: 'feudal' }, exec);
+    assert.equal(c.censorResult.level, 'clean');
+    assert.deepEqual(c.censorResult.categories, []);
+
+    await assert.rejects(
+        () => audit.execute({ book: '熔断测试书', chapter: 1, platform: '未知平台' }, exec),
+        /未知平台/,
+    );
 });

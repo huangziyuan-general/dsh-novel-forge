@@ -32,11 +32,66 @@ export function ProjectDetailView({ state: s }) {
 			'🎧 章节听书'),
 	);
 
+	// ── 提案队列（0.7.0 · 融合第一批 A1）──
+	//
+	// 模型只能「提提案」，工具面没有 apply（见 lib/proposals.js）——
+	// 所以这块界面就是「批准钥匙」的落点：用户点「应用」才生成新版本。
+	const pendingProposals = (s.proposals || []).filter((p) => p.status === 'pending');
+	const proposalsBlock = h('div', {
+		style: {
+			border: '1px solid var(--dsw-alias-border-l3, #333)',
+			borderRadius: '6px', padding: '8px',
+			display: 'flex', flexDirection: 'column', gap: '6px',
+		},
+	},
+		h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+			h('span', { style: { fontWeight: 600, fontSize: '13px' } }, '📝 待批准提案'),
+			pendingProposals.length > 0
+				? h('span', {
+					style: {
+						fontSize: '11px', padding: '1px 6px', borderRadius: '8px',
+						background: 'rgba(255,170,0,.18)',
+					},
+				}, String(pendingProposals.length))
+				: null,
+		),
+		s.proposalsLoading
+			? h('div', { style: { ...hintStyle, fontSize: '12px' } }, '加载中…')
+			: pendingProposals.length === 0
+				? h('div', { style: { ...hintStyle, fontSize: '12px' } },
+					'暂无待批准的修订。模型改稿会先落到这里，由你点「应用」才会生效。')
+				: h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+					pendingProposals.map((p) => {
+						const busy = s.proposalBusy === p.id;
+						return h('div', {
+							key: p.id,
+							style: {
+								display: 'flex', alignItems: 'center', gap: '6px',
+								border: '1px solid var(--dsw-alias-border-l3, #333)',
+								borderRadius: '4px', padding: '4px 6px',
+							},
+						},
+							h('span', { style: { flex: 1, fontSize: '12px' } }, `${p.id} · 第 ${p.chapter} 章`),
+							h('button', {
+								'data-action': 'proposal-apply', 'data-id': p.id,
+								disabled: busy, style: miniBtnStyle,
+							}, busy ? '处理中…' : '应用'),
+							h('button', {
+								'data-action': 'proposal-discard', 'data-id': p.id,
+								disabled: busy, style: dangerBtnStyle,
+							}, '丢弃'),
+						);
+					}),
+				),
+	);
+
 	// ── 标签一：基本信息（要素总览 + 本章编辑） ──
 	const infoView = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
 
 		// 小说基本要素：档案 / 大纲 / 角色卡 / 设定 / 时间线
 		ProjectOverviewView({ state: s }),
+
+		proposalsBlock,
 
 		h('div', { style: { fontWeight: 600, fontSize: '13px', borderTop: '1px solid var(--dsw-alias-border-l3, #333)', paddingTop: '8px' } },
 			'✍️ 本章编辑'),

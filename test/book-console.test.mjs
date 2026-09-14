@@ -119,7 +119,10 @@ test('summarizeBook: 非书籍/全缺失 → 不抛、字段降级', () => {
 });
 
 test('stageLabel: 中文标签刻画', () => {
-    assert.equal(stageLabel('planning'), '规划');
-    assert.equal(stageLabel('done'), '完结');
+    assert.equal(stageLabel('planning'), '规划', '旧五阶段名仍认得');
+    assert.equal(stageLabel('done'), '完稿');
+    assert.equal(stageLabel('topic'), '立意');
+    assert.equal(stageLabel('writing'), '正文');
+    assert.equal(stageLabel('revision'), '修订');
     assert.equal(stageLabel('科研'), '科研');
 });

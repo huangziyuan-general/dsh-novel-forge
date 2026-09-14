@@ -180,6 +180,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		state.selected = id; state.view = 'detail'; state.detail = null; state.chapterNo = 1;
 		state.draft = ''; state.report = null; state.error = ''; state.detailTab = 'info';
 		state.elements = null; state.discardPending = null; state.rename = null; state.listDeleteId = null;
+		state.proposals = []; state.proposalBusy = null;
 		player.stop();
 		notify();
 		// detail 与 第 1 章正文并行拉；elements/chapters 由以下并行加载
@@ -192,7 +193,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 			state.draftVersion++; state.draftModified = false; state.undoStack = [];
 		} catch (error) { state.error = String(error?.message ?? error); }
 		notify();
-		await Promise.all([loadChapterList(id), loadElements(id)]);
+		await Promise.all([loadChapterList(id), loadElements(id), loadProposals(id)]);
 	};
 
 	const loadChapter = async (no) => {
@@ -209,6 +210,49 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 			console.warn('[novel-forge] 读取章节失败', state.error);
 		}
 		notify();
+	};
+
+	// ── 提案队列（0.7.0 · 融合第一批 A1）──
+	//
+	// 模型只能 novel_propose（登记提案），**工具面没有 apply**（见 lib/proposals.js）。
+	// 「应用」这个批准动作因此只能从这里发起 —— 批准钥匙在用户手里是工具层保证的。
+
+	/** 拉提案队列（待批准的修订稿）。 */
+	const loadProposals = async (id) => {
+		const bookId = id || state.selected;
+		if (!bookId) return;
+		state.proposalsLoading = true; notify();
+		try {
+			const value = await apiFetch(`/projects/${encodeURIComponent(bookId)}/proposals`);
+			state.proposals = Array.isArray(value?.proposals) ? value.proposals : [];
+		} catch { state.proposals = []; }
+		finally { state.proposalsLoading = false; notify(); }
+	};
+
+	/** 应用提案：生成新版本（旧版保留），审计 actor 记 'user'。 */
+	const applyProposalAction = async (proposalId) => {
+		if (!state.selected || !proposalId) return;
+		state.proposalBusy = proposalId; state.error = ''; notify();
+		try {
+			const value = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/proposals/${encodeURIComponent(proposalId)}/apply`, { method: 'POST' });
+			state.notice = `已应用提案 ${proposalId}：第${value.chapter}章 v${value.version}（旧版保留）`;
+			await Promise.all([loadProposals(state.selected), loadChapterList(state.selected)]);
+			// 正开着被改的那一章就刷新正文，让用户立刻看到新版本
+			if (state.chapterNo === value.chapter) await loadChapter(value.chapter);
+		} catch (error) { state.error = String(error?.message ?? error); }
+		finally { state.proposalBusy = null; notify(); }
+	};
+
+	/** 丢弃提案：正文不动，提案转 discarded（同样只从面板触发）。 */
+	const discardProposalAction = async (proposalId) => {
+		if (!state.selected || !proposalId) return;
+		state.proposalBusy = proposalId; state.error = ''; notify();
+		try {
+			await apiFetch(`/projects/${encodeURIComponent(state.selected)}/proposals/${encodeURIComponent(proposalId)}/discard`, { method: 'POST' });
+			state.notice = `已丢弃提案 ${proposalId}`;
+			await loadProposals(state.selected);
+		} catch (error) { state.error = String(error?.message ?? error); }
+		finally { state.proposalBusy = null; notify(); }
 	};
 
 	const createProject = async () => {
@@ -372,6 +416,9 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 			case 'import-demo': case 'import-file': needsModel('请在会话中调用 novel_import 导入'); break;
 			case 'save': await saveChapter(); break;
 			case 'refresh': if (state.selected && state.chapterNo) await loadChapter(state.chapterNo); break;
+			// 提案：应用 / 丢弃都是**用户主权动作**（工具面刻意不提供，见 lib/proposals.js）
+			case 'proposal-apply': await applyProposalAction(target.dataset.id); break;
+			case 'proposal-discard': await discardProposalAction(target.dataset.id); break;
 			case 'export': await exportProject(); break;
 			case 'delete':
 				if (state.deleteState === 'confirm') await deleteProject();
@@ -475,7 +522,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		void refreshProjects();
 	};
 
-	return { state, notify, attach, detach, start, setSession, refreshProjects, handleAction,
+	return { state, notify, attach, detach, start, setSession, refreshProjects, handleAction, loadProposals,
 		stopPlayback: () => player.stop() };
 }
 
