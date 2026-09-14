@@ -17,8 +17,17 @@ AI 长篇写作的通病不是玄学，每一个都有对应的工程解法。�
 | AI 味 | 六维结构性扫描：模板句/库存词密度/情绪直写/句式模板/段落节奏方差/信息稀释（纯本地，零模型费用） | `novel_noai_scan` |
 | 偷偷覆盖正文 | 提案制：修订走提案→用户确认→生成新版本，旧版永不覆盖 | `novel_propose` |
 | 审稿放水 | 机审与模型审分离：审计产出确定性数字，模型审稿必须引用证据 | `novel_audit` |
+| 悬念提前泄底 | 场景契约：隐藏人物**档案不进上下文**（连账本/摘要里的痕迹也擦掉），正文出现其名=内容门禁拦下 | `novel_scene` |
+| 写偏/漏写细纲 | 细纲契约段（必写场景 / 禁止偏离项）由代码算覆盖率与偏离度，命中禁项拒绝落盘，指标落盘可看趋势 | `novel_write_chapter` |
+| 多角色千人一腔 | 语言基因卡结构化注入（句长/逻辑/口头禅/绝不说/小动作/语域），审稿核对禁忌词 | `novel_character voice` |
+| 长篇上下文爆炸 | 契约在场时只注入本章出场人物的卡，世界书按白名单取 | `novel_briefing` |
+| 设定没定就想写大纲 | 九阶段状态机：每阶段入场条件由**代码**判定，缺什么直接列出来；越级须 force 且前置阶段记 `skipped` | `novel_project phase` |
+| 同一章反复写不对 | 熔断：同章连续驳回 3 次即**拒写**（不是提醒），逼回去改设定；细纲重批/契约更新即解除 | `novel_write_chapter` |
+| 不合平台口味 | 平台审稿两张表：起点看结构/章末钩子/移动端段长，番茄看前 1000 字爽点/打脸/憋屈时长 | `novel_audit platform` |
+| 踩平台红线 | 敏感自查七类（涉政/色情擦边/未成年/赌博毒品/暴力/封建迷信/现实机构影射），命中给行号与改法 | `novel_audit censor` |
 
-人物 OOC 的缓解（语言基因卡自动注入）在 `novel_character` + `novel_briefing`；
+人物 OOC 的缓解（语言基因卡**结构化**注入）在 `novel_character voice` + `novel_briefing`；
+"这个角色第几章才揭晓"的悬念保护在 `novel_scene`（隐藏人物对模型完全不可见）；
 "立意与审美属于人"——插件不生产立意，它把 `logline` 放进每次写章的上下文包里提醒双方。
 
 ## 安装
@@ -32,25 +41,26 @@ dsh plugin --profile web add npm:dsh-novel-forge
 dsh plugin --profile web add github:<owner>/dsh-novel-forge
 ```
 
-安装后重启 DSH web 即生效：17 个 `novel_*` 工具进入工具目录，agent 预设「小说锻炉」
+安装后重启 DSH web 即生效：18 个 `novel_*` 工具进入工具目录，agent 预设「小说锻炉」
 自动部署到 `~/.dsh/.agent-presets/novel-forge/`（已存在则跳过，永不覆盖；
 `DSH_NOVEL_FORGE_REDEPLOY=1` 强制重铺，`DSH_NOVEL_FORGE_SKIP_DEPLOY=1` 关闭）。
 
 宿主版本要求与依赖面清单见 [COMPATIBILITY.md](./COMPATIBILITY.md)。
 
-## 17 个工具
+## 18 个工具
 
 | 工具 | 职责 | 硬约束 |
 | --- | --- | --- |
-| `novel_project` | init / status / set_stage / repair 书目工程 | 防重复创建；阶段可显式重置；repair 索引-磁盘对账 |
+| `novel_project` | init / status / **phase（九阶段看板与入场判定）** / set_stage / repair / check / promise | 防重复创建；阶段入场由代码判定；越级记 skipped；repair 索引-磁盘对账 |
 | `novel_outline` | 全书大纲 / 第N章细纲 / **批准** | 写章门禁的钥匙 |
-| `novel_character` | 人物卡（含语言基因卡） | 写章自动注入 |
+| `novel_character` | 人物卡 + **语言基因卡**（voice：句长/逻辑/口头禅/绝不说/小动作/语域，结构化存储） | 写章单独注入成区块；audit voice:true 核对禁忌词 |
 | `novel_worldbook` | 世界书条目（add/update/list/remove + import/export） | 设定只认这里；update 保 id |
-| `novel_briefing` | 写前上下文包（预算裁剪 + 术语表 + **原著锚段**） | 一致性供给侧 |
-| `novel_write_chapter` | 写章落盘 | 门禁→机审→账本→版本化，四道全过才保存 |
+| `novel_scene` | 场景契约（save/get/list/delete）：本章场景/出场人物/**隐藏人物**/世界书白名单/禁项 | 隐藏人物档案不进上下文且正文不许出现其名；契约外人物不注入（省 token） |
+| `novel_briefing` | 写前上下文包（细纲→承诺书→**场景契约**→人物卡→**语言基因卡**→账本→伏笔→世界书→上章结尾→锚段） | 一致性供给侧；按契约裁剪 cast 与世界书 |
+| `novel_write_chapter` | 写章落盘 | 门禁→机审→账本→**内容门禁（六维）**→**细纲契约指标**→版本化；契约指标落盘到章节索引 |
 | `novel_ledger` | 事实账本（含 note）+ 伏笔埋/收/改期 | 同章改值拒绝；章号超前拒绝；超期伏笔告警 |
 | `novel_noai_scan` | 六维去 AI 味扫描 | 纯本地零费用 |
-| `novel_audit` | 确定性章节审计 | 机审证据 |
+| `novel_audit` | 确定性章节审计 + 契约指标（覆盖率/偏离度）+ `continuity` 全书一致性 + `voice` 语言基因核对 + `platform` **起点/番茄双平台审稿** + `censor` **敏感自查七类** | 机审证据；平台体检表给出可执行改法 |
 | `novel_style` | 文笔六维基线（μ±σ 带）+ **氛围光谱 12 轴**（热血/悬疑/惊悚/压抑/甜宠/温情/悲情/诙谐/爽感/神秘/肃杀/苍凉）：build 建基线 / check 对照（含主导氛围漂移） | 纯本地零费用；只报数不贴标签 |
 | `novel_propose` | 提案 / 列表 / 应用 / 清理 | 旧版永不覆盖；prune 清已终态索引 |
 | `novel_import` | 本地书籍导入（preview/import/**backfill 门禁回补**） | 纯函数切分章节；建书+版本化落盘；回补粗纲让导入书回到门禁体系 |
@@ -58,7 +68,7 @@ dsh plugin --profile web add github:<owner>/dsh-novel-forge
 | `novel_diagnose` | 黄金三章四维诊断（钩子/开场/冲突/灌输） | 确定性数字，机审与模型审分离 |
 | `novel_polish` | 段落级病灶定位 + 润色提案提交 | 润色也走提案制，永不覆盖旧稿 |
 | `novel_glossary` | 术语表（add/remove/list） | 随上下文包注入，防专有名词乱译 |
-| `novel_clone_project` | 整书克隆为模板 | 阶段重置规划、提案清空，旧书不动 |
+| `novel_clone_project` | 整书克隆为模板 | 阶段重置立意、提案与熔断计数清空；世界书/账本/伏笔/术语表/**场景契约/语言基因**一并带走 |
 
 参数刻意只用了标量（字符串/整数/布尔），结构化数据用分隔行表达
 （如账本更新 `实体|键|值[|备注]`）——对量化小模型也友好。
@@ -67,12 +77,14 @@ dsh plugin --profile web add github:<owner>/dsh-novel-forge
 
 ```
 我的书/
-├─ novel.json            # 机器状态：阶段/批准/章节索引/cast/提案索引
+├─ novel.json            # 机器状态：九阶段/各阶段 PhaseReport/批准/章节索引/cast/提案索引/熔断计数
 ├─ 大纲/全书大纲.md
 ├─ 大纲/细纲/第3章.md
 ├─ 人物/林晚.md           # 人物卡（Markdown，briefing 原文注入）
 ├─ 设定/世界书.json        # [{id, keywords[], content, always, priority}]
 ├─ 设定/术语表.json        # [{term, definition}]
+├─ 设定/场景契约.json      # 按章的出场/隐藏人物、世界书白名单、禁项
+├─ 设定/语言基因.json      # 按人物：句长/逻辑/口头禅/绝不说/小动作/语域
 ├─ 正文/第3章-雨夜来客-v2.md   # 版本化，永不覆盖
 ├─ 账本/facts.json        # [{entity, key, value, chapter, note}]
 ├─ 账本/伏笔.json          # [{id, setup, chapter, plan, payoffChapter}]
@@ -86,12 +98,15 @@ dsh plugin --profile web add github:<owner>/dsh-novel-forge
 ## 典型会话流
 
 ```
-novel_project init → novel_outline save_book → novel_character save（建语言基因卡）
-→ novel_worldbook add（固化核心设定）→ 循环：
+novel_project init → novel_project phase（看九阶段看板，按提示补齐入场条件）
+→ novel_outline save_book → novel_character save（建语言基因卡）
+→ novel_worldbook add（固化核心设定）→ novel_project phase stage:outline/volume（分卷）
+→ 循环：
     novel_outline save_chapter + approve
-    → novel_briefing（拿上下文包）
-    → 按细纲成稿 → novel_write_chapter（门禁/机审/账本/落盘）
+    → novel_briefing（拿上下文包；有场景契约就按契约裁剪）
+    → 按细纲成稿 → novel_write_chapter（九阶段门禁/机审/账本/内容门禁/契约指标/熔断/落盘）
     → novel_noai_scan + novel_audit（证据）→ 你自己（或让模型引用证据）审稿
+    → 发书前：novel_audit platform:qidian|fanqie + novel_audit censor:true
     → 修订：novel_propose propose → 用户确认 → apply（生成 v2）
 ```
 

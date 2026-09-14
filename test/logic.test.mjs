@@ -4,7 +4,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { sanitizeTitle, chapterFileName, parseChapterFileName, nextVersion, nextSuffixedId } from '../lib/versioning.js';
-import { gateChapterWrite, advanceStage } from '../lib/gate.js';
+import { gateChapterWrite, advanceStage, resetStage } from '../lib/gate.js';
+import { PHASE_IDS, canonicalPhase, checkPhaseEntry, enterPhase, phaseBoard, renderPhaseBoard } from '../lib/phases.js';
+import { detectVolumePlan } from '../lib/phase-io.js';
+import { breakerState, recordRejection, recordSuccess, clearBreaker, breakerDigest } from '../lib/circuit-breaker.js';
+import { reviewForPlatform, longestSufferingRun, sentenceCv } from '../lib/platform-review.js';
+import { scanSensitive, CENSOR_KEYS } from '../lib/censor.js';
 import { applyFactUpdates, queryFacts, factsDigest, assertLedgerChapter, foreshadowSetup, foreshadowPayoff, openForeshadows, foreshadowDigest, overdueForeshadows } from '../lib/ledger.js';
 import { computeAudit, auditVerdict } from '../lib/audit.js';
 import { matchWorldEntries, buildContextPack, renderPack } from '../lib/contextpack.js';
@@ -15,6 +20,9 @@ import { diagnoseIntro, computeChapterDiagnosis } from '../lib/diagnose.js';
 import { parseFactLines, foreshadowView } from '../lib/tools/common.js';
 import { parseWorldbookImport } from '../lib/worldbook-io.js';
 import { splitSentences, measureStyleMetrics, measureMood, computeBaseline, judgeAgainstBaseline } from '../lib/style.js';
+import { validateContinuity, isDeathRecord, deathTimeline } from '../lib/continuity.js';
+import { contentGate, setupKeywords, factStatesAt } from '../lib/content-gate.js';
+import { validatePolishEdits } from '../lib/polish.js';
 
 // ── versioning ──────────────────────────────────────────────────────────────
 
@@ -48,12 +56,17 @@ test('gate: 细纲未批准拒绝，force 放行留痕，批准后通过', () =>
     assert.equal(gateChapterWrite(null, 1).ok, false);
 });
 
-test('gate: advanceStage 只前进不后退', () => {
+test('gate: advanceStage 只前进不后退（旧名映射进九阶段）', () => {
     const novel = defaultNovel({ title: 'x', genre: 'y' });
-    advanceStage(novel, 'drafting');
-    assert.equal(novel.stage, 'drafting');
-    advanceStage(novel, 'planning');
-    assert.equal(novel.stage, 'drafting');
+    assert.equal(novel.stage, 'topic', '新书从九阶段起点开始');
+    advanceStage(novel, 'drafting');           // 旧名 → writing
+    assert.equal(novel.stage, 'writing');
+    assert.equal(novel.phases.writing.status, 'in_progress', '推进顺便点亮 phases 记录');
+    advanceStage(novel, 'planning');           // 旧名 → topic，序号更小 → 不后退
+    assert.equal(novel.stage, 'writing');
+    resetStage(novel, 'revising');             // 旧名 → revision
+    assert.equal(novel.stage, 'revision');
+    assert.throws(() => resetStage(novel, '不存在的阶段'), /未知阶段/);
 });
 
 // ── ledger ──────────────────────────────────────────────────────────────────
@@ -508,4 +521,470 @@ test('style: 氛围光谱——词表重复词不去重则悬疑轴双倍计分'
     assert.equal(mood.chars, 998);
     assert.equal(mood.axes.mystery, 1.0, '悬疑轴只该计 1 次命中，重复词 "线索" 不得双倍计分');
     assert.equal(mood.top[0], 'mystery');
+});
+
+// ── 第二批融合 B1：一致性校验（来源：novel-studio validateContinuity，适配本插件模型）──
+
+test('continuity: 死亡判定认死亡词、排反例，取最早死亡章', () => {
+    assert.equal(isDeathRecord({ entity: '赵擎', key: '状态', value: '阵亡', chapter: 5 }), true);
+    assert.equal(isDeathRecord({ entity: '赵擎', key: '生死', value: '未死', chapter: 5 }), false, '「未死」不是死亡');
+    assert.equal(isDeathRecord({ entity: '林晚', key: '境界', value: '死寂之地', chapter: 5 }), false, '键名不命中就不算死亡记录');
+    assert.equal(isDeathRecord({ entity: 'a', key: '状态', value: '不死之身', chapter: 1 }), false, '反例词必须排掉');
+    assert.equal(isDeathRecord({ entity: 'a', key: '状态', value: '拼死一战', chapter: 1 }), false);
+    const t = deathTimeline([
+        { entity: '赵擎', key: '状态', value: '重伤', chapter: 1 },
+        { entity: '赵擎', key: '状态', value: '阵亡', chapter: 5 },
+        { entity: '赵擎', key: '下落', value: '尸骨被发现', chapter: 9 },
+    ]);
+    assert.equal(t.get('赵擎').chapter, 5, '第一死才算数，后文不改变死亡时点');
+});
+
+test('continuity: 死人复活报硬伤；细纲有闪回标记则降级为警告', () => {
+    const novel = { cast: ['林晚', '赵擎'], chapters: {
+        1: { title: 'a', path: 'b/正文/第1章-a-v1.md', latest: 1, files: [{ file: 'b/正文/第1章-a-v1.md' }], summary: 's' },
+        2: { title: 'b', path: 'b/正文/第2章-b-v1.md', latest: 1, files: [{ file: 'b/正文/第2章-b-v1.md' }], summary: 's' },
+    } };
+    const facts = [{ entity: '赵擎', key: '状态', value: '阵亡', chapter: 1 }];
+
+    const hard = validateContinuity({ novel, facts, texts: { 2: '赵擎推门走了进来。' } });
+    assert.equal(hard.ok, false, '死人复活必须是硬伤');
+    assert.ok(hard.issues.some((i) => i.code === 'dead-reappear' && i.severity === 'error'));
+
+    const soft = validateContinuity({ novel, facts, texts: { 2: '赵擎推门走了进来。' }, outlines: { 2: '回忆：当年他也是这样推门进来的。' } });
+    assert.ok(soft.issues.some((i) => i.code === 'dead-reappear-in-flashback' && i.severity === 'warning'), '闪回豁免降级');
+    assert.ok(!soft.issues.some((i) => i.code === 'dead-reappear'), '豁免后不该再报硬伤');
+
+    // 死亡之前的章节提到他，不算问题
+    const before = validateContinuity({ novel, facts, texts: { 1: '赵擎还在。' } });
+    assert.ok(!before.issues.some((i) => i.code === 'dead-reappear' || i.code === 'dead-reappear-in-flashback'));
+});
+
+test('continuity: 伏笔倒挂/超期/重复 id、索引缺文件、账本同章冲突与超前', () => {
+    const novel = { cast: [], chapters: {
+        1: { title: 'a', path: 'b/第1章-a-v3.md', latest: 3, files: [{ file: 'b/第1章-a-v3.md' }], summary: 's' },
+        3: { title: 'c', path: 'b/缺失.md', latest: 1, files: [{ file: 'b/缺失.md' }], summary: '' },
+    } };
+    const facts = [
+        { entity: '林晚', key: '境界', value: '筑基', chapter: 2 },
+        { entity: '林晚', key: '境界', value: '金丹', chapter: 2 },
+        { entity: '甲', key: 'k', value: 'v', chapter: 99 },
+    ];
+    const foreshadows = [
+        { id: 'F1', setup: '断刃的下落', chapter: 5, plan: 3, payoffChapter: 4 },
+        { id: 'F2', setup: '密信的来源', chapter: 1, plan: 2, payoffChapter: null },
+        { id: 'F2', setup: '重复登记', chapter: 1, plan: null, payoffChapter: null },
+    ];
+    const r = validateContinuity({ novel, facts, foreshadows, existingFiles: new Set(['b/第1章-a-v3.md']) });
+    const codes = r.issues.map((i) => i.code);
+    for (const c of ['foreshadow-payoff-before-setup', 'foreshadow-overdue', 'foreshadow-duplicate-id',
+        'chapter-file-missing', 'ledger-same-chapter-conflict', 'ledger-chapter-ahead',
+        'chapter-gap', 'chapter-summary-missing']) {
+        assert.ok(codes.includes(c), `应报 ${c}，实报 ${codes.join(',')}`);
+    }
+    assert.equal(r.ok, false);
+    // 缺卡检查：给了 castCards 才查
+    const withCards = validateContinuity({ novel: { ...novel, cast: ['林晚'] }, facts: [], foreshadows: [], castCards: {} });
+    assert.ok(withCards.issues.some((i) => i.code === 'character-card-missing'));
+    const noCards = validateContinuity({ novel: { ...novel, cast: ['林晚'] }, facts: [], foreshadows: [], castCards: null });
+    assert.ok(!noCards.issues.some((i) => i.code === 'character-card-missing'), '不传 castCards 就不查卡');
+});
+
+// ── 第二批融合 C2/C3：四维内容门禁 ──────────────────────────────────────────
+
+test('content-gate: 死人复活阻断；账本旧值仍在用则警告', () => {
+    const facts = [
+        { entity: '赵擎', key: '状态', value: '阵亡', chapter: 2 },
+        { entity: '林晚', key: '境界', value: '筑基三层', chapter: 1 },
+        { entity: '林晚', key: '境界', value: '金丹一层', chapter: 5 },
+    ];
+    const g = contentGate({ content: '赵擎站在门口。林晚仍只有筑基三层的修为，她自己也知道。', chapter: 6, facts, actorNames: ['赵擎', '林晚'] });
+    assert.equal(g.ok, false);
+    assert.ok(g.blocking.some((b) => b.code === 'dead-character-present'));
+    assert.ok(g.warnings.some((w) => w.code === 'stale-state' && w.message.includes('筑基三层')));
+
+    const clean = contentGate({ content: '林晚已是金丹一层，抬手压住了风。', chapter: 6, facts });
+    assert.equal(clean.ok, true);
+    assert.equal(clean.warnings.length, 0);
+});
+
+test('content-gate: 到期伏笔零回应且开了新钩 → 阻断；回应了则放行', () => {
+    const foreshadows = [{ id: 'F1', setup: '断刃的下落', chapter: 1, plan: 3, payoffChapter: null }];
+    const body = '林晚走进院子，把灯芯挑亮了一寸。她坐下，又站起来。';
+    const withNewHook = `${body.repeat(8)}\n\n门外忽然传来一声轻响。`;
+    const blocked = contentGate({ content: withNewHook, chapter: 4, foreshadows });
+    assert.equal(blocked.ok, false);
+    assert.ok(blocked.blocking.some((b) => b.code === 'debt-unanswered-with-new-hook'));
+
+    // 同一章里提到了「断刃」→ 视为回应，放行
+    const answered = contentGate({ content: `${withNewHook}\n\n她摸了摸腰间的断刃。`, chapter: 4, foreshadows });
+    assert.equal(answered.ok, true);
+
+    // 没开新钩子、账也没还 → 只警告不阻断
+    const noHook = contentGate({ content: body.repeat(8), chapter: 4, foreshadows });
+    assert.equal(noHook.ok, true);
+    assert.ok(noHook.warnings.some((w) => w.code === 'debt-unanswered'));
+
+    // 未到期（plan 在第 9 章）→ 完全不管
+    const notDue = contentGate({ content: withNewHook, chapter: 4, foreshadows: [{ id: 'F9', setup: '旧钟', chapter: 1, plan: 9, payoffChapter: null }] });
+    assert.ok(!notDue.warnings.some((w) => w.code === 'debt-unanswered'));
+    assert.ok(!notDue.blocking.some((b) => b.code === 'debt-unanswered-with-new-hook'));
+});
+
+test('content-gate: 占位符阻断、人称混用警告', () => {
+    const ph = contentGate({ content: '林晚走进来。\n\n（此处省略打斗过程）\n\n她坐下。', chapter: 1 });
+    assert.equal(ph.ok, false);
+    assert.ok(ph.blocking.some((b) => b.code === 'placeholder'));
+
+    const mixed = contentGate({ content: ['我推开门。', '我看见他在擦刀。', '我问他为什么。', '我说了不该说的话。', '我把灯吹熄了。', '他说他不知道。', '他站起来。', '她看向窗外。', '他把手按在刀上。', '她走了。', '他回头。'].join('\n\n'), chapter: 1 });
+    assert.ok(mixed.warnings.some((w) => w.code === 'person-mixed'));
+});
+
+test('content-gate: 关键词提取过滤虚词，账本状态推演带历史值', () => {
+    const kws = setupKeywords('断刃的下落');
+    assert.ok(kws.includes('断刃'), '有效关键词要保留');
+    assert.ok(!kws.some((k) => k.startsWith('的')), '虚词开头片段必须滤掉');
+
+    const states = factStatesAt([
+        { entity: '林晚', key: '境界', value: '筑基三层', chapter: 1 },
+        { entity: '林晚', key: '境界', value: '筑基三层', chapter: 3 },
+        { entity: '林晚', key: '境界', value: '金丹一层', chapter: 5 },
+    ], 6);
+    const s = states.get('林晚\u0000境界');
+    assert.equal(s.value, '金丹一层');
+    assert.deepEqual(s.history.map((h) => h.value), ['筑基三层']);
+    assert.equal(factStatesAt([{ entity: 'x', key: 'y', value: 'z', chapter: 9 }], 3).size, 0, '未来章不算当前值');
+});
+
+// ── 第二批融合 C1：润色保守编辑守卫（来源：dsh-tool-writing autoproof）──────
+
+test('polish 守卫：改标题/引入易混字 → 阻断；正常润色 → 通过', () => {
+    const paras = Array.from({ length: 6 }, (_, i) => `第${i}段：林晚在院子里擦刀，露水顺着刀鞘滑下来，她没说话。`);
+    const orig = ['第3章 雨夜来客', ...paras].join('\n\n');
+
+    const heading = validatePolishEdits(orig, orig.replace('第3章 雨夜来客', '第3章 雨夜来客改'));
+    assert.equal(heading.ok, false);
+    assert.ok(heading.blocking.some((b) => b.code === 'heading-changed'));
+
+    const confusable = validatePolishEdits(orig, orig.replace('林晚在院子里擦刀', '林晚在院子里擦刀，戌时的风起了'));
+    assert.equal(confusable.ok, false);
+    assert.ok(confusable.blocking.some((b) => b.code === 'confusable-char'));
+
+    const good = validatePolishEdits(orig, orig.replace('她没说话。', '她没吭声。'));
+    assert.equal(good.ok, true);
+    assert.equal(good.warnings.length, 0);
+});
+
+test('polish 守卫：整章膨胀与大面积重写只警告不阻断', () => {
+    const paras = Array.from({ length: 6 }, (_, i) => `第${i}段：林晚在院子里擦刀，露水顺着刀鞘滑下来，她没说话。`);
+    const orig = ['第3章 雨夜来客', ...paras].join('\n\n');
+
+    const bloated = validatePolishEdits(orig, `${orig}\n\n${'补充的一大段无关描写，纯粹注水。'.repeat(20)}`);
+    assert.equal(bloated.ok, true, '膨胀是警告不是阻断');
+    assert.ok(bloated.warnings.some((w) => w.code === 'chapter-growth'));
+
+    const rewritten = ['第3章 雨夜来客', ...Array.from({ length: 6 }, (_, i) => `苏三在城头吹笛，第${i}声绕着檐角打转，惊起两只麻雀。`)].join('\n\n');
+    const rw = validatePolishEdits(orig, rewritten);
+    assert.ok(rw.warnings.some((w) => w.code === 'mass-rewrite'));
+});
+
+test('polish 守卫：首行不是标题时不做标题保护', () => {
+    const orig = '林晚把刀放在桌上。\n\n她没说话。';
+    const g = validatePolishEdits(orig, '林晚把刀搁在桌上。\n\n她没吭声。');
+    assert.equal(g.ok, true, '首行是正文时改动不该被当成改标题');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 融合第三批（上下文工程）：B3 场景契约 / E3 语言基因卡 / A3+A4 细纲契约指标
+// ─────────────────────────────────────────────────────────────────────────────
+
+import {
+    normalizeContract, resolveSceneCast, hiddenLeakCheck, renderContractSection,
+    setContract, removeContract, contractFor,
+} from '../lib/scene-contract.js';
+import { normalizeVoice, renderVoiceCard, voiceConsistency, isEmptyVoice } from '../lib/voice.js';
+import { parseScenes, parseBanRules, computeGateMetrics } from '../lib/gate-metrics.js';
+
+test('B3 契约归一：中文别名、清单容错、字段补齐', () => {
+    const c = normalizeContract({ chapter: 3, 场景: '雨夜断刃', 出场: '林晚、赵擎,陆寒', 隐藏: ['陆寒'], 禁项: '储物戒指' });
+    assert.equal(c.chapter, 3);
+    assert.equal(c.scene, '雨夜断刃');
+    assert.deepEqual(c.participants, ['林晚', '赵擎', '陆寒']);
+    assert.deepEqual(c.hidden, ['陆寒']);
+    assert.deepEqual(c.forbidden, ['储物戒指']);
+    assert.deepEqual(c.settings, [], '缺省字段补空数组，输出契约才稳定');
+});
+
+test('B3 契约裁剪：hidden 绝不进注入名单；无契约退回 cast 全员', () => {
+    const c = normalizeContract({ chapter: 3, participants: '林晚,陆寒', hidden: '陆寒' });
+    const r = resolveSceneCast({ contract: c, cast: ['林晚', '陆寒', '小满'] });
+    assert.deepEqual(r.inject, ['林晚'], '★ 隐藏人物不得进注入名单');
+    assert.deepEqual(r.hidden, ['陆寒']);
+    assert.ok(r.dropped.includes('小满'), '契约外的人被剔出（省 token）');
+    assert.deepEqual(r.contradictions, ['陆寒'], '出场∩隐藏 要报矛盾（保护优先）');
+    assert.equal(r.source, 'contract');
+
+    const fb = resolveSceneCast({ contract: null, cast: ['林晚', '赵擎'] });
+    assert.deepEqual(fb.inject, ['林晚', '赵擎']);
+    assert.equal(fb.source, 'fallback', '无契约时退回原行为');
+});
+
+test('B3 悬念保护：注入区块绝不出现隐藏人物名（本模块存在的全部意义）', () => {
+    const c = normalizeContract({ chapter: 3, scene: '雨夜', participants: '林晚、陆寒', hidden: '陆寒' });
+    const block = renderContractSection(c);
+    assert.ok(!block.includes('陆寒'), '★ 隐藏人物的名字不得出现在模型可见的任何文本里');
+    assert.ok(block.includes('林晚'), '出场人物要在场');
+    assert.ok(block.includes('未登场'), '要告诉模型「有人身份未揭晓」，但不给名字');
+    assert.equal(renderContractSection(null), '', '无契约不给空区块');
+});
+
+test('B3 泄漏检查 + 契约表不可变', () => {
+    assert.deepEqual(hiddenLeakCheck({ content: '林晚看见陆寒站在雨里。', hidden: ['陆寒'] }), ['陆寒']);
+    assert.deepEqual(hiddenLeakCheck({ content: '只有雨声。', hidden: ['陆寒'] }), []);
+
+    const t0 = {};
+    const t1 = setContract(t0, { chapter: 2, participants: '林晚' });
+    const t2 = removeContract(t1, 2);
+    assert.deepEqual(Object.keys(t0), [], '原表不被原地改动');
+    assert.equal(contractFor(t1, 2).participants[0], '林晚');
+    assert.equal(contractFor(t2, 2), null);
+    assert.equal(contractFor(t1, 9), null, '没契约的章回 null（不造空壳）');
+});
+
+test('E3 语言基因卡：对象与「键|值」行两种输入归一', () => {
+    const a = normalizeVoice({ 句长: '短句为主', 口头禅: '「呵」,行吧', 禁忌: '人家' });
+    assert.equal(a.sentence, '短句为主');
+    assert.deepEqual(a.tics, ['呵', '行吧'], '中文引号要剥掉');
+    assert.deepEqual(a.taboo, ['人家']);
+    const b = normalizeVoice('逻辑|先给结论\n语域|市井白话');
+    assert.equal(b.logic, '先给结论');
+    assert.equal(b.register, '市井白话');
+    assert.equal(isEmptyVoice(normalizeVoice('乱七八糟没有冒号')), true, '解析不出内容＝空卡');
+    assert.equal(isEmptyVoice(a), false);
+    assert.ok(renderVoiceCard('林晚', a).includes('说话方式'));
+    assert.equal(renderVoiceCard('林晚', {}), '', '空卡不占预算');
+});
+
+test('E3 语言一致性：禁忌词命中＝硬伤；有台词无口头禅＝提示；没台词不报', () => {
+    const voice = normalizeVoice({ 口头禅: '呵', 禁忌: '人家' });
+    const hitTaboo = voiceConsistency({ content: '林晚说：「人家不去了。」', voices: [{ name: '林晚', voice }] });
+    assert.equal(hitTaboo.stats.errors, 1, '说了自己声明过的禁忌词要当硬伤');
+    assert.equal(hitTaboo.issues[0].code, 'voice-taboo');
+
+    const noTic = voiceConsistency({ content: '林晚说：「那就走吧。」', voices: [{ name: '林晚', voice }] });
+    assert.equal(noTic.stats.warnings, 1, '有台词没口头禅只提示（口头禅是习惯不是义务）');
+    assert.equal(noTic.issues[0].code, 'voice-tics-missing');
+
+    const silent = voiceConsistency({ content: '林晚站在雨里，一动不动。', voices: [{ name: '林晚', voice }] });
+    assert.equal(silent.issues.length, 0, '★ 本章没开口就不该报口头禅缺失');
+    assert.equal(silent.checked, 1, '仍算核对过一个人');
+});
+
+test('A3/A4 细纲解析：序号/加粗/列表/复选框都要认（格式漂移容错）', () => {
+    const scenes = parseScenes('- [ ] 雨夜相遇：林晚在码头遇见赵擎\n1. **断刃现世**：断刃浮起\n2、第三场');
+    assert.equal(scenes.length, 3);
+    assert.equal(scenes[0].title, '雨夜相遇');
+    assert.equal(scenes[1].title, '断刃现世');
+    assert.equal(scenes[2].title, '第三场', '无描述的场景也要认');
+});
+
+test('A3/A4 禁项分流：排除型算偏离度，需求型/条件型不算（彼踩过的坑）', () => {
+    const r = parseBanRules('- 不得让陆寒出场\n- 禁止使用「储物戒指」\n- 不得省略「断刃」\n- 不得无铺垫引入「密信」');
+    assert.ok(r.banned.includes('陆寒'));
+    assert.ok(r.banned.includes('储物戒指'));
+    assert.ok(!r.banned.includes('断刃'), '★ 需求型（不得省略）不是禁词——写到了才是对的');
+    assert.ok(r.requirements.includes('断刃'));
+    assert.ok(r.conditional.includes('密信'), '条件型只提示人工复核，不计偏离度');
+});
+
+test('A3/A4 契约指标：覆盖率/漏写/偏离度/场景豁免', () => {
+    const outline = '## 本章必写场景\n1. 雨夜相遇：林晚在码头遇见赵擎\n2. 断刃现世：断刃从江底浮起\n\n## 本章禁止偏离项\n- 不得让陆寒出场\n';
+    const full = computeGateMetrics({ content: '雨夜，林晚在码头遇见赵擎。断刃从江底浮起。', outline });
+    assert.equal(full.available, true);
+    assert.equal(full.coverage, 100);
+    assert.equal(full.drift, 0);
+    assert.equal(full.passed, true);
+
+    const partial = computeGateMetrics({ content: '雨夜，林晚在码头遇见赵擎。', outline });
+    assert.equal(partial.coverage, 50);
+    assert.deepEqual(partial.missedScenes, ['断刃现世']);
+    assert.equal(partial.passed, false, '漏场景＝不通过');
+
+    const hit = computeGateMetrics({ content: '陆寒从雾里走出来，断刃从江底浮起。', outline });
+    assert.deepEqual(hit.bannedHits, ['陆寒']);
+    assert.equal(hit.drift, 100);
+    assert.equal(hit.passed, false);
+
+    const none = computeGateMetrics({ content: '随便一段。', outline: '没有契约段的大纲' });
+    assert.equal(none.available, false, '没写契约段＝不参与判定（可选增强，不像彼那样 fail-closed）');
+    assert.equal(none.passed, null);
+    assert.deepEqual(none.missedScenes, [], '不可用时也要给空数组，输出契约才稳定');
+
+    const broken = computeGateMetrics({ content: '随便一段。', outline: '## 本章必写场景\n\n## 本章禁止偏离项\n- 不得让陆寒出场\n' });
+    assert.equal(broken.available, false);
+    assert.match(broken.note, /解析不出/, '段存在但解析不出要给提示（不阻断，写不了章的代价更大）');
+});
+
+
+// ── F1 九阶段状态机 ─────────────────────────────────────────────────────────
+
+test('★ F1 九阶段：旧名映射 / 入场条件由代码判 / 越级记 skipped / 看板', () => {
+    // 旧五阶段名（用户盘上的老数据）一律映射进新链
+    assert.equal(canonicalPhase('planning'), 'topic');
+    assert.equal(canonicalPhase('drafting'), 'writing');
+    assert.equal(canonicalPhase('revising'), 'revision');
+    assert.equal(canonicalPhase('writing'), 'writing', '新名原样通过');
+    assert.equal(canonicalPhase('不存在的阶段'), null);
+
+    // 空目录：任何阶段都进不去，缺什么要能说出来
+    const blocked = checkPhaseEntry('writing', {});
+    assert.equal(blocked.ok, false);
+    assert.match(blocked.missing.join(''), /正文/, '缺的项要可读，不能只说 ok:false');
+
+    const ready = {
+        logline: '一句话故事', worldbookCount: 2, castCount: 1, hasBookOutline: true, hasVolumePlan: true,
+        approvedOutlineCount: 1, savedChapterCount: 1, allApprovedWritten: true, continuityErrors: 0,
+    };
+    for (const id of PHASE_IDS) assert.equal(checkPhaseEntry(id, ready).ok, true, id + ' 在素材齐备时应可进入');
+
+    // 卷结构识别（九阶段里最玄的一条，靠三个正则兜）
+    assert.equal(detectVolumePlan('# 全书大纲\n\n## 第一卷 落雪\n- 事件'), true);
+    assert.equal(detectVolumePlan('第一幕：出发\n'), true);
+    assert.equal(detectVolumePlan('# 大纲\n## 主线\n- 往前走'), false, '没有卷/幕结构就是没有');
+
+    // enterPhase：force 放行 → 前置阶段记 skipped（可审计的跳阶段）
+    const novel = defaultNovel({ title: 'x', genre: 'y' });
+    const res = enterPhase(novel, 'writing', { force: true, facts: {} });
+    assert.equal(res.ok, true);
+    assert.equal(res.forced, true, '入场条件不满足却推进 → forced 必须为 true（审计要能分辨）');
+    assert.equal(novel.stage, 'writing');
+    assert.equal(novel.phases.topic.status, 'skipped');
+    assert.equal(novel.phases.writing.status, 'approved');
+    assert.ok(novel.phases.writing.report.errorCount >= 1, 'PhaseReport 要记下 force 时的缺口数');
+
+    // 条件满足则直接进，不用 force
+    const novel2 = defaultNovel({ title: 'x', genre: 'y' });
+    const ok = enterPhase(novel2, 'setting', { facts: ready });
+    assert.equal(ok.forced, false);
+    assert.equal(novel2.phases.setting.report.errorCount, 0);
+
+    // 失败不抛错（交由调用方决定怎么告知）
+    const denied = enterPhase(defaultNovel({ title: 'x', genre: 'y' }), 'done', { facts: {} });
+    assert.equal(denied.ok, false);
+    assert.match(denied.reason, /入场条件未满足/);
+
+    // 看板
+    const board = phaseBoard(novel, ready);
+    assert.equal(board.length, 9);
+    assert.equal(board.find((b) => b.phase === 'writing').current, true);
+    assert.equal(board.find((b) => b.phase === 'topic').status, 'skipped');
+    assert.match(renderPhaseBoard(board, { current: '正文' }), /阶段进度/);
+});
+
+// ── E2 熔断 ─────────────────────────────────────────────────────────────────
+
+test('★ E2 熔断：同章连续驳回 3 次触发；成功/重批/改契约三条通道解除', () => {
+    const novel = defaultNovel({ title: 'x', genre: 'y' });
+    assert.equal(breakerState(novel, 7).tripped, false, '新书不熔断');
+
+    recordRejection(novel, 7, { code: 'audit', detail: '字数不足' });
+    recordRejection(novel, 7, { code: 'content-gate' });
+    assert.equal(breakerState(novel, 7).count, 2);
+    assert.equal(breakerState(novel, 7).tripped, false, '2 次还不熔断');
+
+    recordRejection(novel, 7, { code: 'outline-banned' });
+    const st = breakerState(novel, 7);
+    assert.equal(st.tripped, true);
+    assert.match(st.reason, /熔断/);
+    assert.match(st.reason, /改细纲|场景契约/, '熔断提示要给解除路径，不能只说「不许写」');
+
+    assert.equal(breakerState(novel, 8).tripped, false, '计数按章隔离，不串台');
+
+    recordSuccess(novel, 7);
+    assert.equal(breakerState(novel, 7).tripped, false, '成功落盘 → 清零');
+
+    recordRejection(novel, 9); recordRejection(novel, 9); recordRejection(novel, 9);
+    assert.equal(breakerState(novel, 9).tripped, true);
+    clearBreaker(novel, 9);
+    assert.equal(breakerState(novel, 9).tripped, false, '细纲重批/契约更新 → 清零');
+
+    recordRejection(novel, 3);
+    const d = breakerDigest(novel);
+    assert.deepEqual(d.rows.map((r) => r.chapter), [3], '只有未清零的章进 digest');
+    assert.equal(d.tripped.length, 0);
+});
+
+// ── C4 平台审稿 ─────────────────────────────────────────────────────────────
+
+const FQ_GOOD = [
+    '「你也配？」赵擎冷笑一声，把合同摔在桌上。',
+    '林晚没说话。她弯腰捡起那张纸，指尖压住签名栏。',
+    '「昨天你说我签不了这一单。」她抬头，「现在呢？」',
+    '满屋子的呼吸声都停了。赵擎的脸一点点涨红，又一点点发白。',
+    '「不可能。」他后退半步，「这单早被……」',
+    '「被我签了。」林晚把合同推回去，「三天前。」',
+    '有人噗地笑出声。赵擎的手指在桌面上抓了两下，什么也没抓住。',
+    '「你等着。」他撂下这句，转身撞开门走了。',
+    '林晚看着那扇晃动的门，慢慢把手机翻过来。屏幕上是一条未读消息，发信人那一栏是空的。',
+    '「明天，会有人来找你。」她盯着那行字，忽然明白了什么。',
+].join('\n\n').repeat(7);
+
+test('★ C4 平台审稿：起点看结构与章末钩子，番茄看前千字爽点与憋屈时长', () => {
+    const q = reviewForPlatform({ content: FQ_GOOD, chapter: 1, platform: 'qidian' });
+    assert.equal(q.platform, 'qidian');
+    assert.equal(q.name, '起点');
+    assert.ok(q.checks.some((c) => c.key === 'opening-conflict' && c.ok), '黄金三章：开篇 300 字内必须立冲突');
+    assert.ok(q.checks.some((c) => c.key === 'ending-hook' && c.ok));
+    assert.ok(q.checks.some((c) => c.key === 'mobile-paragraph'), '起点有移动端段长项');
+    assert.ok(q.score > 0 && q.score <= 100);
+    assert.ok(q.checks.every((c) => typeof c.advice === 'string'), '每条都要给可执行建议');
+
+    const f = reviewForPlatform({ content: FQ_GOOD, chapter: 1, platform: 'fanqie' });
+    assert.equal(f.name, '番茄');
+    assert.ok(f.checks.some((c) => c.key === 'first-1k-thrill' && c.ok), '番茄看前 1000 字的爽点');
+    assert.ok(f.checks.some((c) => c.key === 'first-3-faceslap' && c.ok), '前 3 章打脸是番茄签约判据');
+
+    // 憋屈不过夜：连续压抑段落累计字数
+    const suffer = Array.from({ length: 60 }, (_, i) => '林晚低着头，把委屈咽回去。她不敢说话，只能忍着。第' + i + '次了。').join('\n\n');
+    assert.ok(longestSufferingRun(suffer) > 1200, '连续憋屈段要能被算出来');
+    const f2 = reviewForPlatform({ content: suffer, chapter: 5, platform: 'fanqie' });
+    assert.equal(f2.checks.find((c) => c.key === 'suffering-duration').ok, false, '憋屈过长 → 番茄红线报警');
+
+    // 点列式正文（无对话无钩子）在两家都该被判问题
+    const flat = Array.from({ length: 30 }, () => '他走过长街，看了一遍两边的铺子，然后回家吃饭。').join('\n\n');
+    const q2 = reviewForPlatform({ content: flat, chapter: 2, platform: 'qidian' });
+    assert.equal(q2.checks.find((c) => c.key === 'ending-hook').ok, false);
+
+    assert.ok(sentenceCv(FQ_GOOD) > 0);
+    assert.throws(() => reviewForPlatform({ content: 'x', platform: '未知平台' }), /未知平台/);
+});
+
+// ── C5 敏感自查 ─────────────────────────────────────────────────────────────
+
+test('★ C5 敏感自查：七类红线 + 未成年邻近共现 + 题材豁免', () => {
+    assert.equal(CENSOR_KEYS.length, 7);
+
+    const clean = scanSensitive({ content: '林晚在雨里跑了很久，鞋子里全是水。' });
+    assert.equal(clean.level, 'clean');
+    assert.deepEqual(clean.categories, []);
+
+    const erotic = scanSensitive({ content: '她赤身站在窗前，胴体映着月光，一阵呻吟从隔壁传来。' });
+    assert.equal(erotic.level, 'risky', '色情擦边是红线级');
+    assert.ok(erotic.categories.some((c) => c.key === 'erotica'));
+    assert.ok(erotic.categories[0].hits[0].line >= 1, '命中要给行号，作者才好定位');
+    assert.ok(erotic.categories[0].hits[0].excerpt.includes('…') === false || true);
+
+    // 未成年红线：单出现主体词不算，邻近共现才算
+    const school = scanSensitive({ content: '小学生背着书包从校门口跑出来，手里攥着两块钱。' });
+    assert.ok(!school.categories.some((c) => c.key === 'minor'), '校园文天天有小学生——不能一出现就报警');
+    const minorHit = scanSensitive({ content: '那个十六岁的女孩被他搂在怀里，亲吻了她的额头。' });
+    assert.ok(minorHit.categories.some((c) => c.key === 'minor'), '主体词 × 亲密词 邻近 100 字内 → 红线');
+
+    // 题材豁免
+    const feudal = scanSensitive({ content: '老道士摆开符咒，口中念念有词，替她驱邪。' });
+    assert.ok(feudal.categories.some((c) => c.key === 'feudal'));
+    assert.ok(feudal.categories.find((c) => c.key === 'feudal').severity === 'warn', '封建迷信是提醒级不是红线级');
+    const exempted = scanSensitive({ content: '老道士摆开符咒，口中念念有词，替她驱邪。', exempt: ['feudal'] });
+    assert.ok(!exempted.categories.some((c) => c.key === 'feudal'), '玄幻题材可豁免');
+
+    assert.match(clean.note, /启发式预筛/, '定位要写清楚：不是合规判定');
 });
