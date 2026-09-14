@@ -147,26 +147,35 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 	const openProject = async (id) => {
 		state.selected = id; state.view = 'detail'; state.detail = null; state.chapterNo = 1;
 		state.draft = ''; state.report = null; state.error = ''; state.detailTab = 'info';
-		state.elements = null;
+		state.elements = null; state.discardPending = null;
 		player.stop();
 		notify();
+		// detail 与 第 1 章正文并行拉；elements/chapters 由以下并行加载
 		try {
-			state.detail = await apiFetch(`/projects/${encodeURIComponent(id)}`);
-			const text = await apiFetch(`/projects/${encodeURIComponent(id)}/chapters/1`);
-			state.baseline = text ?? ''; state.draft = text ?? ''; state.draftVersion++;
+			const [detail, text] = await Promise.all([
+				apiFetch(`/projects/${encodeURIComponent(id)}`),
+				apiFetch(`/projects/${encodeURIComponent(id)}/chapters/1`).catch(() => ''),
+			]);
+			state.detail = detail; state.baseline = text ?? ''; state.draft = text ?? '';
+			state.draftVersion++; state.draftModified = false; state.undoStack = [];
 		} catch (error) { state.error = String(error?.message ?? error); }
-		await loadChapterList(id);
-		await loadElements(id);
+		notify();
+		await Promise.all([loadChapterList(id), loadElements(id)]);
 	};
 
 	const loadChapter = async (no) => {
 		if (!state.selected) return;
-		state.chapterNo = no; state.report = null; state.polishPreview = null; notify();
+		state.chapterNo = no; state.report = null; state.polishPreview = null; state.discardPending = null; notify();
 		try {
 			const text = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/chapters/${no}`);
 			state.baseline = text ?? ''; state.draft = text ?? ''; state.draftVersion++;
 			state.draftModified = false; state.undoStack = [];
-		} catch { state.baseline = ''; state.draft = ''; state.draftVersion++; }
+		} catch {
+			// 读不到正文不能静默——给一句人话，别让用户以为这一章是空的
+			state.baseline = ''; state.draft = ''; state.draftVersion++;
+			state.error = `读取第 ${no} 章失败（刷新或检查服务）`;
+			console.warn('[novel-forge] 读取章节失败', state.error);
+		}
 		notify();
 	};
 
@@ -266,13 +275,28 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 	/** 需要模型参与的动作：面板只给引导，真动作在会话里。 */
 	const needsModel = (msg) => { state.error = msg; notify(); };
 
+	/** 有未保存改动时，把「离开意图」挂起，由视图里的 丢弃改动/取消 二选一。 */
+	const intentLeave = (pending) => {
+		if (state.draftModified) { state.discardPending = pending; notify(); return false; }
+		return true;
+	};
+
+	/** 真正返回项目列表。 */
+	const goBack = async () => {
+		player.stop(); state.view = 'projects'; state.selected = null; state.detail = null;
+		state.discardPending = null; state.draftModified = false;
+		await refreshProjects();
+	};
+
 	const handleAction = async (action, target) => {
 		state.error = ''; state.notice = '';
 		switch (action) {
 			case 'refresh-projects': await refreshProjects(); break;
 			case 'create': await createProject(); break;
 			case 'open': await openProject(target.dataset.id); break;
-			case 'back': player.stop(); state.view = 'projects'; state.selected = null; state.detail = null; await refreshProjects(); break;
+			case 'back':
+				if (!intentLeave({ kind: 'back' })) break;
+				await goBack(); break;
 			case 'claim': await claimProject(target.dataset.id || null); break;
 			// 详情页两个标签：基本信息 / 章节听书
 			case 'detail-tab': {
@@ -308,6 +332,17 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 				if (state.deleteState === 'confirm') await deleteProject();
 				else { state.deleteState = 'confirm'; notify(); }
 				break;
+			case 'delete-cancel': state.deleteState = null; notify(); break;
+			// 未保存改动：确认丢弃后才真正离开 / 换章；取消则留在原地
+			case 'discard-confirm': {
+				const pending = state.discardPending;
+				state.discardPending = null; state.draftModified = false;
+				if (pending?.kind === 'back') await goBack();
+				else if (pending?.kind === 'chapter') await loadChapter(pending.no);
+				else notify();
+				break;
+			}
+			case 'discard-cancel': state.discardPending = null; notify(); break;
 			case 'lore-new': state.loreForm = { ...emptyLoreForm(), mode: 'new' }; notify(); break;
 			case 'lore-edit': {
 				const entry = state.loreEntries.find((x) => x.id === Number(target.dataset.id));
@@ -335,9 +370,16 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 	};
 	const onInput = (e) => {
 		const field = e.target?.dataset?.field;
-		if (field === 'title') state.title = e.target.value;
+		if (field === 'title') { state.title = e.target.value; notify(); }
 		else if (field === 'draft') { state.draft = e.target.value; state.draftModified = e.target.value !== state.baseline; }
-		else if (field === 'chapterNo') { const no = Number(e.target.value); if (no > 0) void loadChapter(no); }
+		else if (field === 'chapterNo') {
+			const no = Number(e.target.value);
+			if (no > 0) {
+				// 有未保存草稿时换章会丢内容——先确认再切
+				if (state.draftModified) { state.discardPending = { kind: 'chapter', no }; notify(); }
+				else void loadChapter(no);
+			}
+		}
 		else if (field === 'lore-name') state.loreForm.name = e.target.value;
 		else if (field === 'lore-keywords') state.loreForm.keywords = e.target.value;
 		else if (field === 'lore-content') state.loreForm.content = e.target.value;
@@ -431,7 +473,6 @@ export function ForgePanel(props) {
 			h('span', { style: badgeStyle }, 'v' + (window.__NOVEL_FORGE_VERSION__ || '?')),
 			h('span', { style: { ...hintStyle, fontSize: '11px' } },
 				s.sessionId ? '本会话项目' : '全部项目'),
-			h('button', { 'data-action': 'refresh-projects', style: { ...btnStyle, marginLeft: 'auto' } }, '刷新'),
 		),
 		h('div', { style: { flex: '1 1 auto', overflowY: 'auto', padding: '12px 12px 16px', minHeight: 0 } },
 			s.view === 'projects' ? h(ProjectListView, { state: s }) : null,

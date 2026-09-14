@@ -65,8 +65,8 @@ export const footerStyle = {
 	fontSize: '11px', flex: 'none',
 };
 
-/** 成功/提示文案（绿）。 */
-export const okStyle = { color: '#2a7', fontSize: '12px' };
+/** 成功/提示文案（绿，走 accent token + 浅色回退，保证深底可读）。 */
+export const okStyle = { color: 'var(--dsw-alias-accent-strong, #4ade80)', fontSize: '12px' };
 
 /** 次要说明文字（灰）。 */
 export const hintStyle = { color: '#888' };
@@ -85,11 +85,11 @@ export const itemCardStyle = {
 /** 次级小按钮。 */
 export const miniBtnStyle = { ...btnStyle, fontSize: '11px', padding: '2px 6px' };
 
-/** 危险按钮（删除）。 */
-export const dangerBtnStyle = { ...btnStyle, color: '#c33' };
+/** 危险按钮（删除）：走 danger token，浅色回退避免深底看不清。 */
+export const dangerBtnStyle = { ...btnStyle, color: 'var(--dsw-alias-label-danger, #ff8a8a)', borderColor: 'var(--dsw-alias-label-danger, #ff8a8a)' };
 
-/** 主色按钮（保存）。 */
-export const primaryBtnStyle = { ...btnStyle, borderColor: '#2a7', color: '#156' };
+/** 主色按钮（保存）：走 accent token。 */
+export const primaryBtnStyle = { ...btnStyle, color: 'var(--dsw-alias-accent-strong, #4ade80)', borderColor: 'var(--dsw-alias-accent-strong, #4ade80)' };
 
-/** 副色按钮（导入本地 / 润色）。 */
-export const accentBtnStyle = { ...btnStyle, borderColor: '#29a', color: '#156' };
+/** 副色按钮（导入本地 / 润色）：走 accent token。 */
+export const accentBtnStyle = { ...btnStyle, color: 'var(--dsw-alias-accent-strong, #60a5fa)', borderColor: 'var(--dsw-alias-accent-strong, #60a5fa)' };
