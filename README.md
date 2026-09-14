@@ -25,6 +25,9 @@ AI 长篇写作的通病不是玄学，每一个都有对应的工程解法。�
 | 同一章反复写不对 | 熔断：同章连续驳回 3 次即**拒写**（不是提醒），逼回去改设定；细纲重批/契约更新即解除 | `novel_write_chapter` |
 | 不合平台口味 | 平台审稿两张表：起点看结构/章末钩子/移动端段长，番茄看前 1000 字爽点/打脸/憋屈时长 | `novel_audit platform` |
 | 踩平台红线 | 敏感自查七类（涉政/色情擦边/未成年/赌博毒品/暴力/封建迷信/现实机构影射），命中给行号与改法 | `novel_audit censor` |
+| 内部工序占满主对话 | 旁路直调：润色/校对/打标/起草走独立流，**不占主对话、不写会话记录**，自带超时/重试/真中止；结果只出提案 | `lib/engine.js` |
+| 逐章挤牙膏 / 批量起草绕过门禁 | 并发生成、**串行提交**：每章仍过同一道门禁，单章失败不回滚整批；书里没有场景契约时并发自动降为 1 | `draft-batch` |
+| 写到百章后"看不见前文" | 本地检索索引：按**记忆碎片**把段落找回来（中文手工二元切分，零依赖 `node:sqlite`）；索引是派生物，删了重跑即得 | `novel_search` |
 
 人物 OOC 的缓解（语言基因卡**结构化**注入）在 `novel_character voice` + `novel_briefing`；
 "这个角色第几章才揭晓"的悬念保护在 `novel_scene`（隐藏人物对模型完全不可见）；
@@ -41,13 +44,13 @@ dsh plugin --profile web add npm:dsh-novel-forge
 dsh plugin --profile web add github:<owner>/dsh-novel-forge
 ```
 
-安装后重启 DSH web 即生效：18 个 `novel_*` 工具进入工具目录，agent 预设「小说锻炉」
+安装后重启 DSH web 即生效：19 个 `novel_*` 工具进入工具目录，agent 预设「小说锻炉」
 自动部署到 `~/.dsh/.agent-presets/novel-forge/`（已存在则跳过，永不覆盖；
 `DSH_NOVEL_FORGE_REDEPLOY=1` 强制重铺，`DSH_NOVEL_FORGE_SKIP_DEPLOY=1` 关闭）。
 
 宿主版本要求与依赖面清单见 [COMPATIBILITY.md](./COMPATIBILITY.md)。
 
-## 18 个工具
+## 19 个工具
 
 | 工具 | 职责 | 硬约束 |
 | --- | --- | --- |
@@ -67,6 +70,7 @@ dsh plugin --profile web add github:<owner>/dsh-novel-forge
 | `novel_export` | 导出整本（md/txt + stats） | 按版本顺序拼装，写 `导出/` |
 | `novel_diagnose` | 黄金三章四维诊断（钩子/开场/冲突/灌输） | 确定性数字，机审与模型审分离 |
 | `novel_polish` | 段落级病灶定位 + 润色提案提交 | 润色也走提案制，永不覆盖旧稿 |
+| `novel_search` | 长篇检索（build 建/增量建索引 / query 按记忆碎片找回 / annotate 补语义标签 / status）：返回章号+摘录+命中比例 | 索引是**派生物**（`书/.novel/index.db`），删了重跑即得——不作为事实来源；无 sqlite 运行时自动退化 |
 | `novel_glossary` | 术语表（add/remove/list） | 随上下文包注入，防专有名词乱译 |
 | `novel_clone_project` | 整书克隆为模板 | 阶段重置立意、提案与熔断计数清空；世界书/账本/伏笔/术语表/**场景契约/语言基因**一并带走 |
 
@@ -90,6 +94,7 @@ dsh plugin --profile web add github:<owner>/dsh-novel-forge
 ├─ 账本/伏笔.json          # [{id, setup, chapter, plan, payoffChapter}]
 └─ .novel/
    ├─ audit.jsonl         # 全动作审计（谁在哪章做了什么、何时被拒）
+   ├─ index.db            # 检索索引（派生物：删了重跑 novel_search build 即得，不进 Git 更好）
    └─ proposals/P3-xxx.json
 ```
 
@@ -110,6 +115,50 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
     → 修订：novel_propose propose → 用户确认 → apply（生成 v2）
 ```
 
+## 第五批：重资产三件事（旁路引擎 / 批量起草 / 长篇检索）
+
+### D1 · 旁路直调：内部工序不进主对话
+
+润色、校对、打标、起草本质是**内部工序**——走主对话会把上下文撑爆，还会污染会话历史。
+这四条通道直接**旁路**调用宿主已有的模型服务（`ctx.llm.stream`），开独立流、拿完就丢：
+
+- **零新增配置**：不用配 key、不用选 provider。通道默认**继承当前路由**，
+  需要时在 `engine.channels.<通道>` 里按通道覆盖（模型/温度等）。
+- **自带超时 / 重试 / 真中止**：宿主的重试策略不覆盖手搓调用，所以这里自己实现
+  （指数退避默认 2 次；用 `Promise.race` 消费流，对不听话的适配器也能立刻断开）。
+- **优雅降级**：宿主不提供 llm 时插件照常装载，调用返回可读原因而不是崩。
+- **只出提案**：润色/校对结果是提案，改正文要用户在面板上批准（沿用提案制）。
+
+对应 REST：`POST /projects/:id/polish`、`POST /projects/:id/proofread`。
+失败会翻成语义化状态码：`503` 引擎未就绪 / `409` 无可用路由 / `422` 越护栏 /
+`499` 已中止 / `502` 上游失败。
+
+### D2 · 并发批量起草：并发生成，串行提交
+
+`POST /projects/:id/draft-batch`（`from` / `count` / `concurrency` / `force`）。
+并发上限 4、**默认 1**；每章仍走同一套落盘门禁，**单章失败不回滚整批**。
+书里没有场景契约时并发自动降为 1（没有「必须写什么」的锚点，多章并发只会批量跑偏）。
+`force` 能越过「细纲未批准」「已熔断」，但**永远越不过「已写」**。
+
+### G1 · 长篇检索：把「那段大概写了什么」找回来
+
+`novel_search` 四个动作：`build` 建/增量建索引、`query` 检索、`annotate` 补语义标签、
+`status` 看状态。
+
+```
+novel_search build  →  novel_search query q:"戴斗笠的人"
+                     →  返回 第N章#块  + 摘录 + 命中比例（默认闸门 0.25，记不清调到 0.15）
+                     →  novel_search annotate  （用旁路引擎给块打标，让「决斗」也能召回
+                                                 只写了「刀收回袖中」的那段）
+```
+
+- **零依赖**：Node 22+ 自带的 `node:sqlite`（不引 `better-sqlite3`）。
+- **中文自己切分**：FTS5 默认分词器与 `trigram` 对中文都实测 0 命中，
+  所以用手工二元切分（2 万块查询实测 ~11ms）。
+- **索引是派生物**：落在 `书/.novel/index.db`，删了重跑 `build` 即得，
+  **永不参与一致性判定**——正文与 `novel.json` 才是真相。
+- **无 sqlite 的运行时**自动退化为子串匹配：功能弱但「找一段」仍可用，且不报错。
+
 ## 配置（cordis.patch.yml）
 
 | 项 | 默认 | 说明 |
@@ -120,6 +169,12 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 | scanTopK | 8 | 扫描报告每维最多列出的问题数 |
 | repetitionWindow | 10 | 跨章重复检测的滑动窗口（与前 N 章比对） |
 | skipPresetDeploy | false | 跳过预设部署 |
+| engine.channels.\* | 继承当前路由 | 旁路通道（polish/proofread/annotate/draft）的模型、温度等覆盖；不给就用当前路由 |
+| engine.retries | 2 | 旁路调用的指数退避重试次数（宿主策略不覆盖手搓调用，所以在此自管） |
+| engine.attachSession | false | 旁路流是否写进会话记录；默认不写（这才是"不占主对话"） |
+
+> `engine` 整块都可省略——省略即「用当前路由、重试 2 次、不写会话」，也就是最省心的默认。
+> 宿主没有模型服务时插件照常装载，只有真正调用旁路通道时才返回可读错误。
 
 ## MCP 双通道（宿主外复用）
 
@@ -216,11 +271,22 @@ node scripts/demo.mjs   # 端到端演示：init→细纲→写章→账本→�
 ## v0.1 已知边界
 
 - 去 AI 味词库与阈值是**启发式**，只能抓显性病，不承诺"根治"——结构性指标（节奏方差/信息稀释）是它比纯词库强的地方。
-- 审稿的"模型审"部分不内置（工具不调模型）：`novel_audit` 产出证据，审稿在会话里进行；独立审稿模型路由留给 v0.2。
+- 审稿的"模型审"部分**仍然不内置**：`novel_audit` 只产出确定性证据，审稿在会话里进行；
+  独立审稿模型路由仍留给后续版本。第五批的旁路引擎（D1）只服务**内部工序**
+  （润色/校对/打标/起草），不改变"审计工具不调模型"这条线。
+- 旁路引擎的覆盖粒度是**通道级**（polish/proofread/annotate/draft），不是"每本书级"；
+  四条通道共用同一份重试策略。
+- 批量起草并发上限 **4**（避免打爆 provider 的限流），默认 1；并发只作用于**起草**，
+  提交始终串行。
+- G1 是**词法检索 + LLM 标签增强**，不是 embedding 语义检索——宿主没有 embedding 模态是根因；
+  索引是单文件 sqlite，十万块级的超大书尚未压测。`annotate` 会产生真实 token 成本
+  （默认每次最多 20 块，可分批慢慢补）。
 - **GUI 工作台已可用**（0.6.0）：右侧栏「锻炉」tab —— 常驻独立入口（0.5.1 起不再门控），
   项目列表按**会话**过滤（项目跟会话走），0.5.0 之前建的老书可从面板底部「认领」到当前会话。
   项目详情含两个标签：**📋 基本信息**（读章 · 保存 · 导出 · 诊断）与
   **🎧 章节听书**（目录 + 语音连播：从任意章开始听、暂停/继续/停止、读完自动接下一章；
   Web Speech 合成，正文切块防 Chrome 长文本停摆）。写操作走 `/api/novel-forge` REST。
   **「一键写章 / 润色 / 诊断」需要模型参与**，面板只给引导 —— 真动作在会话里由 `novel_*` 工具完成。
+  第五批起，润色/校对/批量起草也有了 REST 入口（`/polish`、`/proofread`、`/draft-batch`），
+  它们走**旁路引擎**，不再需要模型先在会话里"开个头"。
 - 跨章重复检测是滑动窗口（默认前 10 章，`repetitionWindow` 可调）——超出窗口的复读抓不到；世界书递归激活限 2 轮。

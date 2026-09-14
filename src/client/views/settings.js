@@ -14,7 +14,7 @@ export function SettingsView() {
 		h('div', { style: cardStyle },
 			h('div', { style: rowStyle },
 				h('span', { style: kStyle }, 'tools'),
-				h('span', { style: vStyle }, '18 个 novel_* 工具已注册')),
+				h('span', { style: vStyle }, '19 个 novel_* 工具已注册')),
 			h('div', { style: rowStyle },
 				h('span', { style: kStyle }, 'channels'),
 				h('span', { style: vStyle }, '宿主 + MCP 双通道')),

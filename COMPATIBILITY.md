@@ -2,7 +2,8 @@
 
 | dsh-novel-forge | 宿主 dsh（已验证） | 依据 |
 | --- | --- | --- |
-| 0.2.x | 0.1.5-rc.1 | 本仓库开发与测试所用的宿主版本；插件只消费稳定面 |
+| 0.2.x – 0.11.x | 0.1.5-rc.1 | 本仓库开发与测试所用的宿主版本；插件只消费稳定面 |
+| 0.11.x（D1 旁路引擎） | dsh-llm 0.1.5-rc.2 | `ctx.llm.stream` 的调用契约按该版本核对（见下方依赖表） |
 
 ## 我们依赖的宿主面（升级宿主前逐条核对）
 
@@ -16,6 +17,9 @@
 | `ctx.fs.listDir` | `@deepseek-ai/dsh-fs` | 0.2.1 起依赖：`novel_clone_project` 经 `fsio.listNames` 扫描细纲目录（未批准细纲一并复制）。若宿主移除该面，克隆退化为"只复制已批准/已写章" |
 | `ctx.systemPrompt.section({name, order, text})` | 宿主 system-prompt 服务 | 工作流纪律注入 |
 | `exec.agent?.session?.header?.cwd` | 工具执行上下文 | 会话工作目录解析（`dsh-files` 同款） |
+| `ctx.llm.stream(options)` | `@deepseek-ai/dsh-llm`（0.1.5-rc.2） | **0.11.0 起**：D1 旁路引擎用它跑润色/校对/打标/起草。**可选依赖**——`inject` 没有可选形式，所以引擎在**调用时**自检 `ctx.llm`，缺失则优雅降级（插件照常装载，调用返回可读错误）。`purpose` 是封闭联合 `'compaction' \| 'session-title'`，**不要**用它做通道路由 |
+| `ctx.agentDefaultModel` | `dsh-agent-default-model` | 旁路通道的默认路由来源（不给 `engine.channels.*` 覆盖时继承它） |
+| `node:sqlite`（`DatabaseSync` + FTS5） | Node 运行时自带（22.19+ / 24+） | **0.11.0 起**：G1 检索索引。**非宿主依赖，是运行时依赖**——不可用时检索自动退化为子串匹配，其余功能不受影响。不引入 `better-sqlite3` |
 | `@deepseek-ai/schemastery` | 宿主自带 | Config schema |
 
 ## 已知断裂史（改这些行为时务必 bump 主版本）
