@@ -26,9 +26,9 @@ after(() => {
     if (root !== undefined) fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('standalone: 17 个工具全部装配', () => {
+test('standalone: 18 个工具全部装配', () => {
     if (!hasSdk) return;
-    assert.equal(standalone.tools.length, 17);
+    assert.equal(standalone.tools.length, 18);
     assert.ok(standalone.tools.some((t) => t.name === 'novel_style'));
 });
 
@@ -147,7 +147,7 @@ test('stdio server: initialize → tools/list → tools/call 全链', async () =
         assert.equal(init.result.serverInfo.name, 'dsh-novel-forge');
 
         const listed = await rpc('tools/list', {});
-        assert.equal(listed.result.tools.length, 17);
+        assert.equal(listed.result.tools.length, 18);
         assert.ok(listed.result.tools.every((t) => t.inputSchema.type === 'object'));
 
         const called = await rpc('tools/call', {
