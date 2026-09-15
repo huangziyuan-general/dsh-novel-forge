@@ -1111,3 +1111,37 @@ test('G2 书库：单章指标——段落/对话/句长', () => {
     assert.equal(chapterMetrics('').paragraphs, 0);
     assert.equal(chapterMetrics('').dialogueRatio, 0);
 });
+
+test('★ 字数标准：机审门槛默认值=网文连载单章 2000–4000（目标 3000）', async () => {
+    // Config 默认值：500→2000、12000→4000（2026-09-15 起，仙尊定的标准）
+    const { Config } = await import('../lib/index.js');
+    const parsed = Config({}); // schemastery 的 schema 是可调用对象，不是 zod 的 .parse
+    assert.equal(parsed.minChapterChars, 2000, '低于 2000 字的单章不该被默认放行');
+    assert.equal(parsed.maxChapterChars, 4000, '超 4000 按起点标准该提示拆章');
+    assert.ok(parsed.maxChapterChars > parsed.minChapterChars);
+});
+
+test('★ 字数标准：写前简报带「本章字数目标」段（会话写章与批量起草共用）', async () => {
+    const { buildBriefing } = await import('../lib/briefing.js');
+    // 假 io：只实现 buildBriefing 用到的读取，全返回空（空书工程 → 走满 warnings 路径）
+    const io = {
+        readText: async () => '',
+        readJson: async () => null,
+        listDir: async () => [],
+    };
+    const b = await buildBriefing({
+        config: { minChapterChars: 2000, maxChapterChars: 4000, contextBudgetChars: 6000 },
+        io,
+        book: '测试书',
+        novel: { title: '测试书', cast: [] },
+        n: 1,
+    });
+    const sec = b.sections.find((s) => s.name === '本章字数目标');
+    assert.ok(sec, '简报必须有字数目标段');
+    assert.ok(sec.content.includes('2000'), '下限要写进目标段');
+    assert.ok(sec.content.includes('4000'), '上限要写进目标段');
+    assert.ok(sec.content.includes('3000'), '目标值（中位数取整百）要写进目标段');
+    // totalChars 统计在目标段加入之后 → 必须把它算进去
+    const own = sec.content.length + sec.name.length + 4;
+    assert.ok(b.totalChars >= own, 'totalChars 要计入字数目标段');
+});

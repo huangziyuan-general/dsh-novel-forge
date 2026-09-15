@@ -3,5 +3,8 @@ node_modules/
 .DS_Store
 test/tmp/
 
+# UI 预览页（生成物：内联了客户端产物与 React 运行时，跑 npm run preview 重建）
+preview/
+
 # 数据面验证用的样书（本地工作区内的锻炉书，不入库；要作示例请自行移除本行）
 星海拾骨/

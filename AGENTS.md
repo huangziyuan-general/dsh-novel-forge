@@ -48,6 +48,8 @@ DSH（DeepSeek Harness）小说创作插件。设计主线：**代码强制 > �
 ```bash
 npm run setup-dev   # 把宿主 checkout 的 @deepseek-ai/* 真包 symlink 进本地 node_modules（仅本地开发）
 npm run build       # src/client/ → lib/client.js（改客户端源码后必须跑；npm test 的 pretest 会自动跑）
+npm run audit       # 静态自检：① 调用了但没导入/声明（硬故障，退出码 1）② 孤儿 dataset.X 读取（也在 pretest 里跑）
+npm run preview     # 生成可交互 UI 预览 preview/forge-ui.html（内联真产物 + 宿主真 token，离线可开；preview/ 已 gitignore）
 npm test            # node --test test/（纯逻辑单测 + 假 fs 冒烟 + headless 行为测试）
 ```
 
@@ -68,6 +70,39 @@ npm test            # node --test test/（纯逻辑单测 + 假 fs 冒烟 + head
 替身一旦比真机宽松，就会把假前提固化成绿灯：0.4.2 前 `host.home` 被当成工作区根、
 0.4.3 前 `react` 被塞了 `createRoot` —— 都是 80/80 全绿、真机 100% 失败的同一类事故。
 **改替身前先问：真机上这里到底是什么行为？**
+
+**样式用的 token 名同样属于「真机前提」，必须核实**（同上一类的第二次学费）：
+宿主里**没有** `--dsw-alias-accent-strong` / `accent-soft` / `label-danger` / `bg-primary`
+这类名字（0.13.0 前 `styles.js` 一直在用，`var()` 全落到写死的深色回退值，**跟随主题从未生效**，
+浅色主题下整块面板是深色糊字）。真实可用的是 `link` / `state-error|warn|success-primary` /
+`bg-layer-1|2|3` / `border-l1..l4` / `button-primary-fill` + `label-primary-foreground` 等。
+**加/改任何 `--dsw-alias-*` 前，先核宿主 `dsh-client-ui-theme` 的导出表**；拿不准就用
+`color-mix(in srgb, <语义色> N%, transparent)` 配中调回退值，别写死深色。
+视图**不要自己拼 style 对象**——走 `src/client/ui.js` 的原语与 `styles.js` 的组件工厂；
+本地看真样子跑 `npm run preview`（跑真产物 + 真 token，不漂移）。
+
+**内联样式压不过 `:hover` / `:active`（第四次学费，0.13.1）**：内联优先级高于一切伪类规则，
+纯内联 UI 的按钮**天然没有**悬停/按下反馈——不是忘了写，是机制上不可能。
+交互态一律走 `src/client/css.js`（`buildCss()` 生成、`ensureStyles()` 幂等注入，
+作用域锁在面板根属性内）；`Btn` 只输出 `data-nf-btn` + `data-variant` + `data-size`，
+可点区域标 `data-nf-tap`。分工：**外观（底/描边/字色/按下位移）走样式表，布局（尺寸/间距）走内联**。
+改按钮外观改 css.js，别往 style 对象里塞 `background`。
+另：**token 名存在 ≠ 用对了**（同版教训）——`label-dimmed` 不是文字色（浅色下近白）、
+`bg-overlay` 深色下是中亮灰；用语义角色前先解析浅/深两块的真实色值看一眼。
+
+**`data-action` / `data-id` / `data-tab` 是视图与控制器的唯一接口，字段名对不上不会报错，只会「点了没反应」**
+（这是「替身 vs 真机」的第三次学费，但失效方式是静默的，比前两次更隐蔽）：
+0.13.0 的整列「▶ 播放」和顶部「从第 N 章开始听」全是死的 —— 视图写
+`Btn({ action: 'play-from', id: c.no })`（`Btn` 渲染成 `data-id`），控制器却读 `dataset.no`，
+而**全项目从未写过 `data-no`** → `NaN` 进播放器 → 状态转一圈**回到原样**（看着像没执行）。
+两条硬规矩：
+
+- 改动作名或参数名，**视图与控制器必须同时改**；控制器拿不到参数**要报错，不许静默**。
+- 写事件相关用例时，**用真机渲染出来的属性**，别照着实现手编 `dataset`
+  （老用例写的是 `{ dataset: { no: '2' } }` —— 照实现编的，所以实现读错字段也全绿）。
+- 排查「按钮点了没反应」先跑预览页的**按钮扫射**（`[data-do="sweep"]`）：
+  逐视图点击所有 `data-action`，区分「没送达事件代理」与「送达了但界面无变化」。
+  它也有过假阳性（面板选择器少写 `dsh-` 前缀 → 恒判无变化）——已改成拿不到面板根就报错。
 
 宿主 SDK 路径来自本机 DSH checkout（scripts/setup-dev-links.mjs 内含路径），不要提交 node_modules。
 

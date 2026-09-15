@@ -38,6 +38,9 @@ function matchSimple(el, sel) {
         return el.attrs[attr] !== undefined;
     }
     if (sel.startsWith('.')) return (el.attrs.class || '').split(/\s+/).includes(sel.slice(1));
+    // `#id`：真机当然支持，替身也必须支持 —— 否则「查到已有 <style> 就收养」这条
+    // 单例逻辑在测试里恒走不到（每次都插第二份）。又一次「替身比真机窄」的坑。
+    if (sel.startsWith('#')) return el.id === sel.slice(1);
     return el.tagName.toLowerCase() === sel.toLowerCase();
 }
 function matchesSelector(el, selector) {
@@ -117,18 +120,29 @@ export class El {
     get title() { return this.attrs.title; } set title(v) { this.attrs.title = v; }
     get type() { return this.attrs.type; } set type(v) { this.attrs.type = v; }
     get className() { return this.attrs.class; } set className(v) { this.attrs.class = v; }
+    get id() { return this.attrs.id; } set id(v) { this.attrs.id = String(v); }
 }
 
-/** 建一个最小 document（够 panel.js 的 createElement / appendChild 用）。 */
+/**
+ * 建一个最小 document（够 panel.js 的 createElement / appendChild / 样式注入用）。
+ *
+ * **必须有 `head`**（真机有，替身就得有）：面板的交互态样式表由 css.js 注入到 head，
+ * 替身少了 head 会让「注入」在真机能跑、在测试里静默走不到 —— 那就等于没测。
+ */
 export function createDom() {
+    const head = new El('head');
+    head.__isRoot = true;
     const body = new El('body');
     body.__isRoot = true;
+    // 查询范围 = head 子树 + body 子树（等价于真机 document 的整棵树）
+    const allNodes = () => [head, ...walk(head), body, ...walk(body)];
     const document = {
-        body,
+        head, body,
         createElement: (t) => new El(t),
         createElementNS: (_ns, t) => new El(t),
-        querySelector: (sel) => (matchesSelector(body, sel) ? body : (walk(body).find((e) => matchesSelector(e, sel)) ?? null)),
-        querySelectorAll: (sel) => walk(body).filter((e) => matchesSelector(e, sel)),
+        getElementById: (id) => allNodes().find((e) => e.id === id) ?? null,
+        querySelector: (sel) => allNodes().find((e) => matchesSelector(e, sel)) ?? null,
+        querySelectorAll: (sel) => allNodes().filter((e) => matchesSelector(e, sel)),
     };
     class MutationObserver {
         constructor(cb) { this.cb = cb; }

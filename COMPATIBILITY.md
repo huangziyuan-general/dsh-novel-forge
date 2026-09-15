@@ -2,7 +2,7 @@
 
 | dsh-novel-forge | 宿主 dsh（已验证） | 依据 |
 | --- | --- | --- |
-| 0.2.x – 0.12.x | 0.1.5-rc.1 | 本仓库开发与测试所用的宿主版本；插件只消费稳定面 |
+| 0.2.x – 0.13.x | 0.1.5-rc.1 | 本仓库开发与测试所用的宿主版本；插件只消费稳定面 |
 | 0.11.x（D1 旁路引擎） | dsh-llm 0.1.5-rc.2 | `ctx.llm.stream` 的调用契约按该版本核对（见下方依赖表） |
 
 ## 我们依赖的宿主面（升级宿主前逐条核对）
@@ -22,6 +22,7 @@
 | `ctx.agentDefaultModel` | `dsh-agent-default-model` | 旁路通道的默认路由来源（不给 `engine.channels.*` 覆盖时继承它） |
 | `node:sqlite`（`DatabaseSync` + FTS5） | Node 运行时自带（22.19+ / 24+） | **0.11.0 起**：G1 检索索引。**非宿主依赖，是运行时依赖**——不可用时检索自动退化为子串匹配，其余功能不受影响。不引入 `better-sqlite3` |
 | `@deepseek-ai/schemastery` | 宿主自带 | Config schema |
+| 宿主主题 CSS 变量 `--dsw-alias-*` | `@deepseek-ai/dsh-client-ui-theme` | **0.13.0 起明确依赖**：右侧栏面板的样式全部走宿主主题变量（`link` / `state-*-primary` / `bg-layer-*` / `border-l*` / `button-primary-fill` + `label-primary-foreground` 等）。**只用真名**——0.13.0 之前用的 `accent-strong` / `accent-soft` / `label-danger` / `bg-primary` 四个名字**宿主里根本不存在**，`var()` 全落到写死的深色回退值，跟随主题从未生效。不确定时先核该包的导出表；软底/软描边用 `color-mix(in srgb, <语义色> N%, transparent)` 可自动跟随浅/深主题 |
 
 ## 已知断裂史（改这些行为时务必 bump 主版本）
 

@@ -17,10 +17,11 @@ import { startForgeAutoOpen, currentSessionId } from './session-watch.js';
 import { ForgePanel, createForgeController } from './panel.js';
 import { chunkText, createTtsPlayer, resolveSynth } from './tts.js';
 import { apiFetch, FETCH_TIMEOUT_MS } from './api.js';
+import { buildCss, ensureStyles, PANEL_ATTR, STYLE_ID } from './css.js';
 
 // 版本号：必须与 package.json 的 version 一致。
 // build-client.mjs 会把它与 package.json 对账，不一致直接构建失败（防发行漂移）。
-const PLUGIN_VERSION = '0.12.0';
+const PLUGIN_VERSION = '0.13.1';
 
 // 供视图头部徽标读取 —— 让视图层不必反向 import 入口（避免循环依赖）。
 window.__NOVEL_FORGE_VERSION__ = PLUGIN_VERSION;
@@ -86,4 +87,6 @@ export const __internals = {
 	currentSessionId, startForgeAutoOpen, ForgePanel, createForgeController,
 	chunkText, createTtsPlayer, resolveSynth,
 	apiFetch, FETCH_TIMEOUT_MS,
+	// 交互态样式表：测试要能验证「三态规则齐不齐」「注入是不是单例」
+	buildCss, ensureStyles, PANEL_ATTR, STYLE_ID,
 };

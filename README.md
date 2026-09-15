@@ -13,6 +13,7 @@ AI 长篇写作的通病不是玄学，每一个都有对应的工程解法。�
 | 模型"看不见前文" | 写前简报按预算组装上下文包（细纲→人物卡→账本→伏笔→世界书→上章结尾） | `novel_briefing` |
 | 口头跳阶段 | 阶段门禁：细纲未批准，`novel_write_chapter` 直接拒绝 | `novel_outline approve` |
 | 跨章复读/水文 | 8 字 shingle 与前文重复检测，超阈值拒绝保存 | `novel_write_chapter` 机审 |
+| 章节字数失控 | 机审门槛默认 **2000–4000 字**（网文连载单章标准，目标 3000）；写前简报带「本章字数目标」段 | `novel_write_chapter` 机审 / `novel_briefing` |
 | 章-末-无-钩-子 | 章末钩子启发式（问句/悬念/省略/感叹），缺了给警告 | `novel_audit` |
 | AI 味 | 六维结构性扫描：模板句/库存词密度/情绪直写/句式模板/段落节奏方差/信息稀释（纯本地，零模型费用） | `novel_noai_scan` |
 | 偷偷覆盖正文 | 提案制：修订走提案→用户确认→生成新版本，旧版永不覆盖 | `novel_propose` |
@@ -257,6 +258,63 @@ containment 与版本守卫语义。锚段写作与氛围光谱均为纯本地�
 （经典脚本 + `__ModuleLoader__.load({ id, factory })`）。dsh 只读 `exports["./client"]`，
 所以**改完 `src/client/` 必须 `npm run build`**（`npm test` 会自动先跑构建）。
 
+### 界面：三层设计系统 + 把已做的能力接上界面（0.13.0 重做）
+
+样式分**三层**：语义色（宿主 `--dsw-alias-*` token）→ 尺度（`space` / `radius` / `font` /
+`weight`）→ 组件（`card` / `btn` / `chip` / `field` / `meter` / `emptyState` / `stageRail` /
+`fold`）。视图**不再各自手拼 style 对象**——同一件事只写一次，改一次配色不必翻六个文件。
+原语层在 `src/client/ui.js`（`Card / Section / Btn / Chip / Stat / StageRail / Meter /
+Empty / KV / Fold / Mono`）。
+
+> ⚠️ **token 名必须真实存在。** 宿主里**没有** `--dsw-alias-accent-strong` 这类名字——
+> 0.13.0 之前面板一直在用四个不存在的 token，于是每处 `var()` 都落到写死的**深色回退值**，
+> 面板**跟随主题从未生效过**（浅色主题下就是「一块深色糊字」，这才是「难看」的真根因）。
+> 真实可用的有 `link`（强调）/ `state-error|warn|success-primary` / `bg-layer-1|2|3` /
+> `bg-overlay` / `border-l1..l4` / `button-primary-fill` + `label-primary-foreground` 等；
+> 软底与软描边用 `color-mix(in srgb, <语义色> N%, transparent)`，**自动跟随浅/深主题**。
+> **加任何新 token 前，先核 `dsh-client-ui-theme` 的导出表。**
+
+本版还把服务端**早已实现、界面却没入口**的四个真端点接上了：
+
+| 界面动作 | 端点 | 说明 |
+| --- | --- | --- |
+| 一键润色 | `POST /projects/:id/chapters/:n/polish` | 走 D1 旁路引擎；产物是**提案**，不落正文 |
+| 机械校对 | `POST /projects/:id/chapters/:n/proofread` | 同上，守卫更严（篇幅上限 1.06） |
+| 全书体检 | `GET /projects/:id/continuity` | 死人复活 / 账本矛盾 / 伏笔超期 / 章号断档 / 人物卡缺失；**零 token** |
+| 批量起草 | `POST /projects/:id/draft-batch` | 并发生成、串行提交；逐章成败摊开，被拦不算整批失败 |
+
+一键写章**仍是 501**——它要走 briefing + 落盘门禁，只能在会话里做；设置页把这条边界**如实标注**，
+不再拿一个点了没反应的按钮糊过去。头部常驻一个 ⚙，任何页面一步可达设置（能力清单）。
+
+### 交互态：`src/client/css.js`（0.13.1 起）
+
+内联样式的优先级**高于**任何 `:hover` / `:active` 规则——纯内联 UI 的按钮**天然不可能有**
+悬停/按下反馈。所以交互态走一层真 CSS：`buildCss()` 以面板根属性为作用域生成样式表，
+`ensureStyles()` 幂等注入。分工是「**外观走样式表、布局走内联**」：
+`Btn` 只输出 `data-nf-btn` + `data-variant` + `data-size` 三个标记，底色/描边/字色/
+按下位移（`translateY(1px)` + 内阴影）全部由 CSS 按变体给出；可点区域标 `data-nf-tap`，
+分段控件 `data-nf-seg` + `data-active`。每个变体 rest / hover / active 三态齐备，
+`:disabled` 豁免——这些由用例逐变体断言，缺一条测试就红。
+另外两处 token **语义**误用也在本版修正：`label-dimmed` 不是文字色（浅色下近白），
+弱化文字回归 `label-tertiary`；`bg-overlay` 深色下是中亮灰，输入底回归 `bg-layer-1`。
+**token 名存在 ≠ 用对了，核名之外还要核语义。**
+
+### 事件契约：`data-action` / `data-id` / `data-tab`
+
+视图里所有可交互元素都带 `data-action`，控制器 `handleAction` 按它分发；要带参数的再补
+`data-id`（书名 / 章号 / 条目 id，`Btn({ id })` 渲染成的就是它）与 `data-tab`。
+**这三个字段名是视图与控制器之间唯一的接口**——两边对不上不会报错、不会警告，
+只会「点了没反应」。0.13.0 的真实故障正是这个：
+
+- 视图写 `Btn({ action: 'play-from', id: c.no })` → 渲染出 `data-id`；
+- 控制器读的却是 `dataset.no`，而**全项目从未写过 `data-no`** →
+  `Number(undefined)` = `NaN` 进播放器 → 状态转一圈**回到原样**，看起来像没执行。
+
+> ⚠️ **改动作名或参数名时，视图与控制器必须同时改**；写测试要用**真机渲染出来的属性**，
+> 别照着实现手编 `dataset`（那样实现读错字段，用例照样全绿）。
+> 两道机器闸门兜底：`npm run audit` 的**孤儿 `dataset.X` 读取**检查，
+> 以及预览页的**按钮扫射**（逐视图点击每个 `data-action`，报「没送达代理」/「送达了但界面无变化」）。
+
 ### 入口：右侧栏 tab 的「三步契约」
 
 0.5.0 起入口回到**官方右侧栏**，不再往左侧栏注入 DOM：
@@ -315,9 +373,15 @@ fence 头（服务端缺头即 403）。视图只读 `state`，交互统一走 `
 ```bash
 npm run setup-dev   # 把 DSH checkout 的宿主 SDK 真包 symlink 进本地 node_modules
 npm run build       # src/client/ → lib/client.js（改客户端源码后必须跑；npm test 会自动跑）
-npm test            # node --test：94 个用例（纯逻辑单测 + 假 fs 全链路冒烟 + 真校验器输出契约 + headless 行为测试）
+npm run audit       # 静态自检：① 调用了但没导入/声明 / 导入了但没用 ② 孤儿 dataset.X 读取（也在 npm test 前置里跑）
+npm run preview     # 生成可交互 UI 预览 preview/forge-ui.html（内联真产物 + 宿主真 token，离线可开）
+npm test            # node --test：192 个用例（纯逻辑单测 + 假 fs 全链路冒烟 + 真校验器输出契约 + headless 行为测试）
 node scripts/demo.mjs   # 端到端演示：init→细纲→写章→账本→扫描→提案 全流程
 ```
+
+预览页里有个**按钮扫射**按钮（`[data-do="sweep"]`）：遍历每个视图逐一点击所有
+`data-action`，报出「点击没送达事件代理」与「送达了但界面无变化」。排查「按钮点了没反应」
+时先跑它 —— 它比人眼快，也比人眼全（0.13.0 的死按钮就是这么定位的）。
 
 约定见 [AGENTS.md](./AGENTS.md)：纯逻辑与 io 分离、output.schema 与返回值逐字段一致、
 `@deepseek-ai/*` 一律 peerDependencies、机器状态 JSON / 人类文档 Markdown。
@@ -337,6 +401,8 @@ node scripts/demo.mjs   # 端到端演示：init→细纲→写章→账本→�
   （默认每次最多 20 块，可分批慢慢补）。
 - **GUI 工作台已可用**（0.6.0）：右侧栏「锻炉」tab —— 常驻独立入口（0.5.1 起不再门控），
   项目列表按**会话**过滤（项目跟会话走），0.5.0 之前建的老书可从面板底部「认领」到当前会话。
+  0.13.0 起界面收进**三层设计系统**并跟随宿主浅/深主题，润色/校对/体检/批量起草四个真端点接上界面；
+  本地看效果用 `npm run preview`（跑真产物 + 真 token，不漂移），**一键写章仍留在会话里**（工具面不缩）。
   项目详情含两个标签：**📋 基本信息**（读章 · 保存 · 导出 · 诊断）与
   **🎧 章节听书**（目录 + 语音连播：从任意章开始听、暂停/继续/停止、读完自动接下一章；
   Web Speech 合成，正文切块防 Chrome 长文本停摆）。写操作走 `/api/novel-forge` REST。

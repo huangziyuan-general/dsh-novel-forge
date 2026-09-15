@@ -29,8 +29,15 @@ export function initialState() {
 		// 项目详情
 		detail: null, chapterNo: 1, writing: false,
 		draft: '', draftVersion: 0,
-		polishing: false, polishPreview: null,
-		diagnosing: false, report: null,
+		// 旁路引擎动作（0.13.0）：'polish' | 'proofread' | null。
+		// 两者都是**长任务**（服务端可能重试到几分钟），所以单独一个忙标记，
+		// 而不是复用 writing —— 否则「写章中」和「润色中」会互相把按钮按死。
+		revising: null,
+		// 全书体检（GET /continuity，纯函数零 token）：null = 没查过
+		continuity: null, continuityLoading: false, continuityError: '',
+		// 批量起草（D2）：表单值 + 忙标记 + 结果
+		batchFrom: 1, batchCount: 3, batchConcurrency: 1, batchForce: false,
+		batchBusy: false, batchResult: null,
 		// 小说基本要素（基本信息标签：档案/大纲/角色卡/设定/账本时间线）
 		elements: null, elementsLoading: false,
 		// 详情页两个标签：'info'（基本信息）| 'chapters'（章节听书）

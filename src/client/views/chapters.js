@@ -1,73 +1,91 @@
-// src/client/views/chapters.js — 「章节听书」标签：目录 + 语音连播控制。
+// src/client/views/chapters.js — 「章节听书」标签：目录 + 语音连播。
 //
 // 纯渲染：只读 state（chapterList / playback），交互全走 data-action，
 // 由 panel.js 的原生点击代理接住。播放边界（连播到哪章为止）由
 // hasChapter 依据 chapterList 决定 —— 目录就是播放清单。
+//
+// 版面：置顶一条播放条（正在读哪章、暂停/继续/停止），下面是目录。
+// 目录行的信息优先级：**播放态 > 章号/标题 > 字数 > 播放钮**。
 import { h } from '../react.js';
-import { btnStyle, hintStyle, errStyle, miniBtnStyle, itemCardStyle } from '../styles.js';
-
-/** 播放中的行高亮。 */
-const playingRowStyle = {
-	...itemCardStyle,
-	borderColor: 'var(--dsw-alias-accent-strong, #8ab4ff)',
-	background: 'var(--dsw-alias-accent-soft, rgba(80,120,255,.12))',
-};
+import { color, space, font, weight, hintStyle, errStyle, tint, stackStyle } from '../styles.js';
+import { Card, Btn, Chip, Empty, Stat } from '../ui.js';
 
 export function ChapterListView({ state: s }) {
 	const pb = s.playback ?? { status: 'idle', currentNo: null };
 
-	if (s.chapterListLoading) {
-		return h('div', { style: hintStyle }, '章节目录加载中…');
-	}
+	if (s.chapterListLoading) return h('div', { style: hintStyle }, '章节目录加载中…');
+
 	if (!s.chapterList.length) {
-		return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-			h('div', { style: hintStyle },
-				'本书还没有章节。在会话里让 AI 调用 novel_write_chapter 开写，写完这里就会出现目录。'),
-			h('button', { 'data-action': 'back', style: btnStyle }, '← 返回基本信息'),
-		);
+		return Empty({
+			icon: '🎧',
+			title: '这本书还没有章节',
+			hint: '在会话里让 AI 调 novel_write_chapter 开写，写完这里就会出现目录，可以朗读与连播。',
+			action: [Btn({ size: 'sm', action: 'back' }, '← 返回基本信息')],
+		});
 	}
 
 	const firstNo = s.chapterList[0].no;
 	const playing = pb.status === 'playing';
 	const paused = pb.status === 'paused';
 	const startNo = pb.currentNo ?? firstNo;
+	const totalChars = s.chapterList.reduce((sum, c) => sum + (c.chars ?? 0), 0);
 
-	// 播放控制条：播放/暂停/继续 + 停止
-	const controls = h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' } },
-		!playing && !paused
-			? h('button', { 'data-action': 'play-from', 'data-no': String(startNo), style: btnStyle },
-				`▶ 从第 ${startNo} 章开始听`)
-			: playing
-				? h('button', { 'data-action': 'playback-pause', style: btnStyle }, '⏸ 暂停')
-				: h('button', { 'data-action': 'playback-resume', style: btnStyle }, '▶ 继续'),
-		h('button', {
-			'data-action': 'playback-stop', disabled: !playing && !paused, style: btnStyle,
-		}, '⏹ 停止'),
-		playing || paused
-			? h('span', { style: { ...hintStyle, fontSize: '11px' } },
-				`正在读：第 ${pb.currentNo} 章${paused ? '（已暂停）' : ''}`)
-			: h('span', { style: { ...hintStyle, fontSize: '11px' } }, '读完一章自动接下一章'),
+	// ── 播放条 ──
+	const controls = Card({ tone: playing || paused ? 'accent' : 'plain', pad: space.md },
+		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm } },
+			!playing && !paused
+				? Btn({ variant: 'primary', size: 'sm', action: 'play-from', id: startNo }, `▶ 从第 ${startNo} 章开始听`)
+				: playing
+					? Btn({ variant: 'primary', size: 'sm', action: 'playback-pause' }, '⏸ 暂停')
+					: Btn({ variant: 'primary', size: 'sm', action: 'playback-resume' }, '▶ 继续'),
+			Btn({ variant: 'ghost', size: 'sm', action: 'playback-stop', disabled: !playing && !paused }, '⏹ 停止'),
+			h('span', { style: { flex: '1 1 auto' } }),
+			Stat({ icon: '📄', value: s.chapterList.length, unit: '章' }),
+			Stat({ icon: '·', value: totalChars.toLocaleString(), unit: '字' }),
+		),
+		h('div', { style: { ...hintStyle, fontSize: font.caption, marginTop: space.sm } },
+			playing || paused
+				? `正在读：第 ${pb.currentNo} 章${paused ? '（已暂停）' : ''}`
+				: '读完一章自动接下一章；章号有缺口会跳到下一个存在的章。'),
 	);
 
+	// ── 目录 ──
 	const rows = s.chapterList.map((c) => {
 		const isCurrent = pb.currentNo === c.no && (playing || paused);
-		return h('div', { key: c.no, style: isCurrent ? playingRowStyle : itemCardStyle },
-			h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-				h('span', { style: { fontWeight: isCurrent ? 700 : 500 } },
-					`第 ${c.no} 章 ${c.title || ''}`),
-				h('span', { style: { ...hintStyle, fontSize: '11px', marginLeft: 'auto' } },
-					`${c.chars ?? 0} 字`),
-				h('button', {
-					'data-action': 'play-from', 'data-no': String(c.no), style: miniBtnStyle,
-					title: `从第 ${c.no} 章开始听`,
-				}, isCurrent && playing ? '♪' : '▶'),
-			),
+		return h('div', {
+			key: c.no,
+			style: {
+				display: 'flex', alignItems: 'center', gap: space.sm,
+				padding: `${space.sm}px ${space.md}px`,
+				borderRadius: '8px',
+				background: isCurrent ? tint(color.accent, 10) : color.surface1,
+				border: `1px solid ${isCurrent ? tint(color.accent, 32) : color.border2}`,
+			},
+		},
+			h('span', {
+				style: {
+					flex: 'none', width: '30px', fontFamily: color.mono,
+					fontSize: font.caption, color: isCurrent ? color.accent : color.textDim,
+					fontWeight: isCurrent ? weight.bold : weight.normal,
+				},
+			}, String(c.no)),
+			h('span', {
+				style: {
+					flex: '1 1 auto', minWidth: 0, fontSize: font.small,
+					fontWeight: isCurrent ? weight.semibold : weight.normal,
+					overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+				},
+			}, c.title || `第 ${c.no} 章`),
+			isCurrent && playing ? Chip({ tone: 'accent' }, '♪ 播报中') : null,
+			c.version > 1 ? Chip({}, `v${c.version}`) : null,
+			h('span', { style: { ...hintStyle, fontSize: font.caption, whiteSpace: 'nowrap' } }, `${c.chars ?? 0} 字`),
+			Btn({ variant: 'ghost', size: 'sm', action: 'play-from', id: c.no, title: `从第 ${c.no} 章开始听` }, '▶'),
 		);
 	});
 
-	return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+	return h('div', { style: stackStyle(space.md) },
 		controls,
 		s.error ? h('div', { style: errStyle }, s.error) : null,
-		h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, rows),
+		h('div', { style: stackStyle(space.xs) }, ...rows),
 	);
 }
