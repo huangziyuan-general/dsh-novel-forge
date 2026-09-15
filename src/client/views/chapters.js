@@ -79,13 +79,35 @@ export function ChapterListView({ state: s }) {
 			isCurrent && playing ? Chip({ tone: 'accent' }, '♪ 播报中') : null,
 			c.version > 1 ? Chip({}, `v${c.version}`) : null,
 			h('span', { style: { ...hintStyle, fontSize: font.caption, whiteSpace: 'nowrap' } }, `${c.chars ?? 0} 字`),
+			Btn({ variant: 'ghost', size: 'sm', action: 'read-chapter', id: c.no, title: `阅读第 ${c.no} 章` }, '📖'),
 			Btn({ variant: 'ghost', size: 'sm', action: 'play-from', id: c.no, title: `从第 ${c.no} 章开始听` }, '▶'),
 		);
 	});
 
+	// ── 阅读卡（点行内 📖 展开）：正文可滚动，顺手能切朗读 ──
+	// 可以一边听一边看：reader 与 playback 互不干扰。
+	const reader = s.reader ? Card({ tone: 'accent', pad: space.md },
+		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm } },
+			h('span', {
+				style: { flex: '1 1 auto', minWidth: 0, fontWeight: weight.semibold, fontSize: font.small },
+			}, `📖 第 ${s.reader.no} 章 · ${s.reader.title}`),
+			Btn({ variant: 'secondary', size: 'sm', action: 'play-from', id: s.reader.no, title: `从第 ${s.reader.no} 章开始听` }, '▶ 朗读本章'),
+			Btn({ variant: 'ghost', size: 'sm', action: 'close-reader', title: '收起阅读器' }, '✕'),
+		),
+		h('div', {
+			style: {
+				marginTop: space.sm,
+				maxHeight: '420px', overflowY: 'auto',
+				fontSize: font.small, lineHeight: 1.85,
+				whiteSpace: 'pre-wrap', color: color.text,
+			},
+		}, s.reader.loading ? '正文加载中…' : (s.reader.text || '（本章正文为空）')),
+	) : null;
+
 	return h('div', { style: stackStyle(space.md) },
 		controls,
 		s.error ? h('div', { style: errStyle }, s.error) : null,
+		reader,
 		h('div', { style: stackStyle(space.xs) }, ...rows),
 	);
 }

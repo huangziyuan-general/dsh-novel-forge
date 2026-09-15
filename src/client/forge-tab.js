@@ -72,9 +72,10 @@ export function openForgeTab(ctx, opts = {}) {
 	const maxTries = opts.maxTries ?? 120;
 	let tries = 0;
 	let opened = false;
+	let disposed = false;
 
 	const attempt = () => {
-		if (opened) return true;
+		if (disposed || opened) return true;
 		try {
 			ctx.sidebarRight.openTab(TAB_KIND);
 			opened = true;
@@ -92,5 +93,5 @@ export function openForgeTab(ctx, opts = {}) {
 	};
 
 	timer(attempt, 400);          // 首次延迟：给 seat 挂载留时间
-	return attempt;
+	return () => { disposed = true; };
 }
