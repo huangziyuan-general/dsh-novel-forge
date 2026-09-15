@@ -23,9 +23,10 @@ export function initialState() {
 		selected: null,
 		// 项目列表
 		projects: [], unclaimed: [], loading: true, error: '', notice: '',
-		creating: false, busy: false, title: '', genre: 'fantasy',
+		creating: false, busy: false, title: '', genre: '',
 		// 列表内联改名 / 删除：rename = {id, value} | null；listDeleteId = 待确认删除的书 id | null
-		rename: null, renaming: false, listDeleteId: null,
+		// clone = {id, value} | null：克隆为模板的输入行（value 是新书目录名）
+		rename: null, renaming: false, listDeleteId: null, clone: null, cloning: false,
 		// 项目详情
 		detail: null, chapterNo: 1, writing: false,
 		draft: '', draftVersion: 0,

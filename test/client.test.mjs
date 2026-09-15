@@ -993,3 +993,41 @@ test('★ 陈旧响应守卫：快速连点两章，后点的章必须赢（draf
     assert.equal(controller.state.chapterNo, 2);
     assert.equal(controller.state.error, '');
 });
+
+test('★ genreLabel：常见英文题材映射中文，映射表外原样透传，空值返回空串', async () => {
+    const { genreLabel } = await import('../src/client/genre.js');
+    assert.equal(genreLabel('fantasy'), '奇幻', '面板早期默认值 fantasy 必须显示成中文');
+    assert.equal(genreLabel('Sci-Fi'), '科幻', '忽略大小写与连字符');
+    assert.equal(genreLabel('Science Fiction'), '科幻', '全称也能命中');
+    assert.equal(genreLabel('都市异能·现代修真'), '都市异能·现代修真', '已是中文的原样透传');
+    assert.equal(genreLabel('赛博武侠'), '赛博武侠', '表外自造词不动');
+    assert.equal(genreLabel('  fantasy  '), '奇幻', '先 trim 再查表');
+    assert.equal(genreLabel(''), '', '空题材不出 chip');
+    assert.equal(genreLabel(null), '', 'null 安全');
+});
+
+test('★ 列表克隆：确认后 POST /projects/:id/clone 带新书目录名；空名被拦；缺 data-id 报错', async () => {
+    const { requests, controller } = bootBook();
+    await controller.refreshProjects();
+    // 打开克隆表单（互斥：开克隆要关掉改名/删除确认）
+    await controller.handleAction('clone-open', { dataset: { id: '星海拾骨' } });
+    assert.equal(controller.state.clone?.id, '星海拾骨', '克隆表单打开');
+    assert.equal(controller.state.clone.value, '', '新书目录名预填为空（让用户自己起名）');
+    // 反向锁定：按钮缺 data-id 必须报错，不许静默（同 play-from / read-chapter 契约）
+    await controller.handleAction('clone-open', { dataset: {} });
+    assert.match(controller.state.error, /data-id/, '缺书名参数必须给可读报错');
+    // 空目录名被拦，不发请求
+    await controller.handleAction('clone-confirm', { dataset: {} });
+    assert.equal(controller.state.error, '新书目名不能为空', '空目录名被拦');
+    assert.ok(!requests.some((r) => r.url.includes('/clone')), '空名没发 clone 请求');
+    // 填目录名提交 → POST /projects/:id/clone，body 带新书名与会话
+    controller.state.clone.value = '星海拾骨-模板';
+    await controller.handleAction('clone-confirm', { dataset: {} });
+    const req = requests.find((r) => r.url.includes('/clone'));
+    assert.ok(req, '发出了 clone 请求');
+    assert.equal(req.init.method, 'POST', 'clone 是 POST');
+    const body = JSON.parse(req.init.body);
+    assert.equal(body.newBook, '星海拾骨-模板', 'body 带新书目录名');
+    assert.ok(body.session, 'body 带会话戳（新书归属本会话）');
+    assert.equal(controller.state.clone, null, '克隆后表单关闭');
+});
