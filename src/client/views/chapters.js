@@ -7,8 +7,8 @@
 // 版面：置顶一条播放条（正在读哪章、暂停/继续/停止），下面是目录。
 // 目录行的信息优先级：**播放态 > 章号/标题 > 字数 > 播放钮**。
 import { h } from '../react.js';
-import { color, space, font, weight, hintStyle, errStyle, tint, stackStyle } from '../styles.js';
-import { Card, Btn, Chip, Empty, Stat } from '../ui.js';
+import { color, space, font, weight, hintStyle, tint, stackStyle } from '../styles.js';
+import { Card, Btn, Chip, Empty, Stat, Feedback } from '../ui.js';
 
 export function ChapterListView({ state: s }) {
 	const pb = s.playback ?? { status: 'idle', currentNo: null };
@@ -43,7 +43,9 @@ export function ChapterListView({ state: s }) {
 			Stat({ icon: '📄', value: s.chapterList.length, unit: '章' }),
 			Stat({ icon: '·', value: totalChars.toLocaleString(), unit: '字' }),
 		),
-		h('div', { style: { ...hintStyle, fontSize: font.caption, marginTop: space.sm } },
+		h('div', {
+			role: 'status', // 「正在读第几章」是异步变化，读屏要能听到
+			style: { ...hintStyle, fontSize: font.caption, marginTop: space.sm } },
 			playing || paused
 				? `正在读：第 ${pb.currentNo} 章${paused ? '（已暂停）' : ''}`
 				: '读完一章自动接下一章；章号有缺口会跳到下一个存在的章。'),
@@ -60,6 +62,8 @@ export function ChapterListView({ state: s }) {
 				borderRadius: '8px',
 				background: isCurrent ? tint(color.accent, 10) : color.surface1,
 				border: `1px solid ${isCurrent ? tint(color.accent, 32) : color.border2}`,
+				// 长书目（几百章）跳过视口外的行不渲染内容——窄栏里滑目录不再整页卡
+				contentVisibility: 'auto', containIntrinsicSize: 'auto 44px',
 			},
 		},
 			h('span', {
@@ -79,8 +83,8 @@ export function ChapterListView({ state: s }) {
 			isCurrent && playing ? Chip({ tone: 'accent' }, '♪ 播报中') : null,
 			c.version > 1 ? Chip({}, `v${c.version}`) : null,
 			h('span', { style: { ...hintStyle, fontSize: font.caption, whiteSpace: 'nowrap' } }, `${c.chars ?? 0} 字`),
-			Btn({ variant: 'ghost', size: 'sm', action: 'read-chapter', id: c.no, title: `阅读第 ${c.no} 章` }, '📖'),
-			Btn({ variant: 'ghost', size: 'sm', action: 'play-from', id: c.no, title: `从第 ${c.no} 章开始听` }, '▶'),
+			Btn({ variant: 'ghost', size: 'sm', action: 'read-chapter', id: c.no, title: `阅读第 ${c.no} 章`, 'aria-label': `阅读第 ${c.no} 章` }, '📖'),
+			Btn({ variant: 'ghost', size: 'sm', action: 'play-from', id: c.no, title: `从第 ${c.no} 章开始听`, 'aria-label': `从第 ${c.no} 章开始听` }, '▶'),
 		);
 	});
 
@@ -92,7 +96,7 @@ export function ChapterListView({ state: s }) {
 				style: { flex: '1 1 auto', minWidth: 0, fontWeight: weight.semibold, fontSize: font.small },
 			}, `📖 第 ${s.reader.no} 章 · ${s.reader.title}`),
 			Btn({ variant: 'secondary', size: 'sm', action: 'play-from', id: s.reader.no, title: `从第 ${s.reader.no} 章开始听` }, '▶ 朗读本章'),
-			Btn({ variant: 'ghost', size: 'sm', action: 'close-reader', title: '收起阅读器' }, '✕'),
+			Btn({ variant: 'ghost', size: 'sm', action: 'close-reader', title: '收起阅读器', 'aria-label': '收起阅读器' }, '✕'),
 		),
 		h('div', {
 			style: {
@@ -106,7 +110,7 @@ export function ChapterListView({ state: s }) {
 
 	return h('div', { style: stackStyle(space.md) },
 		controls,
-		s.error ? h('div', { style: errStyle }, s.error) : null,
+		s.error ? Feedback({ tone: 'err' }, s.error) : null,
 		reader,
 		h('div', { style: stackStyle(space.xs) }, ...rows),
 	);

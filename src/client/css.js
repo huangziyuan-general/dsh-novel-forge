@@ -74,8 +74,12 @@ export function buildCss() {
 			background: 'transparent', color: color.text,
 			transition: 'background-color .13s ease, border-color .13s ease, color .13s ease, box-shadow .13s ease, transform .06s ease',
 			WebkitTapHighlightColor: 'transparent',
+			touchAction: 'manipulation', // 消除移动端双击缩放延迟
 		}),
-		rule(`${ROOT} [data-nf-btn]:focus-visible`, {
+		// 焦点环给**所有**可点元素，不只 [data-nf-btn]：分段控件（详情页 tab）、
+		// 书卡标题按钮（TAP）、头部 ⚙ 都是裸 <button>——没有这条，键盘用户
+		// 在面板最高频的入口上是「聚焦了但看不见」。
+		rule(`${ROOT} button:focus-visible, ${ROOT} summary:focus-visible`, {
 			outline: `2px solid ${color.accent}`, outlineOffset: '1px',
 		}),
 		rule(`${ROOT} [data-nf-btn]:disabled`, { opacity: '.45', cursor: 'default' }),
@@ -86,6 +90,7 @@ export function buildCss() {
 		// 才压得过。只压这两个伪类，常态外观一概不动。
 		rule(`${ROOT} [data-nf-tap]`, {
 			transition: 'background-color .13s ease, border-color .13s ease, box-shadow .13s ease, transform .06s ease',
+			touchAction: 'manipulation',
 		}),
 		rule(`${ROOT} [data-nf-tap]:hover`, {
 			background: `${color.hover} !important`,
@@ -100,7 +105,10 @@ export function buildCss() {
 		// 「选中」是**状态**不是伪类，所以用 `data-active` 表达，让 CSS 一次管好
 		// rest / hover / active / selected 四态。四态都写在样式表里才不会互相打架
 		//（之前底色与字色内联，选中项一悬停就会丢掉"选中"的样子）。
-		rule(`${ROOT} [data-nf-seg]`, { background: 'transparent', color: color.text3, boxShadow: 'none' }),
+		rule(`${ROOT} [data-nf-seg]`, {
+			background: 'transparent', color: color.text3, boxShadow: 'none',
+			touchAction: 'manipulation',
+		}),
 		rule(`${ROOT} [data-nf-seg]:hover:not([data-active="1"])`, { background: color.hover }),
 		rule(`${ROOT} [data-nf-seg]:active:not([data-active="1"])`, {
 			background: color.pressed, transform: 'translateY(1px)',
@@ -155,6 +163,11 @@ ${ROOT} :where(h1,h2,h3,p){margin:0}
 ${ROOT} [data-nf-gap]{gap:${space.sm}px}
 /* 窄栏里长单词/长路径不撑破布局 */
 ${ROOT} :where(span,div,p,code){overflow-wrap:anywhere}`,
+
+		// ── 动效弱化（系统开了「减少动态效果」时）──
+		// 位移与过渡都停：按下反馈只剩内阴影/底色，信息不丢、不晃。
+		// 收成单行：静态自检要求每条含 `{` 的行都带面板根限定，@media 独占一行会破例。
+		`@media (prefers-reduced-motion: reduce){${ROOT} [data-nf-btn],${ROOT} [data-nf-tap],${ROOT} [data-nf-seg],${ROOT} input,${ROOT} textarea,${ROOT} select{transition:none}${ROOT} [data-nf-btn]:active:not(:disabled),${ROOT} [data-nf-tap]:active,${ROOT} [data-nf-seg]:active:not([data-active="1"]){transform:none}}`,
 	].join('\n');
 }
 

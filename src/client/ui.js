@@ -15,6 +15,7 @@ import {
 	color, space, radius, font, weight, tint,
 	card, btnLayout, chip, meterTrackStyle, meterFillStyle,
 	emptyStateStyle, emptyIconStyle, emptyTitleStyle, hintStyle, stackStyle,
+	errStyle, okStyle,
 } from './styles.js';
 import { PHASES, phaseIndex } from '../../lib/phases.js';
 
@@ -70,6 +71,19 @@ export function Chip({ tone = 'neutral' } = {}, ...children) {
 }
 
 /**
+ * 异步反馈条（成功 notice / 失败 error）。
+ * 带 `role`：status（polite）/ alert——异步出现的文字对读屏用户本来完全不可见，
+ * 有了它才会被播报。各视图的 s.error / s.notice 一律走这里，别再裸拼 errStyle。
+ */
+export function Feedback({ tone = 'ok' } = {}, ...children) {
+	const isErr = tone === 'err';
+	return h('div', {
+		role: isErr ? 'alert' : 'status',
+		style: isErr ? errStyle : okStyle,
+	}, ...children);
+}
+
+/**
  * 统计块（项目卡的「12 章」「34 台账」这种）。
  * 数字加重、单位弱化，扫读时先看数。
  */
@@ -80,6 +94,8 @@ export function Stat({ icon = '', value, unit = '', tone = 'neutral' } = {}) {
 		style: {
 			display: 'inline-flex', alignItems: 'baseline', gap: '2px',
 			fontSize: font.caption, color: color.text3, whiteSpace: 'nowrap',
+			// 数字等宽：统计行里「12 章 / 34 台账 / 128 伏笔」横向对比时个位对齐，不跳宽
+			fontVariantNumeric: 'tabular-nums',
 		},
 	},
 		icon ? h('span', { style: { fontSize: '10px' } }, icon) : null,
@@ -103,11 +119,14 @@ export function StageRail({ stage } = {}) {
 		},
 			PHASES.map((p, i) => h('span', {
 				key: p.id,
+				'aria-hidden': 'true', // 纯装饰；可读名称在 title 与下方 Chip 上
 				style: {
 					flex: '1 1 0', height: '3px', borderRadius: radius.pill,
-					background: i < idx ? color.accent
+					// 已过段用半透 accent、当前段全亮 + 外环——3px 小条上「现在到哪了」
+					// 靠色差说话，不能只靠那圈 1.5px 的环（0.13.2 审查：同色根本分不出）。
+					background: i < idx ? tint(color.accent, 42)
 						: i === idx ? color.accent : color.border2,
-					opacity: i > idx ? 1 : (i === idx ? 1 : 0.55),
+					opacity: i === idx ? 1 : i < idx ? 0.9 : 1,
 					boxShadow: i === idx ? `0 0 0 1.5px ${tint(color.accent, 30)}` : 'none',
 				},
 			})),
