@@ -52,7 +52,14 @@ export function ProjectOverviewView({ state: s }) {
 	const writtenMax = (s.chapterList ?? []).reduce((m, c) => Math.max(m, c.no ?? 0), 0);
 
 	// ── 档案 ──
-	const fmtDate = (iso) => (iso ? String(iso).slice(0, 10) : '—');
+	// 日期用 Intl 管道（toLocaleDateString 即 ECMA-402），不手切字符串——
+	// 时区/位数交给标准库；解析失败（老数据脏值）回退 '—'，不往界面上漏 "Invalid Date"。
+	const fmtDate = (iso) => {
+		if (!iso) return '—';
+		const d = new Date(iso);
+		if (Number.isNaN(d.getTime())) return '—';
+		return d.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+	};
 	const profile = Card({ tone: 'plain' },
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' } },
 			h('span', { style: { fontWeight: weight.semibold, fontSize: font.lead } }, meta.title || s.selected),
@@ -129,7 +136,11 @@ export function ProjectOverviewView({ state: s }) {
 			h('div', { style: stackStyle(0) },
 				...chaptersSorted.map((no, gi) => h('div', {
 					key: no,
-					style: { display: 'flex', gap: space.md, minWidth: 0 },
+					style: {
+						display: 'flex', gap: space.md, minWidth: 0,
+						// 时间线一开可能上百章的账；视口外的分组不渲染内容
+						contentVisibility: 'auto', containIntrinsicSize: 'auto 96px',
+					},
 				},
 					// 左：竖轴（圆点 + 连线；最后一节不画线）
 					h('div', {

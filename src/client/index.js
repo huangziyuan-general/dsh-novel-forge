@@ -18,6 +18,9 @@ import { ForgePanel, createForgeController } from './panel.js';
 import { chunkText, createTtsPlayer, resolveSynth } from './tts.js';
 import { apiFetch, FETCH_TIMEOUT_MS } from './api.js';
 import { buildCss, ensureStyles, PANEL_ATTR, STYLE_ID } from './css.js';
+// 纯渲染原语：测试直测 role 契约（Feedback）与列表筛选（projectMatches / ProjectListView）
+import { Feedback } from './ui.js';
+import { ProjectListView, projectMatches } from './views/project-list.js';
 
 // 版本号：必须与 package.json 的 version 一致。
 // build-client.mjs 会把它与 package.json 对账，不一致直接构建失败（防发行漂移）。
@@ -89,4 +92,6 @@ export const __internals = {
 	apiFetch, FETCH_TIMEOUT_MS,
 	// 交互态样式表：测试要能验证「三态规则齐不齐」「注入是不是单例」
 	buildCss, ensureStyles, PANEL_ATTR, STYLE_ID,
+	// 视图原语：Feedback 的 role 契约、列表筛选的匹配与渲染
+	projectMatches, ProjectListView, Feedback,
 };

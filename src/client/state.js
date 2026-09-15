@@ -24,6 +24,10 @@ export function initialState() {
 		// 项目列表
 		projects: [], unclaimed: [], loading: true, error: '', notice: '',
 		creating: false, busy: false, title: '', genre: '',
+		// titleReset：书名输入是非受控的（defaultValue + key），创建成功清空后 bump 重置
+		titleReset: 0,
+		// 列表筛选（>8 本才显示输入框）：按书名/目录名/题材做客户端子串匹配
+		filter: '',
 		// 列表内联改名 / 删除：rename = {id, value} | null；listDeleteId = 待确认删除的书 id | null
 		// clone = {id, value} | null：克隆为模板的输入行（value 是新书目录名）
 		rename: null, renaming: false, listDeleteId: null, clone: null, cloning: false,
@@ -55,6 +59,8 @@ export function initialState() {
 		proposalBusy: null,
 		// 世界书
 		loreEntries: [], loreForm: emptyLoreForm(), loreBusy: false,
+		// loreDeleteId：待确认删除的世界书条目 id（字符串，与 dataset.id 同形）| null
+		loreDeleteId: null,
 		// 导出 / 删除
 		exporting: false, deleteState: null,
 		// 撤销栈与基线（保存判定依据）

@@ -11,9 +11,20 @@
 // 一张书卡要在一屏内回答三件事：**这书到哪一步了**（九阶段轨道）、
 // **攒了多少料**（章/账本/伏笔/角色）、**能对它做什么**（世界书/改名/删除）。
 import { h } from '../react.js';
-import { color, space, font, weight, hintStyle, errStyle, okStyle, footerStyle, inputStyle, stackStyle, card, tint } from '../styles.js';
-import { Card, Btn, Chip, Stat, StageRail, Empty, Section, TAP } from '../ui.js';
+import { color, space, font, weight, hintStyle, footerStyle, inputStyle, stackStyle, card, tint } from '../styles.js';
+import { Card, Btn, Chip, Stat, StageRail, Empty, Section, Feedback, TAP } from '../ui.js';
 import { genreLabel } from '../genre.js';
+
+/**
+ * 列表筛选的匹配规则（导出以便直测）：书名 / 目录名 / 显示题材 的子串匹配。
+ * 查询词也做一次同样的小写化，中英混着敲都能命中。
+ */
+export function projectMatches(p, query) {
+	const q = String(query ?? '').trim().toLowerCase();
+	if (!q) return true;
+	return [p.title, p.name, p.genre ? genreLabel(p.genre) : '']
+		.some((v) => String(v ?? '').toLowerCase().includes(q));
+}
 
 /** 列表项里的一颗统计。fields 缺失（老书/解析失败）就不显示，不显示 0 之外的空壳。 */
 function statsOf(p) {
@@ -34,13 +45,21 @@ function statsOf(p) {
 
 export function ProjectListView({ state: s }) {
 	const creating = s.creating;
+	// 列表筛选：书少时是噪音，>8 本才亮出来（客户端子串匹配，无服务端参与）
+	const filtering = s.projects.length > 8;
+	const query = s.filter ?? '';
+	const shown = filtering ? s.projects.filter((p) => projectMatches(p, query)) : s.projects;
 	return h('div', { style: stackStyle(space.lg) },
 
 		// ── 创建 ──
 		Card({ tone: 'inset', pad: space.md },
 			h('div', { style: { display: 'flex', gap: space.sm } },
 				h('input', {
-					'data-field': 'title', value: s.title, placeholder: '新书书名…',
+					// 非受控（defaultValue + key）：每键只进 state 不重渲染；
+					// 创建成功后 panel bump titleReset，key 变化即清空输入框。
+					key: `title-${s.titleReset ?? 0}`,
+					'data-field': 'title', defaultValue: s.title, placeholder: '新书书名…',
+					'aria-label': '新书书名',
 					style: { ...inputStyle, flex: '1 1 auto' },
 				}),
 				Btn({ variant: 'primary', action: 'create', disabled: creating }, creating ? '创建中…' : '创建'),
@@ -51,8 +70,8 @@ export function ProjectListView({ state: s }) {
 			),
 		),
 
-		s.error ? h('div', { style: errStyle }, s.error) : null,
-		s.notice ? h('div', { style: okStyle }, s.notice) : null,
+		s.error ? Feedback({ tone: 'err' }, s.error) : null,
+		s.notice ? Feedback({ tone: 'ok' }, s.notice) : null,
 
 		// ── 列表 ──
 		s.loading
@@ -64,7 +83,22 @@ export function ProjectListView({ state: s }) {
 					hint: '输入书名创建一个；或在会话里让 AI 调 novel_project init —— 书建好后会自动出现在这里。',
 				})
 				: h('div', { style: stackStyle(space.md) },
-					...s.projects.map((p) => h('div', {
+					filtering
+						? h('div', { style: stackStyle(space.xs) },
+							h('input', {
+								'data-field': 'project-filter', value: s.filter ?? '',
+								placeholder: '筛选：书名 / 题材…',
+								'aria-label': '筛选书目',
+								style: inputStyle,
+							}),
+							h('div', { style: { ...hintStyle, fontSize: font.caption } },
+								`${shown.length}/${s.projects.length} 本`),
+						)
+						: null,
+					shown.length === 0
+						? Empty({ icon: '·', title: '没有匹配的书', hint: '换个关键词，或清空筛选框。' })
+						: null,
+					...shown.map((p) => h('div', {
 						key: p.name,
 						style: { ...card(), padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' },
 					},
@@ -120,7 +154,8 @@ export function ProjectListView({ state: s }) {
 									? h('div', { style: { display: 'flex', gap: space.sm, marginTop: space.sm } },
 										h('input', {
 											'data-field': 'rename-value', value: s.rename.value,
-											placeholder: '新书名', style: { ...inputStyle, flex: '1 1 auto' },
+											placeholder: '新书名…', 'aria-label': '新书名',
+											style: { ...inputStyle, flex: '1 1 auto' },
 										}),
 										Btn({ variant: 'primary', action: 'rename-confirm', disabled: s.renaming },
 											s.renaming ? '保存中…' : '确定'),
@@ -133,7 +168,8 @@ export function ProjectListView({ state: s }) {
 									? h('div', { style: { display: 'flex', gap: space.sm, marginTop: space.sm } },
 										h('input', {
 											'data-field': 'clone-value', value: s.clone.value,
-											placeholder: '新书目录名（如：万刃-模板）', style: { ...inputStyle, flex: '1 1 auto' },
+											placeholder: '新书目录名（如：万刃-模板）', 'aria-label': '新书目录名',
+											style: { ...inputStyle, flex: '1 1 auto' },
 										}),
 										Btn({ variant: 'primary', action: 'clone-confirm', disabled: s.cloning },
 											s.cloning ? '克隆中…' : '克隆'),

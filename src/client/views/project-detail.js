@@ -12,10 +12,10 @@
 //     面板给一条**可复制的调用提示**，而不是一个点了没反应的按钮
 import { h } from '../react.js';
 import {
-	color, space, font, weight, hintStyle, errStyle, okStyle,
+	color, space, font, weight, hintStyle, okStyle,
 	inputStyle, manuscriptStyle, stackStyle, tint, rowWrapStyle,
 } from '../styles.js';
-import { Card, Btn, Chip, Stat, Fold, Mono } from '../ui.js';
+import { Card, Btn, Chip, Stat, Fold, Mono, Feedback } from '../ui.js';
 import { phaseLabel } from '../../../lib/phases.js';
 import { ChapterListView } from './chapters.js';
 import { ProjectOverviewView } from './overview.js';
@@ -142,13 +142,20 @@ export function ProjectDetailView({ state: s }) {
 						}),
 					),
 					cont.issues?.length > 0
-						? h('div', null, ...cont.issues.slice(0, 12).map((it, i) => issueRow(it, i, cont.issues.length)))
+						? h('div', null,
+							...cont.issues.slice(0, 12).map((it, i) => issueRow(it, i, cont.issues.length)),
+							// 截断的其余条目可展开：只给计数不给出口，等于让人干瞪眼
+							cont.issues.length > 12
+								? Fold({ title: `展开其余 ${cont.issues.length - 12} 条` },
+									...cont.issues.slice(12).map((it, i) => issueRow(it, i + 12, cont.issues.length)))
+								: null,
+						)
 						: h('div', { style: { ...okStyle, fontSize: font.small } },
 							'账本、伏笔、时间线、文件都对得上。'),
 				),
 
 		s.continuityError
-			? h('div', { style: { ...errStyle, marginTop: space.sm } }, s.continuityError)
+			? Feedback({ tone: 'err' }, s.continuityError)
 			: null,
 	);
 
@@ -195,6 +202,7 @@ export function ProjectDetailView({ state: s }) {
 			h('span', { style: { flex: '1 1 auto' } }),
 			h('select', {
 				'data-field': 'chapterNo', value: String(s.chapterNo),
+				'aria-label': '切换到第几章',
 				style: { ...inputStyle, width: 'auto', padding: '3px 6px' },
 			}, chapterOptions.map((no) => h('option', { key: no, value: String(no) }, `第 ${no} 章`))),
 		),
@@ -217,8 +225,8 @@ export function ProjectDetailView({ state: s }) {
 				s.chapterNo > maxWritten ? '这一章还没落盘 —— 先写章' : '润色/校对的产物是提案'),
 		),
 
-		s.error ? h('div', { style: { ...errStyle, marginTop: space.sm } }, s.error) : null,
-		s.notice ? h('div', { style: { ...okStyle, marginTop: space.sm } }, s.notice) : null,
+		s.error ? Feedback({ tone: 'err' }, s.error) : null,
+		s.notice ? Feedback({ tone: 'ok' }, s.notice) : null,
 
 		// 未保存离开确认：返回 / 换章前有改动时，先问一句
 		s.discardPending
@@ -239,7 +247,8 @@ export function ProjectDetailView({ state: s }) {
 		// 稿纸区（key 带版本号，刷新章节时强制重建以吸收新的 defaultValue）
 		h('textarea', {
 			'data-field': 'draft', key: `draft-${s.draftVersion}`,
-			defaultValue: s.draft, placeholder: '本章正文…', rows: 9,
+			defaultValue: s.draft, placeholder: '本章正文…',
+			'aria-label': '本章正文', rows: 9,
 			style: { ...manuscriptStyle, marginTop: space.md, display: 'block' },
 		}),
 
@@ -279,23 +288,27 @@ export function ProjectDetailView({ state: s }) {
 			'并发生成、串行提交：每一章照样过机审、内容门禁、账本、契约指标，',
 			'单章被拦下不影响其它章。没有细纲或细纲未批准的章会直接被挡（可勾选强制）。'),
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' } },
-			h('span', { style: { fontSize: font.small, color: color.text3 } }, '起始章'),
-			h('input', {
-				'data-field': 'batch-from', type: 'number', min: 1,
-				value: String(s.batchFrom ?? nextNo),
-				style: { ...inputStyle, width: '64px' },
-			}),
-			h('span', { style: { fontSize: font.small, color: color.text3 } }, '数量'),
-			h('input', {
-				'data-field': 'batch-count', type: 'number', min: 1, max: 20,
-				value: String(s.batchCount ?? 3),
-				style: { ...inputStyle, width: '64px' },
-			}),
-			h('span', { style: { fontSize: font.small, color: color.text3 } }, '并发'),
-			h('select', {
-				'data-field': 'batch-concurrency', value: String(s.batchConcurrency ?? 1),
-				style: { ...inputStyle, width: 'auto', padding: '3px 6px' },
-			}, [1, 2, 3, 4].map((n) => h('option', { key: n, value: String(n) }, String(n)))),
+			// label 包住控件：点文字即聚焦输入框，读屏也能念出字段名
+			h('label', { style: { display: 'flex', alignItems: 'center', gap: space.xs, fontSize: font.small, color: color.text3 } },
+				'起始章',
+				h('input', {
+					'data-field': 'batch-from', type: 'number', min: 1,
+					value: String(s.batchFrom ?? nextNo),
+					style: { ...inputStyle, width: '64px' },
+				})),
+			h('label', { style: { display: 'flex', alignItems: 'center', gap: space.xs, fontSize: font.small, color: color.text3 } },
+				'数量',
+				h('input', {
+					'data-field': 'batch-count', type: 'number', min: 1, max: 20,
+					value: String(s.batchCount ?? 3),
+					style: { ...inputStyle, width: '64px' },
+				})),
+			h('label', { style: { display: 'flex', alignItems: 'center', gap: space.xs, fontSize: font.small, color: color.text3 } },
+				'并发',
+				h('select', {
+					'data-field': 'batch-concurrency', value: String(s.batchConcurrency ?? 1),
+					style: { ...inputStyle, width: 'auto', padding: '3px 6px' },
+				}, [1, 2, 3, 4].map((n) => h('option', { key: n, value: String(n) }, String(n))))),
 		),
 		h('label', { style: { display: 'flex', alignItems: 'center', gap: space.xs, fontSize: font.caption, color: color.text3, marginTop: space.sm } },
 			h('input', {

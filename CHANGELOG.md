@@ -128,9 +128,35 @@ cordis 抛错 ctx，锁住「装配与调用都不炸、返回可读错误」。
 - createServerFsio 补 listNames（与 createFsio 同名同义，细纲目录实列复制要用）；
 - 回归 2 条：cloneProject 内存 io 全链路（含防呆三连）+ 面板克隆流（缺 data-id 报错 / 空名被拦 / POST 契约）。
 
+### 界面审查修缮（0.13.1 补四，按 Web Interface Guidelines 全量过一遍）
+
+- **世界书删除两步确认**：原先点了「删除」立即 DELETE 无确认无撤销——条目一删
+  关键词/优先级/内容全没。对齐列表页删书的两步式（第一击点亮确认行，再点才删）；
+- **键盘焦点可见**：`:focus-visible` 原先只给 `[data-nf-btn]`，分段 tab、书卡标题按钮、
+  头部 ⚙ 都是裸 `<button>`——键盘用户在最高频入口上「聚焦了但看不见」。扩成
+  `button:focus-visible` 全覆盖；
+- **异步反馈对读屏可见**：error/notice/播放状态行接入新原语 `Feedback`（错误 `role=alert`、
+  通知 `role=status`），视图不再裸拼 errStyle/okStyle；
+- **settings 去掉写死的「20 个」工具数**：注册数随版本变，数字一落字必过期（common.js
+  注释同款漂移教训），改「全部 novel_* 工具已注册」；
+- **表单可及性**：书名/改名/克隆/草稿/章号切换/批量起草三连/世界书三输入补 label 或
+  aria-label，批量起草「起始章/数量/并发」从旁置 span 换成真 `<label>`；
+- **排版**：Stat 数字 `tabular-nums`（统计行不再跳宽）；档案日期 `toLocaleDateString`（ECMA-402）
+  替代手切字符串，脏值回退 '—'；
+- **性能**：章节目录与账本时间线行加 `content-visibility: auto`——几百章的书滚目录不再整页渲染；
+  体检超 12 条从「另有 N 条」干瞪眼改为可展开的 Fold；
+- **书列表筛选**：>8 本时出筛选框（书名/目录名/显示题材子串匹配，纯客户端），带计数与空态；
+- **书名输入非受控化**（defaultValue + key）：每键只进 state 不重渲染全列表，创建成功 bump
+  titleReset 清空输入框；
+- **css.js 补全**：`touch-action: manipulation`（双击缩放延迟）+ `prefers-reduced-motion` 降级
+  （关过渡与位移）；StageRail 已过段改半透 accent——原先与当前段同色，3px 小条上分不出「到哪了」；
+- 回归 5 条：Feedback role 契约、projectMatches 匹配规则、列表视图渲染契约（非受控/筛选阈值/
+  筛中/空态）、筛选输入走事件代理、世界书删除两步确认全链路。假 DOM 的 `createElement`
+  同步镜像真 React 元素形状（此前恒返回 null，视图层在测试里是盲区）。
+
 ### 测试
 
-**202/202 全绿**（0.13.0 是 185）。新增 17 条：每个按钮变体的三态规则齐备性、
+**207/207 全绿**（0.13.0 是 185）。新增 22 条：每个按钮变体的三态规则齐备性、
 tap/seg/focus/summary 规则存在性、`ensureStyles` 幂等与降级、样式表注入不破坏渲染、
 **cordis 抛错 ctx 下引擎装配与调用不炸**、**字数标准两条**、**守卫写两条 intent 分支**。
 假 DOM（`test/helpers/dom.mjs`）顺带补齐 `head` 与 `#id` 选择器——样式表注入路径从此可测。

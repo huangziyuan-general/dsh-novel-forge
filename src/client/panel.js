@@ -400,7 +400,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 				// 别再学早期把 'fantasy' 写死在默认值里（书卡上全是英文 chip 的来历）。
 				body: JSON.stringify({ title: state.title.trim(), genre: state.genre.trim() || undefined, session: state.sessionId ?? undefined }),
 			});
-			state.title = ''; await refreshProjects();
+			state.title = ''; state.titleReset = (state.titleReset ?? 0) + 1; await refreshProjects();
 		} catch (error) { state.error = String(error?.message ?? error); }
 		finally { state.creating = false; notify(); }
 	};
@@ -621,7 +621,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 				break;
 			}
 			case 'discard-cancel': state.discardPending = null; notify(); break;
-			case 'lore-new': state.loreForm = { ...emptyLoreForm(), mode: 'new' }; notify(); break;
+			case 'lore-new': state.loreForm = { ...emptyLoreForm(), mode: 'new' }; state.loreDeleteId = null; notify(); break;
 			case 'lore-edit': {
 				const entry = state.loreEntries.find((x) => x.id === Number(target.dataset.id));
 				if (entry) {
@@ -630,6 +630,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 						keywords: (entry.keywords || []).join(','), alwaysActive: entry.always_active,
 						enabled: entry.enabled, priority: String(entry.priority), bookId: entry.book_id || '',
 					};
+					state.loreDeleteId = null;
 					notify();
 				}
 				break;
@@ -637,7 +638,15 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 			case 'lore-save': await saveLoreEntry(); break;
 			case 'lore-cancel': state.loreForm = emptyLoreForm(); notify(); break;
 			case 'lore-toggle': await toggleLoreEntry(target.dataset.id); break;
-			case 'lore-delete': await deleteLoreEntry(target.dataset.id); break;
+			// 删除两步确认（与列表页删书同款）：第一次点只点亮确认行，再点才真删——
+			// 世界书条目删了就没了（关键词、优先级、内容全在一条里），误触不可逆。
+			case 'lore-delete':
+				if (state.loreDeleteId === target.dataset.id) {
+					state.loreDeleteId = null;
+					await deleteLoreEntry(target.dataset.id);
+				} else { state.loreDeleteId = target.dataset.id; notify(); }
+				break;
+			case 'lore-delete-cancel': state.loreDeleteId = null; notify(); break;
 		}
 	};
 
@@ -648,7 +657,10 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 	};
 	const onInput = (e) => {
 		const field = e.target?.dataset?.field;
-		if (field === 'title') { state.title = e.target.value; notify(); }
+		// 书名输入是非受控的（defaultValue）：每键只记值不重渲染——
+		// 「创建中…」那一下的 notify 由 create 自己负责（每键全列表重渲染白烧）。
+		if (field === 'title') { state.title = e.target.value; }
+		else if (field === 'project-filter') { state.filter = e.target.value; notify(); }
 		else if (field === 'draft') { state.draft = e.target.value; state.draftModified = e.target.value !== state.baseline; }
 		else if (field === 'rename-value') { if (state.rename) state.rename.value = e.target.value; }
 		else if (field === 'clone-value') { if (state.clone) state.clone.value = e.target.value; }
@@ -712,6 +724,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		player.stop();
 		state.selected = null; state.detail = null; state.view = 'projects'; state.chapterList = [];
 		state.rename = null; state.listDeleteId = null; state.clone = null;
+		state.loreDeleteId = null; state.filter = '';
 		started = true;
 		notify();
 		void refreshProjects();
@@ -798,6 +811,7 @@ export function ForgePanel(props) {
 				// 走按钮皮肤：底/描边/字色交给 css.js，这样它有悬停与按下反馈
 				'data-nf-btn': '1', 'data-variant': 'secondary',
 				title: '设置 · 能力清单',
+				'aria-label': '设置 · 能力清单',
 				style: {
 					flex: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px',
 					lineHeight: 1, padding: '5px 7px', borderRadius: '8px',

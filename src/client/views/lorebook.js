@@ -6,8 +6,8 @@
 // 这一页的读者关心的是「**什么会被注入进上下文**」，所以每条都把它会在
 // 正文里被什么词触发、优先级多高、当前开没开，明明白白摆在卡面上。
 import { h } from '../react.js';
-import { color, space, font, weight, hintStyle, errStyle, okStyle, inputStyle, stackStyle, card } from '../styles.js';
-import { Card, Btn, Chip, Empty, Mono } from '../ui.js';
+import { color, space, font, weight, hintStyle, inputStyle, stackStyle, card } from '../styles.js';
+import { Card, Btn, Chip, Empty, Mono, Feedback } from '../ui.js';
 
 export function LorebookView({ state: s }) {
 	const editing = s.loreForm.mode !== 'none';
@@ -23,8 +23,8 @@ export function LorebookView({ state: s }) {
 			Btn({ size: 'sm', variant: 'primary', action: 'lore-new' }, '＋ 新建'),
 		),
 
-		s.error ? h('div', { style: errStyle }, s.error) : null,
-		s.notice ? h('div', { style: okStyle }, s.notice) : null,
+		s.error ? Feedback({ tone: 'err' }, s.error) : null,
+		s.notice ? Feedback({ tone: 'ok' }, s.notice) : null,
 
 		// 新建 / 编辑表单
 		editing
@@ -32,11 +32,12 @@ export function LorebookView({ state: s }) {
 				h('div', { style: { fontWeight: weight.semibold, fontSize: font.small, marginBottom: space.sm } },
 					s.loreForm.mode === 'new' ? '新建条目' : '编辑条目'),
 				h('div', { style: stackStyle(space.sm) },
-					h('input', { 'data-field': 'lore-name', defaultValue: s.loreForm.name, placeholder: '条目名称（如：城西乱葬岗）', style: inputStyle }),
-					h('input', { 'data-field': 'lore-keywords', defaultValue: s.loreForm.keywords, placeholder: '触发关键词，逗号分隔（如：乱葬岗,红泥）', style: inputStyle }),
+					h('input', { 'data-field': 'lore-name', defaultValue: s.loreForm.name, placeholder: '条目名称（如：城西乱葬岗）', 'aria-label': '条目名称', style: inputStyle }),
+					h('input', { 'data-field': 'lore-keywords', defaultValue: s.loreForm.keywords, placeholder: '触发关键词，逗号分隔（如：乱葬岗,红泥）', 'aria-label': '触发关键词', style: inputStyle }),
 					h('textarea', {
 						'data-field': 'lore-content', defaultValue: s.loreForm.content,
-						placeholder: '注入内容：这段设定会原样进上下文，写清事实而不是氛围词。', rows: 4,
+						placeholder: '注入内容：这段设定会原样进上下文，写清事实而不是氛围词。',
+						'aria-label': '注入内容', rows: 4,
 						style: { ...inputStyle, lineHeight: 1.8, resize: 'vertical' },
 					}),
 					h('div', { style: { display: 'flex', alignItems: 'center', gap: space.lg, flexWrap: 'wrap' } },
@@ -96,12 +97,19 @@ export function LorebookView({ state: s }) {
 							},
 						}, entry.content)
 						: null,
-					h('div', { style: { display: 'flex', gap: space.xs, marginTop: space.sm } },
+					h('div', { style: { display: 'flex', gap: space.xs, marginTop: space.sm, flexWrap: 'wrap', alignItems: 'center' } },
 						Btn({ size: 'sm', variant: 'ghost', action: 'lore-edit', id: entry.id }, '编辑'),
 						Btn({ size: 'sm', variant: 'ghost', action: 'lore-toggle', id: entry.id },
 							entry.enabled ? '停用' : '启用'),
 						h('span', { style: { flex: '1 1 auto' } }),
-						Btn({ size: 'sm', variant: 'danger', action: 'lore-delete', id: entry.id }, '删除'),
+						// 删除两步确认：第一次点只点亮确认行（控制器 lore-delete 分支），
+						// 误触可取消——条目一删关键词/优先级/内容全没了，不能一键即走。
+						s.loreDeleteId === String(entry.id)
+							? h('span', { style: { display: 'flex', alignItems: 'center', gap: space.xs } },
+								Btn({ size: 'sm', action: 'lore-delete-cancel' }, '取消删除'),
+								Btn({ size: 'sm', variant: 'danger', action: 'lore-delete', id: entry.id, disabled: s.loreBusy },
+									s.loreBusy ? '删除中…' : '确认删除这条设定？'))
+							: Btn({ size: 'sm', variant: 'danger', action: 'lore-delete', id: entry.id }, '删除'),
 					),
 				)),
 			),
