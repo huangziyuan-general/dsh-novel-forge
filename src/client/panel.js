@@ -187,6 +187,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		// 换书：体检结果与批量结果都属于「上一本书」，必须清掉（否则会把 A 书的红字
 		// 挂在 B 书头上——这类串台比不显示更糟）
 		state.continuity = null; state.continuityError = ''; state.batchResult = null; state.revising = null;
+		state.reader = null; // 阅读器也属于「上一本书」
 		player.stop();
 		notify();
 		// detail 与 第 1 章正文并行拉；elements/chapters 由以下并行加载
@@ -497,6 +498,33 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 				catch (error) { state.error = String(error?.message ?? error); notify(); }
 				break;
 			}
+			case 'read-chapter': {
+				// 阅读器：取单章正文展开在目录上方。与播放互相独立（可以边听边看）。
+				// 章号同样只认 data-id —— 理由见 play-from 里的注释（字段名对不上＝点了没反应）。
+				state.detailTab = 'chapters';
+				const no = Number(target.dataset.id);
+				if (!Number.isFinite(no) || no <= 0) {
+					state.error = `拿不到要读的章号（阅读钮上应有 data-id，实际是 "${target.dataset.id ?? ''}"）`;
+					notify();
+					break;
+				}
+				const meta = state.chapterList.find((c) => c.no === no);
+				state.reader = { no, title: meta?.title ?? `第 ${no} 章`, text: '', loading: true };
+				notify();
+				try {
+					const text = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/chapters/${no}`);
+					// 请求期间用户可能已点了另一章的 📖 —— 只更新仍是同一章的 reader
+					if (state.reader?.no === no) {
+						state.reader = { no, title: meta?.title ?? `第 ${no} 章`, text: String(text ?? ''), loading: false };
+					}
+				} catch (error) {
+					if (state.reader?.no === no) state.reader = null;
+					state.error = `读不出第 ${no} 章正文：${String(error?.message ?? error)}`;
+				}
+				notify();
+				break;
+			}
+			case 'close-reader': state.reader = null; notify(); break;
 			case 'playback-pause': player.pause(); notify(); break;
 			case 'playback-resume': player.resume(); notify(); break;
 			case 'playback-stop': player.stop(); notify(); break;

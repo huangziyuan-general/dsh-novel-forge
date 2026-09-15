@@ -78,7 +78,9 @@ export function ProjectListView({ state: s }) {
 									'data-action': 'open', 'data-id': p.name,
 									style: {
 										display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
-										padding: `${space.xs}px ${space.sm}px`, margin: `-${space.xs}px -${space.sm}px`,
+										// 热区只向上/左/右扩：底部若也负边距，会把下面的标签行
+										// 拉上来贴住按钮的 hover 高亮背景（0.13.1 用户实测重叠）。
+										padding: `${space.xs}px ${space.sm}px 0`, margin: `-${space.xs}px -${space.sm}px 0`,
 										borderRadius: '8px',
 										border: 'none', font: 'inherit', color: 'inherit',
 									},
