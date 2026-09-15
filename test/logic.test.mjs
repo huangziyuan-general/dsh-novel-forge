@@ -21,6 +21,7 @@ import { parseFactLines, foreshadowView } from '../lib/tools/common.js';
 import { chaptersFromText, analyzeStructure, repeatedPhrases, compareStructures, libraryId, coefficientOfVariation, chapterMetrics } from '../lib/library.js';
 import { parseWorldbookImport } from '../lib/worldbook-io.js';
 import { splitSentences, measureStyleMetrics, measureMood, computeBaseline, judgeAgainstBaseline } from '../lib/style.js';
+import { bigrams } from '../lib/retrieval.js';
 import { validateContinuity, isDeathRecord, deathTimeline } from '../lib/continuity.js';
 import { contentGate, setupKeywords, factStatesAt } from '../lib/content-gate.js';
 import { validatePolishEdits } from '../lib/polish.js';
@@ -361,6 +362,35 @@ test('noai: 单调段落被结构维度点名', () => {
     const mono = Array.from({ length: 10 }, () => '他走了过去。'.padEnd(40, '然后继续走。')).join('\n\n');
     const s = scanAiFlavor(mono);
     assert.ok(s.categories.structure.score >= 40, `structure=${s.categories.structure.score}`);
+});
+
+test('★ noai: 纯句末标点文本（如「……」）不得产生 NaN——总分必须有限', () => {
+    // 触发链：chars>0（不是空文本）→ 句子切分后全空 → sentenceCv 的 mean=0/0=NaN
+    // → `mean === 0` 挡不住 NaN → 总分 NaN → JSON 序列化变 null → 宿主判 INVALID_TOOL_OUTPUT
+    const s = scanAiFlavor('……');
+    assert.ok(Number.isFinite(s.score), `★ score 应为有限数，实际 ${s.score}`);
+    for (const [key, cat] of Object.entries(s.categories)) {
+        assert.ok(Number.isFinite(cat.score), `★ categories.${key}.score 应为有限数，实际 ${cat.score}`);
+    }
+});
+
+// ── retrieval: bigrams ───────────────────────────────────────────────────────
+
+test('★ retrieval: bigrams 按码点切分——emoji 不被切成孤半代理', () => {
+    const loneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    const grams = bigrams('a😀b刀光');
+    assert.ok(grams.length > 0);
+    for (const g of grams) {
+        assert.ok(!loneSurrogate.test(g), `★ 产生了孤半代理的 bigram：${JSON.stringify(g)}`);
+    }
+    // 代理对必须完整地落在某个 bigram 里，与相邻字组合
+    assert.ok(grams.includes('a😀') && grams.includes('😀b'), `应含 a😀/😀b，实际 ${JSON.stringify(grams)}`);
+});
+
+test('retrieval: bigrams 的 BMP 中文行为不变', () => {
+    assert.deepEqual(bigrams('斗笠人'), ['斗笠', '笠人']);
+    assert.deepEqual(bigrams(''), []);
+    assert.deepEqual(bigrams('单'), []);
 });
 
 // ── import backfill / diagnose 词库外置 ──────────────────────────────────────
