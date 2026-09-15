@@ -13,6 +13,7 @@
 import { h } from '../react.js';
 import { color, space, font, weight, hintStyle, errStyle, okStyle, footerStyle, inputStyle, stackStyle, card, tint } from '../styles.js';
 import { Card, Btn, Chip, Stat, StageRail, Empty, Section, TAP } from '../ui.js';
+import { genreLabel } from '../genre.js';
 
 /** 列表项里的一颗统计。fields 缺失（老书/解析失败）就不显示，不显示 0 之外的空壳。 */
 function statsOf(p) {
@@ -96,7 +97,7 @@ export function ProjectListView({ state: s }) {
 									),
 								),
 								h('div', { style: { display: 'flex', gap: space.xs, marginTop: space.xs } },
-									p.genre ? Chip({}, p.genre) : null,
+									p.genre ? Chip({}, genreLabel(p.genre)) : null,
 									p.maxChapter ? Chip({}, `写到第 ${p.maxChapter} 章`) : null,
 								),
 
@@ -109,6 +110,7 @@ export function ProjectListView({ state: s }) {
 								h('div', { style: { display: 'flex', alignItems: 'center', gap: space.xs, marginTop: space.md } },
 									Btn({ variant: 'ghost', size: 'sm', action: 'goto-lorebook', id: p.name }, '📖 世界书'),
 									Btn({ variant: 'ghost', size: 'sm', action: 'rename-open', id: p.name }, '✎ 改名'),
+									Btn({ variant: 'ghost', size: 'sm', action: 'clone-open', id: p.name }, '⧉ 克隆'),
 									h('span', { style: { flex: '1 1 auto' } }),
 									Btn({ variant: 'danger', size: 'sm', action: 'list-delete', id: p.name }, '删除'),
 								),
@@ -123,6 +125,19 @@ export function ProjectListView({ state: s }) {
 										Btn({ variant: 'primary', action: 'rename-confirm', disabled: s.renaming },
 											s.renaming ? '保存中…' : '确定'),
 										Btn({ action: 'rename-cancel' }, '取消'),
+									)
+									: null,
+
+								// 克隆为模板（老书连章节带资产复制成新书；目录名是稳定身份，必填）
+								s.clone && s.clone.id === p.name
+									? h('div', { style: { display: 'flex', gap: space.sm, marginTop: space.sm } },
+										h('input', {
+											'data-field': 'clone-value', value: s.clone.value,
+											placeholder: '新书目录名（如：万刃-模板）', style: { ...inputStyle, flex: '1 1 auto' },
+										}),
+										Btn({ variant: 'primary', action: 'clone-confirm', disabled: s.cloning },
+											s.cloning ? '克隆中…' : '克隆'),
+										Btn({ action: 'clone-cancel' }, '取消'),
 									)
 									: null,
 

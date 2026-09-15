@@ -10,6 +10,7 @@
 import { h } from '../react.js';
 import { color, space, font, weight, hintStyle, tint, stackStyle } from '../styles.js';
 import { Card, Chip, Stat, Fold, Empty, Section, Mono, KV } from '../ui.js';
+import { genreLabel } from '../genre.js';
 
 const preStyle = {
 	margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
@@ -55,7 +56,7 @@ export function ProjectOverviewView({ state: s }) {
 	const profile = Card({ tone: 'plain' },
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' } },
 			h('span', { style: { fontWeight: weight.semibold, fontSize: font.lead } }, meta.title || s.selected),
-			meta.genre ? Chip({ tone: 'neutral' }, meta.genre) : null,
+			meta.genre ? Chip({ tone: 'neutral' }, genreLabel(meta.genre)) : null,
 			meta.stage ? Chip({ tone: 'accent' }, String(meta.stage)) : null,
 		),
 		h('div', { style: { ...stackStyle(space.xs), marginTop: space.md } },

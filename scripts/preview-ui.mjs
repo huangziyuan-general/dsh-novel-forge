@@ -363,6 +363,11 @@ const previewFetch = async (url, init) => {
   if (init?.method === 'POST' && /\\/draft-batch$/.test(p)) { await sleep(900); return json({ ok: true, value: MOCK.batchResult }); }
   if (init?.method === 'POST' && /\\/proposals\\/.*\\/apply$/.test(p)) return json({ ok: true, value: { chapter: 9, version: 2 } });
   if (init?.method === 'POST' && /\\/proposals\\/.*\\/discard$/.test(p)) return json({ ok: true, value: {} });
+  // 克隆为模板（面板只做校验反馈；mock 不持久化，刷新后列表原样）
+  if (init?.method === 'POST' && /\\/projects\\/[^/]+\\/clone$/.test(p)) {
+    await sleep(600);
+    return json({ ok: true, value: { book: '万刃-模板', from_book: '万刃', action: 'clone', chapters: 30, missing: 0, new_stage: 'topic', next: '克隆完成：《万刃-模板》已就绪（阶段重置 topic，提案与熔断计数已清空）' } });
+  }
 
   if (p === '/projects' && q.get('scope') === 'unclaimed') return json({ ok: true, value: MOCK.unclaimed });
   if (p === '/projects') return json({ ok: true, value: MOCK.projects });

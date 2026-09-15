@@ -1198,3 +1198,58 @@ test('★ createServerFsio.writeTextIfVersion：有版本走 replaceIfVersion，
     await fsio.writeTextIfVersion('书/新.json', 'y');
     assert.equal(writes[1].intent, undefined, '目标不存在时不应带 intent');
 });
+
+test('★ cloneProject（lib/clone.js 共享核心）：章节资产全带走、阶段重置、会话归属、防呆三连', async () => {
+    const { cloneProject } = await import('../lib/clone.js');
+    // 内存 io：createFsio / createServerFsio 的公共接口子集
+    const files = new Map();
+    const io = {
+        sessionId: 'sess-in-io',
+        async readJson(p) { const t = files.get(p); return t === undefined ? null : JSON.parse(t); },
+        async readText(p) { return files.get(p) ?? null; },
+        async writeText(p, text) { files.set(p, text); return { version: 1 }; },
+        async writeJson(p, v) { files.set(p, JSON.stringify(v, null, 2) + '\n'); return { version: 1 }; },
+        async listNames(p) { return [...files.keys()].filter((k) => k.startsWith(p + '/')).map((k) => k.slice(p.length + 1)); },
+        async appendLine(p, line) { files.set(p, (files.get(p) ?? '') + line + '\n'); },
+    };
+    // 源书：2 章 + 大纲 + 细纲 + 世界书 + 账本
+    files.set('源书/novel.json', JSON.stringify({
+        title: '源书', genre: '玄幻', logline: '一句话',
+        chapters: {
+            1: { title: '一章', files: [{ version: 1, file: '源书/正文/第1章.md' }], summary: 's1' },
+            2: { title: '二章', files: [{ version: 1, file: '源书/正文/第2章.md' }], summary: 's2' },
+        },
+        cast: ['主角'],
+    }, null, 2));
+    files.set('源书/正文/第1章.md', '第一章正文');
+    files.set('源书/正文/第2章.md', '第二章正文');
+    files.set('源书/大纲/全书大纲.md', '大纲');
+    files.set('源书/大纲/细纲/第1章.md', '细纲1');
+    files.set('源书/设定/世界书.json', '[]');
+    files.set('源书/账本/facts.json', '{}');
+    files.set('源书/人物/主角.md', '人物卡');
+
+    const v = await cloneProject(io, { fromBook: '源书', newBook: '新书', session: 'sess-面板' });
+    assert.equal(v.action, 'clone');
+    assert.equal(v.chapters, 2, '两章都复制');
+    assert.equal(v.new_stage, 'topic', '阶段重置');
+    const meta = JSON.parse(files.get('新书/novel.json'));
+    assert.deepEqual(meta.sessions, ['sess-面板'], '显式 session 优先于 io.sessionId');
+    assert.equal(meta.stage, 'topic', '新书从 topic 起步');
+    assert.deepEqual(meta.approvals, { outline: {} }, 'approvals 必须带 outline 子对象');
+    assert.deepEqual(meta.proposals, [], '提案清空');
+    assert.deepEqual(meta.gateFailures, {}, '熔断计数清空');
+    assert.equal(meta.chapters[1].path, '新书/正文/第1章.md', '章节索引指向新书路径');
+    assert.ok(files.get('新书/正文/第1章.md')?.includes('第一章正文'), '章正文复制');
+    assert.ok(files.get('新书/大纲/全书大纲.md')?.includes('大纲'), '全书大纲复制');
+    assert.ok(files.get('新书/大纲/细纲/第1章.md')?.includes('细纲1'), '细纲按目录实列复制');
+    assert.ok(files.get('新书/设定/世界书.json') !== undefined, '世界书复制');
+    assert.ok(files.get('新书/账本/facts.json') !== undefined, '账本复制');
+    assert.ok(files.get('新书/人物/主角.md')?.includes('人物卡'), '人物卡复制');
+    assert.ok(files.get('新书/.novel/audit.jsonl')?.includes('project/clone'), '审计落新书');
+
+    // 防呆：同名 / 目标已存在 / 源不存在
+    await assert.rejects(cloneProject(io, { fromBook: '新书', newBook: '新书' }), /源与目标/);
+    await assert.rejects(cloneProject(io, { fromBook: '源书', newBook: '新书' }), /目标书目已存在/);
+    await assert.rejects(cloneProject(io, { fromBook: '没有的书', newBook: '另一本' }), /源书目不存在/);
+});
