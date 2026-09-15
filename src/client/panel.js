@@ -180,6 +180,25 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		finally { state.renaming = false; notify(); }
 	};
 
+	/** 克隆为模板：老书连章节带资产复制成新书（REST 走 lib/clone.js 共享核心）。
+	 *  新书目录名必填（是稳定身份，同书名规则）；成功后刷新列表，新书带会话戳直接出现。 */
+	const cloneProject = async () => {
+		const c = state.clone;
+		if (!c || !c.id) return;
+		const newBook = String(c.value ?? '').trim();
+		if (!newBook) { state.error = '新书目名不能为空'; notify(); return; }
+		state.cloning = true; state.error = ''; notify();
+		try {
+			const v = await apiFetch(`/projects/${encodeURIComponent(c.id)}/clone`, {
+				method: 'POST', body: JSON.stringify({ newBook, title: newBook, session: state.sessionId ?? undefined }),
+			});
+			state.notice = v?.next ?? `已克隆：${c.id} → ${newBook}`;
+			state.clone = null;
+			await refreshProjects();
+		} catch (error) { state.error = String(error?.message ?? error); }
+		finally { state.cloning = false; notify(); }
+	};
+
 	/** 列表删除：软删（服务端清 novel.json 标记非书）。 */
 	const deleteListProject = async (id) => {
 		state.listDeleteId = 'busy'; notify();
@@ -199,7 +218,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		const cseq = ++chapterSeq;
 		state.selected = id; state.view = 'detail'; state.detail = null; state.chapterNo = 1;
 		state.draft = ''; state.error = ''; state.detailTab = 'info';
-		state.elements = null; state.discardPending = null; state.rename = null; state.listDeleteId = null;
+		state.elements = null; state.discardPending = null; state.rename = null; state.listDeleteId = null; state.clone = null;
 		state.proposals = []; state.proposalBusy = null;
 		// 换书：体检结果与批量结果都属于「上一本书」，必须清掉（否则会把 A 书的红字
 		// 挂在 B 书头上——这类串台比不显示更糟）
@@ -379,7 +398,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 				// 创建即打会话戳：面板按会话过滤时它才会出现在本会话里
 				// 题材：面板没有题材输入框，留空就不传（服务端默认「未分类」），
 				// 别再学早期把 'fantasy' 写死在默认值里（书卡上全是英文 chip 的来历）。
-				body: JSON.stringify({ title: state.title.trim(), genre: state.genre, session: state.sessionId ?? undefined }),
+				body: JSON.stringify({ title: state.title.trim(), genre: state.genre.trim() || undefined, session: state.sessionId ?? undefined }),
 			});
 			state.title = ''; await refreshProjects();
 		} catch (error) { state.error = String(error?.message ?? error); }
@@ -477,7 +496,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 	/** 真正返回项目列表。 */
 	const goBack = async () => {
 		player.stop(); state.view = 'projects'; state.selected = null; state.detail = null;
-		state.discardPending = null; state.draftModified = false; state.rename = null; state.listDeleteId = null;
+		state.discardPending = null; state.draftModified = false; state.rename = null; state.listDeleteId = null; state.clone = null;
 		await refreshProjects();
 	};
 
@@ -495,6 +514,15 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 			}
 			case 'rename-confirm': await renameProject(); break;
 			case 'rename-cancel': state.rename = null; notify(); break;
+			// 克隆为模板：与改名同款内联表单（clone = {id, value}）。互斥——开一个关另一个
+			case 'clone-open': {
+				const id = target.dataset.id;
+				if (!id) { state.error = '拿不到要克隆的书（按钮上应有 data-id）'; notify(); break; }
+				state.clone = { id, value: '' };
+				state.rename = null; state.listDeleteId = null; notify(); break;
+			}
+			case 'clone-confirm': await cloneProject(); break;
+			case 'clone-cancel': state.clone = null; notify(); break;
 			case 'list-delete':
 				if (state.listDeleteId === target.dataset.id) await deleteListProject(target.dataset.id);
 				else { state.listDeleteId = target.dataset.id; state.rename = null; notify(); }
@@ -623,6 +651,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		if (field === 'title') { state.title = e.target.value; notify(); }
 		else if (field === 'draft') { state.draft = e.target.value; state.draftModified = e.target.value !== state.baseline; }
 		else if (field === 'rename-value') { if (state.rename) state.rename.value = e.target.value; }
+		else if (field === 'clone-value') { if (state.clone) state.clone.value = e.target.value; }
 		else if (field === 'chapterNo') {
 			const no = Number(e.target.value);
 			if (no > 0) {
@@ -682,7 +711,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		state.sessionId = id;
 		player.stop();
 		state.selected = null; state.detail = null; state.view = 'projects'; state.chapterList = [];
-		state.rename = null; state.listDeleteId = null;
+		state.rename = null; state.listDeleteId = null; state.clone = null;
 		started = true;
 		notify();
 		void refreshProjects();
