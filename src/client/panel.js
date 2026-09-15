@@ -18,15 +18,18 @@ import { h, Component, useState, useRef, useEffect } from './react.js';
 import { initialState, emptyLoreForm } from './state.js';
 import { apiFetch } from './api.js';
 import { createTtsPlayer, resolveSynth } from './tts.js';
-import { headerStyle, badgeStyle, btnStyle, hintStyle } from './styles.js';
+import {
+	rootStyle, bodyStyle, headerStyle, brandMarkStyle, titleStyle, subtitleStyle,
+	chip, space, color,
+} from './styles.js';
 import { ProjectListView } from './views/project-list.js';
 import { ProjectDetailView } from './views/project-detail.js';
-import { ChapterListView } from './views/chapters.js';
 import { LorebookView } from './views/lorebook.js';
 import { SettingsView } from './views/settings.js';
+// 面板根属性 + 交互态样式表（:hover/:active 只能靠样式表，内联压不过它们）
+import { PANEL_ATTR, ensureStyles } from './css.js';
 
-/** 面板容器标记：事件代理的落点，也是测试/诊断的抓手。 */
-export const PANEL_ATTR = 'data-dsh-novel-forge-panel';
+export { PANEL_ATTR };
 
 /**
  * 渲染错误边界：某个视图抛错时只把这块换成报错文案，
@@ -39,7 +42,7 @@ const ForgeBoundary = typeof Component === 'function'
 		componentDidCatch(error) { console.error('[novel-forge] 面板渲染失败：', error); }
 		render() {
 			if (this.state.error) {
-				return h('div', { style: { padding: '16px', color: '#ff8a8a', fontSize: '12.5px', lineHeight: 1.7, whiteSpace: 'pre-wrap' } },
+				return h('div', { style: { padding: '16px', color: color.danger, fontSize: '12.5px', lineHeight: 1.7, whiteSpace: 'pre-wrap' } },
 					'面板渲染失败：' + String(this.state.error?.message ?? this.state.error));
 			}
 			return this.props.children;
@@ -178,9 +181,12 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 
 	const openProject = async (id) => {
 		state.selected = id; state.view = 'detail'; state.detail = null; state.chapterNo = 1;
-		state.draft = ''; state.report = null; state.error = ''; state.detailTab = 'info';
+		state.draft = ''; state.error = ''; state.detailTab = 'info';
 		state.elements = null; state.discardPending = null; state.rename = null; state.listDeleteId = null;
 		state.proposals = []; state.proposalBusy = null;
+		// 换书：体检结果与批量结果都属于「上一本书」，必须清掉（否则会把 A 书的红字
+		// 挂在 B 书头上——这类串台比不显示更糟）
+		state.continuity = null; state.continuityError = ''; state.batchResult = null; state.revising = null;
 		player.stop();
 		notify();
 		// detail 与 第 1 章正文并行拉；elements/chapters 由以下并行加载
@@ -198,7 +204,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 
 	const loadChapter = async (no) => {
 		if (!state.selected) return;
-		state.chapterNo = no; state.report = null; state.polishPreview = null; state.discardPending = null; notify();
+		state.chapterNo = no; state.discardPending = null; notify();
 		try {
 			const text = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/chapters/${no}`);
 			state.baseline = text ?? ''; state.draft = text ?? ''; state.draftVersion++;
@@ -253,6 +259,85 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 			await loadProposals(state.selected);
 		} catch (error) { state.error = String(error?.message ?? error); }
 		finally { state.proposalBusy = null; notify(); }
+	};
+
+	// ── 旁路引擎动作（0.13.0 · 融合第五批 D1）────────────────────────────────
+	//
+	// 润色/校对走服务端的 /polish 与 /proofread：**引擎在服务端**（插件已拿到 ctx.llm），
+	// 所以面板侧不需要任何 key。两条纪律：
+	//   ① 产物是**提案** —— 面板只发起、只提示「去哪里批准」，绝不直接落正文；
+	//   ② 超时要放宽：服务端通道超时 180s 且默认重试 2 次，用通用的 12s 会把
+	//      正常的长任务一律误报成「请求超时」。
+	const REVISION_TIMEOUT_MS = 600_000;
+
+	/** 把服务端的语义化错误码翻成人话（503/409/422/499 各有各的处置办法）。 */
+	const revisionErrorText = (error, mode) => {
+		const raw = String(error?.message ?? error);
+		const what = mode === 'proofread' ? '校对' : '润色';
+		if (/ENGINE_UNAVAILABLE|引擎未就绪/.test(raw)) return `${what}需要模型服务：本进程还没有可用的模型路由，先在会话里正常对话一次再试。`;
+		if (/NO_ROUTE/.test(raw)) return `${what}通道没有可用路由：检查插件配置里的 engine.channels.${mode}。`;
+		if (/GUARD_BLOCKED|守卫/.test(raw)) return `${what}结果被守卫拦下（改动过大或与原文偏离太多），已丢弃——正文没动。`;
+		if (/ABORTED/.test(raw)) return `${what}被中止。`;
+		return raw;
+	};
+
+	const runRevision = async (mode) => {
+		if (!state.selected || state.revising) return;
+		state.revising = mode; state.error = ''; state.notice = ''; notify();
+		try {
+			const value = await apiFetch(
+				`/projects/${encodeURIComponent(state.selected)}/chapters/${state.chapterNo}/${mode}`,
+				{ method: 'POST', timeoutMs: REVISION_TIMEOUT_MS },
+			);
+			const what = mode === 'proofread' ? '校对' : '润色';
+			const delta = Number(value?.deltaChars ?? 0);
+			state.notice = `${what}完成：提案 ${value.proposalId}（${value.chars} 字，改动 ${delta >= 0 ? '+' : ''}${delta}）—— 到「待批准提案」里点应用才生效`;
+			await loadProposals(state.selected);
+		} catch (error) { state.error = revisionErrorText(error, mode); }
+		finally { state.revising = null; notify(); }
+	};
+
+	/** 全书体检：死人复活 / 账本矛盾 / 伏笔超期 / 章号断档 / 人物卡缺失。零 token。 */
+	const loadContinuity = async () => {
+		if (!state.selected) return;
+		state.continuityLoading = true; state.continuityError = ''; notify();
+		try {
+			state.continuity = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/continuity`);
+		} catch (error) {
+			state.continuity = null;
+			state.continuityError = String(error?.message ?? error);
+		} finally { state.continuityLoading = false; notify(); }
+	};
+
+	// ── 批量起草（D2）──
+	//
+	// 服务端是**并发生成 + 串行提交**：每章照样过机审/内容门禁/账本/契约指标，
+	// 单章被拦不影响其余章。所以失败不是异常，是结果的一部分——摊给用户看，不吞。
+	const runBatch = async () => {
+		if (!state.selected || state.batchBusy) return;
+		state.batchBusy = true; state.error = ''; state.notice = ''; state.batchResult = null; notify();
+		try {
+			state.batchResult = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/draft-batch`, {
+				method: 'POST',
+				timeoutMs: 900_000,
+				body: JSON.stringify({
+					from: Number(state.batchFrom) || 1,
+					count: Number(state.batchCount) || 1,
+					concurrency: Number(state.batchConcurrency) || 1,
+					force: state.batchForce === true,
+				}),
+			});
+			const st = state.batchResult?.stats ?? {};
+			state.notice = `批量起草完成：落盘 ${st.committed ?? 0} 章，被拦 ${st.failed ?? 0} 章`;
+			// 新章会改变账本与提案队列；同时体检结果作废（它按章算的）
+			await Promise.all([loadChapterList(state.selected), loadProposals(state.selected)]);
+			state.continuity = null;
+		} catch (error) {
+			const raw = String(error?.message ?? error);
+			state.error = /ENGINE_UNAVAILABLE|引擎未就绪/.test(raw)
+				? '批量起草需要模型服务：本进程还没有可用的模型路由。'
+				: raw;
+		} finally { state.batchBusy = false; notify(); }
 	};
 
 	const createProject = async () => {
@@ -396,7 +481,18 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 			}
 			case 'play-from': {
 				state.detailTab = 'chapters';
-				const no = Number(target.dataset.no);
+				// 章号走 data-id（视图是 `Btn({ id: c.no })`，Btn 把 id 写成 data-id）。
+				// ⚠️ 曾经这里读的是 `dataset.no` —— 而全项目**没有任何地方写过 data-no**，
+				// 于是 Number(undefined) = NaN 一路传进播放器：synth.cancel → status=playing
+				// → loadChapter(NaN) 取不到正文 → nextChapterAfter(NaN) 也找不到下一章 → finish 回 idle。
+				// 前后两次 emit 把状态**还原成原样**，界面于是"点了毫无反应"——
+				// 整列「▶」和顶部「从第 N 章开始听」全是死的（0.13.0 真实故障）。
+				const no = Number(target.dataset.id);
+				if (!Number.isFinite(no) || no <= 0) {
+					state.error = `拿不到要播的章号（播放钮上应有 data-id，实际是 "${target.dataset.id ?? ''}"）`;
+					notify();
+					break;
+				}
 				try { await player.playFrom(no); }
 				catch (error) { state.error = String(error?.message ?? error); notify(); }
 				break;
@@ -410,9 +506,12 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 			case 'back-from-lore':
 			case 'back-from-settings': state.view = state.selected ? 'detail' : 'projects'; notify(); break;
 			case 'goto-settings': state.view = 'settings'; notify(); break;
-			case 'write': needsModel('一键写章需要模型参与，请在会话中调用 novel_write_chapter'); break;
-			case 'polish': needsModel('一键润色需要模型参与，请在会话中调用 novel_polish'); break;
-			case 'diagnose': needsModel('诊断需要模型参与，请在会话中调用 novel_diagnose'); break;
+			case 'write': needsModel('一键写章要拼上下文包并走落盘门禁，只能在会话里做 —— 让 AI 调 novel_write_chapter，或直接说「写第 N 章」。'); break;
+			case 'polish': await runRevision('polish'); break;
+			case 'proofread': await runRevision('proofread'); break;
+			case 'continuity': await loadContinuity(); break;
+			case 'draft-batch': await runBatch(); break;
+			case 'diagnose': needsModel('结构诊断需要模型判断，请在会话里调 novel_diagnose 或 novel_audit（诊断结果会落到审计里）。'); break;
 			case 'import-demo': case 'import-file': needsModel('请在会话中调用 novel_import 导入'); break;
 			case 'save': await saveChapter(); break;
 			case 'refresh': if (state.selected && state.chapterNo) await loadChapter(state.chapterNo); break;
@@ -477,9 +576,17 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		else if (field === 'lore-keywords') state.loreForm.keywords = e.target.value;
 		else if (field === 'lore-content') state.loreForm.content = e.target.value;
 		else if (field === 'lore-priority') state.loreForm.priority = e.target.value;
+		// 批量起草表单：留成受控值，但只在提交时才校验（边输边报错太吵）
+		else if (field === 'batch-from') state.batchFrom = e.target.value;
+		else if (field === 'batch-count') state.batchCount = e.target.value;
+		else if (field === 'batch-concurrency') state.batchConcurrency = e.target.value;
+		else if (field === 'batch-force') state.batchForce = e.target.checked === true;
 	};
 	const onChangeEvent = (e) => {
-		if (e.target?.dataset?.field === 'lore-always') state.loreForm.alwaysActive = e.target.checked;
+		const field = e.target?.dataset?.field;
+		if (field === 'lore-always') state.loreForm.alwaysActive = e.target.checked;
+		else if (field === 'batch-concurrency') state.batchConcurrency = e.target.value;
+		else if (field === 'batch-force') state.batchForce = e.target.checked === true;
 	};
 
 	let bound = null;
@@ -527,6 +634,24 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 }
 
 /**
+ * 头部副题：面板现在在哪一层、手上是什么。
+ * 这行字是「我在哪」的唯一提示，别省。
+ */
+function panelSubtitle(s) {
+	if (s.view === 'detail') {
+		const title = s.detail?.title || s.selected || '这本书';
+		const n = (s.chapterList ?? []).length;
+		return n > 0 ? `${title} · 已写 ${n} 章` : title;
+	}
+	if (s.view === 'lorebook') return `${s.selected || '默认'} · 世界书`;
+	if (s.view === 'settings') return '能力清单';
+	const total = (s.projects ?? []).length;
+	if (s.loading && total === 0) return '载入中…';
+	const unclaimed = (s.unclaimed ?? []).length;
+	return `${total} 本书` + (unclaimed > 0 ? ` · ${unclaimed} 本待认领` : '');
+}
+
+/**
  * 右侧栏面板组件（slot 框架渲染它）。
  * props.sessionId 由 forge-tab.js 的 inject 工厂注入 —— 会话身份的唯一来源。
  */
@@ -547,9 +672,12 @@ export function ForgePanel(props) {
 	// 会话切换（同一个面板实例被复用到别的会话）
 	useEffect(() => { controller.setSession(sessionId); }, [sessionId]);
 
-	// 挂载：绑事件代理 + 首次拉数据；卸载：停播 + 解绑
+	// 挂载：注入交互态样式表 + 绑事件代理 + 首次拉数据；卸载：停播 + 解绑
 	//（面板被宿主拆掉时朗读必须跟着停 —— 否则 tab 关了还在出声）
 	useEffect(() => {
+		// 只注入、不回收：样式表是**全局单例**（宿主会反复装配，必须查到就收养）。
+		// 放在挂载里而不是 apply()：面板没渲染时不该往宿主页面塞样式。
+		ensureStyles();
 		const node = nodeRef.current;
 		if (node) controller.attach(node);
 		controller.start();
@@ -560,15 +688,35 @@ export function ForgePanel(props) {
 	const view = h('div', {
 		[PANEL_ATTR]: '1',
 		ref: nodeRef,
-		style: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, boxSizing: 'border-box' },
+		style: rootStyle,
 	},
+		// 品牌条：图标块 + 标题（含版本）+ 副题 + 会话范围
 		h('div', { style: headerStyle },
-			h('span', { style: { fontWeight: 700, fontSize: '14px' } }, '🔨 锻炉'),
-			h('span', { style: badgeStyle }, 'v' + (window.__NOVEL_FORGE_VERSION__ || '?')),
-			h('span', { style: { ...hintStyle, fontSize: '11px' } },
-				s.sessionId ? '本会话项目' : '全部项目'),
+			h('div', { style: brandMarkStyle }, '🔨'),
+			h('div', { style: { flex: '1 1 auto', minWidth: 0 } },
+				h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm } },
+					h('span', { style: titleStyle }, '锻炉'),
+					h('span', { style: chip() }, 'v' + (window.__NOVEL_FORGE_VERSION__ || '?')),
+				),
+				h('div', { style: subtitleStyle }, panelSubtitle(s)),
+			),
+			h('span', {
+				style: { ...chip({ tone: s.sessionId ? 'accent' : 'neutral' }), alignSelf: 'flex-start' },
+			}, s.sessionId ? '本会话' : '全部项目'),
+			// 设置入口常驻在头部：详情页/世界书页都够不到列表页那个按钮，
+			// 用户想看一眼「面板到底能做什么」时不该先退回列表
+			h('button', {
+				'data-action': 'goto-settings',
+				// 走按钮皮肤：底/描边/字色交给 css.js，这样它有悬停与按下反馈
+				'data-nf-btn': '1', 'data-variant': 'secondary',
+				title: '设置 · 能力清单',
+				style: {
+					flex: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px',
+					lineHeight: 1, padding: '5px 7px', borderRadius: '8px',
+				},
+			}, '⚙'),
 		),
-		h('div', { style: { flex: '1 1 auto', overflowY: 'auto', padding: '12px 12px 16px', minHeight: 0 } },
+		h('div', { style: bodyStyle },
 			s.view === 'projects' ? h(ProjectListView, { state: s }) : null,
 			s.view === 'detail' ? h(ProjectDetailView, { state: s }) : null,
 			s.view === 'lorebook' ? h(LorebookView, { state: s }) : null,

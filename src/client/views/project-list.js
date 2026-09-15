@@ -1,4 +1,4 @@
-// src/client/views/project-list.js — 项目列表视图（首屏）。
+// src/client/views/project-list.js — 项目列表（首屏）。
 //
 // 纯渲染：只读 state，不改。所有交互靠 `data-action` / `data-field`，
 // 由 panel.js 的原生事件代理统一接住（宿主里 React 合成事件不可靠）。
@@ -6,104 +6,175 @@
 // 「项目跟会话走」：这里的列表已经是**本会话**的书（服务端按 session 过滤过）。
 // 0.5.0 之前建的书没有会话戳，会落在 state.unclaimed 里 —— 底部给一条认领通道，
 // 免得老书从此看不见。
+//
+// 版面（自上而下）：创建 → 反馈 → 书卡列表 → 未归属 → 脚注。
+// 一张书卡要在一屏内回答三件事：**这书到哪一步了**（九阶段轨道）、
+// **攒了多少料**（章/账本/伏笔/角色）、**能对它做什么**（世界书/改名/删除）。
 import { h } from '../react.js';
-import { btnStyle, inputStyle, errStyle, footerStyle, okStyle, hintStyle, itemCardStyle, miniBtnStyle, accentBtnStyle, primaryBtnStyle, dangerBtnStyle } from '../styles.js';
+import { color, space, font, weight, hintStyle, errStyle, okStyle, footerStyle, inputStyle, stackStyle, card, tint } from '../styles.js';
+import { Card, Btn, Chip, Stat, StageRail, Empty, Section, TAP } from '../ui.js';
+
+/** 列表项里的一颗统计。fields 缺失（老书/解析失败）就不显示，不显示 0 之外的空壳。 */
+function statsOf(p) {
+	const fh = p.foreshadows ?? {};
+	const stats = [];
+	if (p.chapters !== null && p.chapters !== undefined) stats.push(Stat({ icon: '📄', value: p.chapters, unit: '章' }));
+	if (p.facts) stats.push(Stat({ icon: '🧾', value: p.facts, unit: '台账' }));
+	if (fh.total) {
+		// 未回收数量是**要动作**的信号：超期用警告色，普通未回收用中性色
+		stats.push(Stat({
+			icon: '🪡', value: `${fh.open}/${fh.total}`, unit: '伏笔',
+			tone: fh.overdue > 0 ? 'warn' : 'neutral',
+		}));
+	}
+	if (p.castCount) stats.push(Stat({ icon: '👥', value: p.castCount, unit: '角色' }));
+	return stats;
+}
 
 export function ProjectListView({ state: s }) {
-	return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-		h('div', { style: { fontWeight: 700, fontSize: '14px' } }, '本项目会话的项目'),
+	const creating = s.creating;
+	return h('div', { style: stackStyle(space.lg) },
 
-		// 创建表单
-		h('div', { style: { display: 'flex', gap: '6px' } },
-			h('input', {
-				'data-field': 'title', value: s.title, placeholder: '书名',
-				style: { ...inputStyle, flex: 1 },
-			}),
-			h('button', {
-				'data-action': 'create', disabled: s.creating, style: btnStyle,
-			}, s.creating ? '创建中…' : '创建'),
-		),
-
-		// 批量操作
-		h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
-			h('button', { 'data-action': 'refresh-projects', style: btnStyle }, '刷新'),
-			h('button', { 'data-action': 'import-file', style: accentBtnStyle }, '导入本地'),
-			h('button', { 'data-action': 'goto-settings', style: { ...btnStyle, marginLeft: 'auto' } }, '⚙ 设置'),
+		// ── 创建 ──
+		Card({ tone: 'inset', pad: space.md },
+			h('div', { style: { display: 'flex', gap: space.sm } },
+				h('input', {
+					'data-field': 'title', value: s.title, placeholder: '新书书名…',
+					style: { ...inputStyle, flex: '1 1 auto' },
+				}),
+				Btn({ variant: 'primary', action: 'create', disabled: creating }, creating ? '创建中…' : '创建'),
+			),
+			h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, marginTop: space.sm } },
+				Btn({ variant: 'ghost', size: 'sm', action: 'refresh-projects' }, '↻ 刷新'),
+				Btn({ variant: 'ghost', size: 'sm', action: 'import-file' }, '⇪ 导入本地'),
+			),
 		),
 
 		s.error ? h('div', { style: errStyle }, s.error) : null,
 		s.notice ? h('div', { style: okStyle }, s.notice) : null,
 
+		// ── 列表 ──
 		s.loading
 			? h('div', { style: hintStyle }, '加载中…')
 			: s.projects.length === 0
-				? h('div', { style: hintStyle }, '本会话还没有项目。输入书名创建一个，或在会话里让 AI 调 novel_project init。')
-				: h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-					s.projects.map((p) => h('div', { key: p.name, style: itemCardStyle },
-						h('button', {
-							'data-action': 'open', 'data-id': p.name,
-							// 打开整卡：button 才能进 Tab 序 / 被读屏读到 / 回车触发
-							style: {
-								display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
-								background: 'transparent', border: 'none', padding: 0,
-								font: 'inherit', color: 'inherit',
-							},
-						},
-							h('div', { style: { fontWeight: 600 } }, p.title || p.name),
-							h('div', { style: { ...hintStyle, fontSize: '12px' } },
-								`${p.stage ? p.stage + ' · ' : ''}${p.chapters ?? 0} 章 · 账本 ${p.facts ?? 0} · 伏笔 ${p.foreshadows?.open ?? 0}/${p.foreshadows?.total ?? 0}${p.styleBuilt ? ' · 有基线' : ''}`),
-						),
-						h('div', { style: { display: 'flex', gap: '6px', marginTop: '6px' } },
-							h('button', {
-								'data-action': 'goto-lorebook', 'data-id': p.name,
-								style: miniBtnStyle,
-							}, '世界书'),
-							h('button', { 'data-action': 'rename-open', 'data-id': p.name, style: miniBtnStyle }, '改名'),
-							h('button', {
-								'data-action': 'list-delete', 'data-id': p.name,
-								style: dangerBtnStyle,
-							}, '删除'),
-						),
-						// 列表内联改名表单（目录名=id 不动，只改标题）
-						s.rename && s.rename.id === p.name
-							? h('div', { style: { display: 'flex', gap: '6px', marginTop: '6px' } },
-								h('input', {
-									'data-field': 'rename-value', value: s.rename.value,
-									placeholder: '新书名', style: { ...inputStyle, flex: 1, fontSize: '12px' },
-								}),
-								h('button', { 'data-action': 'rename-confirm', disabled: s.renaming, style: primaryBtnStyle },
-									s.renaming ? '保存中…' : '确定'),
-								h('button', { 'data-action': 'rename-cancel', style: btnStyle }, '取消'),
-							)
-							: null,
-						// 删除二次确认（误触可取消）
-						s.listDeleteId === p.name
-							? h('div', { style: { display: 'flex', gap: '6px', marginTop: '6px', alignItems: 'center' } },
-								h('span', { style: { fontSize: '12px' } }, '删除这本书？'),
+				? Empty({
+					icon: '🔨',
+					title: '本会话还没有项目',
+					hint: '输入书名创建一个；或在会话里让 AI 调 novel_project init —— 书建好后会自动出现在这里。',
+				})
+				: h('div', { style: stackStyle(space.md) },
+					...s.projects.map((p) => h('div', {
+						key: p.name,
+						style: { ...card(), padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' },
+					},
+						h('div', { style: { display: 'flex', minWidth: 0 } },
+							// 书脊：一条 3px 竖条，扫一眼就知道卡片边界在哪
+							h('div', { style: { flex: 'none', width: '3px', background: color.accent, opacity: 0.75 } }),
+							h('div', { style: { flex: '1 1 auto', minWidth: 0, padding: `${space.lg}px` } },
+								// 标题行：整块可点（button 才能进 Tab 序 / 被读屏读到 / 回车触发）
+								// `...TAP` 给它悬停/按下反馈 —— 交互态只能来自 css.js
 								h('button', {
-									'data-action': 'list-delete', 'data-id': p.name,
-									disabled: s.listDeleteId === 'busy', style: dangerBtnStyle,
-								}, s.listDeleteId === 'busy' ? '删除中…' : '确认删除'),
-								h('button', { 'data-action': 'list-delete-cancel', style: btnStyle }, '取消'),
-							)
-							: null,
+									...TAP,
+									'data-action': 'open', 'data-id': p.name,
+									style: {
+										display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
+										padding: `${space.xs}px ${space.sm}px`, margin: `-${space.xs}px -${space.sm}px`,
+										borderRadius: '8px',
+										border: 'none', font: 'inherit', color: 'inherit',
+									},
+								},
+									h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm } },
+										h('span', {
+											style: {
+												fontWeight: weight.semibold, fontSize: font.lead,
+												overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+											},
+										}, p.title || p.name),
+										p.style?.built ? Chip({ tone: 'ok' }, '有基线') : null,
+									),
+								),
+								h('div', { style: { display: 'flex', gap: space.xs, marginTop: space.xs } },
+									p.genre ? Chip({}, p.genre) : null,
+									p.maxChapter ? Chip({}, `写到第 ${p.maxChapter} 章`) : null,
+								),
+
+								h('div', { style: { marginTop: space.md } }, StageRail({ stage: p.stage })),
+
+								statsOf(p).length > 0
+									? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: `${space.xs}px ${space.lg}px`, marginTop: space.md } }, ...statsOf(p))
+									: null,
+
+								h('div', { style: { display: 'flex', alignItems: 'center', gap: space.xs, marginTop: space.md } },
+									Btn({ variant: 'ghost', size: 'sm', action: 'goto-lorebook', id: p.name }, '📖 世界书'),
+									Btn({ variant: 'ghost', size: 'sm', action: 'rename-open', id: p.name }, '✎ 改名'),
+									h('span', { style: { flex: '1 1 auto' } }),
+									Btn({ variant: 'danger', size: 'sm', action: 'list-delete', id: p.name }, '删除'),
+								),
+
+								// 列表内联改名（目录名=id 不动，只改标题）
+								s.rename && s.rename.id === p.name
+									? h('div', { style: { display: 'flex', gap: space.sm, marginTop: space.sm } },
+										h('input', {
+											'data-field': 'rename-value', value: s.rename.value,
+											placeholder: '新书名', style: { ...inputStyle, flex: '1 1 auto' },
+										}),
+										Btn({ variant: 'primary', action: 'rename-confirm', disabled: s.renaming },
+											s.renaming ? '保存中…' : '确定'),
+										Btn({ action: 'rename-cancel' }, '取消'),
+									)
+									: null,
+
+								// 删除二次确认（误触可取消）
+								s.listDeleteId === p.name
+									? h('div', {
+										style: {
+											display: 'flex', alignItems: 'center', gap: space.sm,
+											marginTop: space.sm, padding: `${space.sm}px ${space.md}px`,
+											borderRadius: '8px', background: tint(color.danger, 10),
+										},
+									},
+										h('span', { style: { fontSize: font.small, color: color.danger } }, '删除这本书？'),
+										h('span', { style: { flex: '1 1 auto' } }),
+										Btn({
+											variant: 'danger', action: 'list-delete', id: p.name,
+											disabled: s.listDeleteId === 'busy',
+										}, s.listDeleteId === 'busy' ? '删除中…' : '确认删除'),
+										Btn({ action: 'list-delete-cancel' }, '取消'),
+									)
+									: null,
+							),
+						),
 					)),
 				),
 
-		// 未归属的旧书（0.5.0 之前的书没有会话戳）
+		// ── 未归属的旧书（0.5.0 之前的书没有会话戳）──
 		s.unclaimed && s.unclaimed.length > 0
-			? h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', borderTop: '1px solid var(--dsw-alias-border-l3, #333)', paddingTop: '8px' } },
-				h('div', { style: { fontWeight: 600, fontSize: '12.5px' } }, `未归属的书（${s.unclaimed.length}）`),
-				h('div', { style: { ...hintStyle, fontSize: '11.5px' } }, '这些书建在会话归属功能之前，认领后会出现在本会话。'),
-				...s.unclaimed.map((p) => h('div', { key: p.name, style: { display: 'flex', gap: '6px', alignItems: 'center' } },
-					h('span', { style: { flex: 1, fontSize: '12px' } }, p.title || p.name),
-					h('button', {
-						'data-action': 'claim', 'data-id': p.name, disabled: s.busy, style: miniBtnStyle,
-					}, '认领'),
-				)),
+			? Card({ tone: 'inset', pad: space.md },
+				Section({
+					icon: '📦', title: `未归属的书（${s.unclaimed.length}）`,
+					right: Btn({ size: 'sm', action: 'claim' }, '全部认领'),
+				},
+					h('div', { style: { ...hintStyle, fontSize: font.caption } },
+						'这些书建在会话归属功能之前。认领后归本会话，之后才会出现在上面的列表里。'),
+					h('div', { style: stackStyle(space.xs) },
+						...s.unclaimed.map((p) => h('div', {
+							key: p.name,
+							style: { display: 'flex', alignItems: 'center', gap: space.sm },
+						},
+							h('span', {
+								style: {
+									flex: '1 1 auto', minWidth: 0, fontSize: font.small,
+									overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+								},
+							}, p.title || p.name),
+							Btn({ variant: 'ghost', size: 'sm', action: 'claim', id: p.name, disabled: s.busy }, '认领'),
+						)),
+					),
+				),
 			)
 			: null,
 
-		h('p', { style: footerStyle }, '在会话中调用 novel_* 工具驱动；列表只显示本会话创建或参与过的项目。'),
+		h('p', { style: footerStyle },
+			'列表只显示本会话创建或参与过的项目；写作、门禁、审计都在会话里由 novel_* 工具驱动。'),
 	);
 }
