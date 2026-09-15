@@ -873,3 +873,123 @@ test('★ 阅读器：📖 取正文展开；✕ 收起；章号只认 data-id�
     assert.match(controller.state.error, /章号/, '★ 拿不到章号必须给可读报错');
     assert.equal(controller.state.reader, null, '失败时不留半开的阅读器');
 });
+
+// ── 陈旧响应守卫（请求序号）：快速切换时慢响应不得覆盖新状态 ──
+
+/**
+ * 可控时序的 fetch：命中 auto 规则的请求立即回；其余挂起，测试用 respond() 手动放行。
+ * 断言「陈旧响应被丢弃」必须能控制谁先回——scriptedFetch 的立即兑现做不到这一点。
+ * 注意：假 fetch 必须真的会 resolve/reject，否则 apiFetch 的 12s 超时定时器
+ * 清不掉，node --test 会等事件池等到天荒地老（这里的挂死就是这么来的）。
+ */
+function gatedFetch(auto = []) {
+    const requests = [];
+    const pending = [];
+    const fetch = (url, init) => {
+        const u = String(url);
+        requests.push({ url: u, init });
+        const rule = auto.find((r) => (typeof r.match === 'string' ? u.includes(r.match) : r.match.test(u)));
+        if (rule) return Promise.resolve({ json: () => Promise.resolve({ ok: true, value: rule.value }) });
+        let resolve, reject;
+        const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+        const entry = { url: u, done: false,
+            resolve: (v) => { if (!entry.done) { entry.done = true; resolve({ json: () => Promise.resolve({ ok: true, value: v }) }); } },
+            reject: (e) => { if (!entry.done) { entry.done = true; reject(e); } } };
+        pending.push(entry);
+        return promise;
+    };
+    // 精确匹配优先，子串兜底——用完整 URL 调用就不会错杀相邻端点
+    const respond = (match, value) => {
+        let entry = pending.find((p) => !p.done && p.url === match);
+        if (!entry) entry = pending.find((p) => !p.done && p.url.includes(match));
+        assert.ok(entry, `gatedFetch.respond: 没有匹配 ${match} 的挂起请求（在等：${pending.filter((p) => !p.done).map((p) => p.url).join(' , ') || '（无）'}）`);
+        entry.resolve(value);
+    };
+    // 多轮排水：respond 之后「promise → apiFetch 续体 → Promise.all → openProject 续体 →
+    // 尾部三连 fetch 发出」要跨好几轮微任务+宏任务；只等一针 setImmediate 会时好时坏。
+    const settle = async () => {
+        for (let i = 0; i < 6; i += 1) await new Promise((r) => setImmediate(r));
+    };
+    return { fetch, requests, pending, respond, settle };
+}
+
+test('★ 陈旧响应守卫：快速连开两本书，慢到的旧书响应不得覆盖新状态', async () => {
+    const dfr = gatedFetch();
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch: dfr.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+
+    // 连开两本：甲先点、乙后点；乙的响应先回，甲的慢响应最后才落地
+    const p1 = controller.handleAction('open', { dataset: { id: '甲' } });
+    const p2 = controller.handleAction('open', { dataset: { id: '乙' } });
+
+    // 乙全链路放行。⚠️ URL 段是 percent-encoded（视图 encodeURIComponent，0.6.3 的老教训），
+    // match 必须用编码后的书名；openProject 的 detail/章请求不带 session（withSession 只在列表页用）。
+    const yi = encodeURIComponent('乙');
+    dfr.respond(`/api/novel-forge/projects/${yi}/chapters/1`, '乙的第一章');
+    dfr.respond(`/api/novel-forge/projects/${yi}`, { title: '乙书' });
+    await dfr.settle(); // 第一波响应落地后，openProject 才会发目录/要素/提案三连
+    dfr.respond(`/api/novel-forge/projects/${yi}/chapters`, []);
+    dfr.respond(`/api/novel-forge/projects/${yi}/elements`, {});
+    dfr.respond(`/api/novel-forge/projects/${yi}/proposals`, { proposals: [] });
+    await p2;
+    assert.equal(controller.state.selected, '乙');
+    assert.equal(controller.state.detail?.title, '乙书');
+    assert.equal(controller.state.draft, '乙的第一章');
+
+    // 甲的响应现在才到——必须整体被丢弃（detail 与 draft 都不许串台）
+    const jia = encodeURIComponent('甲');
+    dfr.respond(`/api/novel-forge/projects/${jia}/chapters/1`, '甲的第一章');
+    dfr.respond(`/api/novel-forge/projects/${jia}`, { title: '甲书' });
+    await p1;
+
+    assert.equal(controller.state.selected, '乙', 'selected 不被慢响应拉回');
+    assert.equal(controller.state.detail?.title, '乙书', '★ 甲的 detail 不得覆盖乙的');
+    assert.equal(controller.state.draft, '乙的第一章', '★ 甲的章正文不得覆盖乙的——否则接着点保存就会写错书');
+    assert.equal(controller.state.error, '', '丢弃是静默的：不该给用户报错');
+});
+
+test('★ 陈旧响应守卫：快速连点两章，后点的章必须赢（draft 与 chapterNo 永远同章）', async () => {
+    // detail / 目录 / 要素 / 提案走 auto 立即回；只有章正文挂起，手动控序。
+    // 用锚定结尾的正则：/chapters$ 只命中目录、不误伤 /chapters/N 的正文请求。
+    const shu = encodeURIComponent('书');
+    const dfr = gatedFetch([
+        { match: new RegExp(`/projects/${shu}$`), value: { title: '书' } },
+        { match: /\/chapters$/, value: [] },
+        { match: /\/elements$/, value: {} },
+        { match: /\/proposals$/, value: { proposals: [] } },
+    ]);
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch: dfr.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+
+    const p = controller.handleAction('open', { dataset: { id: '书' } });
+    dfr.respond(`/api/novel-forge/projects/${shu}/chapters/1`, '第一章正文');
+    await p;
+    assert.equal(controller.state.draft, '第一章正文');
+
+    // 章号输入框连切两章：先点第 3 章、再点第 2 章；第 3 章响应先回、第 2 章后回。
+    // 走真事件代理（input 事件 + data-field），不是直呼内部函数——契约是视图派发的那条路。
+    const root = new dom.El('div');
+    controller.attach(root);
+    const input = new dom.El('input');
+    input.dataset.field = 'chapterNo';
+    root.append(input);
+
+    input.value = '3';
+    input.dispatch('input');
+    input.value = '2';
+    input.dispatch('input');
+    await dfr.settle();
+
+    dfr.respond(`/api/novel-forge/projects/${shu}/chapters/3`, '第三章正文'); // 慢到的旧请求
+    await dfr.settle();
+    assert.equal(controller.state.draft, '第一章正文', '第 3 章响应到达时 chapterNo 已是 2：不得覆盖');
+    assert.equal(controller.state.chapterNo, 2);
+
+    dfr.respond(`/api/novel-forge/projects/${shu}/chapters/2`, '第二章正文'); // 后点的章后回
+    await dfr.settle();
+    assert.equal(controller.state.draft, '第二章正文', '★ 后点的章必须赢——draft 与 chapterNo 同章，保存才不会写错章');
+    assert.equal(controller.state.chapterNo, 2);
+    assert.equal(controller.state.error, '');
+});
