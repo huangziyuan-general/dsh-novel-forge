@@ -161,7 +161,6 @@ export function createDom() {
  *   挂了 createRoot，把假前提固化成绿灯，真机「点一次没反应、再点一次空白」。
  */
 function hostModuleTable() {
-    const noopElement = () => null;
     const hooks = {
         useState: (init) => [typeof init === 'function' ? init() : init, () => {}],
         useRef: (init) => ({ current: init }),
@@ -169,15 +168,24 @@ function hostModuleTable() {
         useCallback: (fn) => fn,
         useMemo: (fn) => fn(),
     };
+    // createElement 镜像**真 React** 的元素形状（plain object + $$typeof +
+    // children 挂在 props 里）——渲染级测试（列表筛选、表单契约）要拿到真树。
+    // 之前这里恒返回 null，视图层在测试里是盲区；这不是"更宽松"，是"更像真机"。
+    const createElement = (type, config, ...kids) => {
+        if (type === undefined || type === null) return null;
+        const { key = null, ref = null, ...props } = config ?? {};
+        if (kids.length > 0) props.children = kids.length === 1 ? kids[0] : kids;
+        return { $$typeof: Symbol.for('react.element'), type, key, ref, props, _owner: null };
+    };
     return {
         'react': {
-            createElement: noopElement,
+            createElement,
             Fragment: Symbol('Fragment'),
             Component: class { constructor(p) { this.props = p; } },
             ...hooks,
             // ⚠️ 故意不提供 createRoot —— react 核心包真没有
         },
-        'react/jsx-runtime': { jsx: noopElement, jsxs: noopElement },
+        'react/jsx-runtime': { jsx: createElement, jsxs: createElement },
         'react-dom': {},
         'react-dom/client': {},
         'cordis': {},

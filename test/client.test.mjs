@@ -804,6 +804,10 @@ test('★ 交互态样式表：可点区域 / 分段控件 / 聚焦态都有规�
         '[data-nf-tap]:hover', '[data-nf-tap]:active',
         '[data-nf-seg]:hover:not([data-active="1"])', '[data-nf-seg][data-active="1"]',
         'input:focus', 'summary:hover',
+        // 焦点环必须覆盖**所有**裸 <button>（分段 tab / 书卡标题 / 头部 ⚙ 都不是 data-nf-btn）
+        'button:focus-visible',
+        // 移动端与系统动效偏好
+        'touch-action:manipulation', 'prefers-reduced-motion',
         // 卡片/行的底色是内联的（card() 给的）—— 内联优先级更高，
         // hover/active 不写 `!important` 就永远压不过去，等于白写
         '!important',
@@ -1030,4 +1034,109 @@ test('★ 列表克隆：确认后 POST /projects/:id/clone 带新书目录名�
     assert.equal(body.newBook, '星海拾骨-模板', 'body 带新书目录名');
     assert.ok(body.session, 'body 带会话戳（新书归属本会话）');
     assert.equal(controller.state.clone, null, '克隆后表单关闭');
+});
+
+// ── 0.13.2 UI 审查修复：删除确认 / 异步反馈可见性 / 列表筛选 / 非受控输入 ──
+
+/** 深度收集元素树里命中谓词的节点（children 挂 props.children，数组/单节点都打散）。 */
+function collect(el, pred, out = []) {
+    if (!el || typeof el !== 'object') return out;
+    if (pred(el)) out.push(el);
+    const kids = el.props?.children;
+    if (Array.isArray(kids)) for (const k of kids) collect(k, pred, out);
+    else if (kids !== undefined && kids !== null) collect(kids, pred, out);
+    return out;
+}
+
+test('★ Feedback：错误是 alert、通知是 status——异步反馈读屏必须能听到', () => {
+    const { mod } = boot();
+    const { Feedback } = mod.exports.__internals;
+    assert.equal(Feedback({ tone: 'err' }, '炸了').props.role, 'alert');
+    assert.equal(Feedback({ tone: 'ok' }, '好了').props.role, 'status');
+    assert.equal(Feedback({}, '默认').props.role, 'status', '缺省 polite');
+});
+
+test('★ projectMatches：书名/目录名/显示题材子串匹配，空白查询全过', () => {
+    const { projectMatches } = boot().mod.exports.__internals;
+    const p = { name: 'xinghai', title: '星海拾骨', genre: 'xuanhuan' };
+    assert.equal(projectMatches(p, ''), true);
+    assert.equal(projectMatches(p, '   '), true, '纯空白等同未筛');
+    assert.equal(projectMatches(p, '星海'), true);
+    assert.equal(projectMatches(p, 'XINGHAI'), true, '目录名大小写不敏感');
+    assert.equal(projectMatches(p, '玄幻'), true, '按显示层映射后的中文题材匹配');
+    assert.equal(projectMatches(p, '科幻'), false);
+});
+
+test('★ 列表视图：书名输入非受控（defaultValue+key）；书 >8 本才出筛选框且能筛中', () => {
+    const { ProjectListView } = boot().mod.exports.__internals;
+    const books = (n) => Array.from({ length: n }, (_, i) => ({
+        name: `b${i}`, title: `书${i}`, genre: 'xuanhuan', stage: 'topic', chapters: i,
+    }));
+    const base = (over) => ({ creating: false, title: '', titleReset: 0, error: '', notice: '',
+        loading: false, unclaimed: [], filter: '', projects: [], ...over });
+
+    // 3 本：不出筛选框；书名输入必须非受控（每键全列表重渲染是白烧）
+    const few = ProjectListView({ state: base({ projects: books(3) }) });
+    assert.equal(collect(few, (e) => e.props?.['data-field'] === 'project-filter').length, 0, '书少不渲染筛选框');
+    const titleInput = collect(few, (e) => e.props?.['data-field'] === 'title')[0];
+    assert.ok(titleInput, '书名输入框在');
+    assert.equal(titleInput.props.value, undefined, '★ 非受控：不挂 value');
+    assert.ok(titleInput.props.defaultValue !== undefined, '非受控：有 defaultValue');
+    assert.ok(String(titleInput.key ?? '').startsWith('title-'), 'key 带 titleReset：创建成功 bump 即清空（真 React 把 key 摘出 props，挂在元素上）');
+    assert.equal(titleInput.props['aria-label'], '新书书名', '输入框要可读屏');
+
+    // 10 本 + 筛选「书3」：出筛选框，只渲染命中的 1 张书卡
+    const many = ProjectListView({ state: base({ projects: books(10), filter: '书3' }) });
+    assert.equal(collect(many, (e) => e.props?.['data-field'] === 'project-filter').length, 1, '书多出筛选框');
+    assert.equal(collect(many, (e) => e.props?.['data-action'] === 'open').length, 1, '筛选后只渲染命中的书卡');
+
+    // 筛不中：给空态文案，不留空白
+    const none = ProjectListView({ state: base({ projects: books(10), filter: '不存在的书' }) });
+    assert.equal(collect(none, (e) => e.props?.['data-action'] === 'open').length, 0);
+    assert.ok(JSON.stringify(none).includes('没有匹配的书'), '筛不中要给空态');
+});
+
+test('★ 列表筛选输入走事件代理进 state.filter', () => {
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch: gatedFetch().fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+    const root = new dom.El('div');
+    controller.attach(root);
+    const input = new dom.El('input');
+    input.dataset.field = 'project-filter';
+    root.append(input);
+    input.value = '星';
+    input.dispatch('input');
+    assert.equal(controller.state.filter, '星');
+});
+
+test('★ 世界书删除必须两步确认：第一击只点亮确认行，确认击才发 DELETE', async () => {
+    const dfr = gatedFetch([
+        { match: /\/worldbook\/[^/]+$/, value: [
+            { id: 3, name: '乱葬岗', keywords: ['乱葬岗'], content: 'x', priority: 50, enabled: true, always_active: false, book_id: '书' },
+            { id: 9, name: '红泥', keywords: [], content: '', priority: 10, enabled: false, always_active: true, book_id: '书' },
+        ] },
+        { match: /\/worldbook\/[^/]+\/\d+$/, value: { deleted: true } },
+    ]);
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch: dfr.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+    await controller.handleAction('goto-lorebook', { dataset: { id: '书' } });
+    assert.equal(controller.state.view, 'lorebook');
+    assert.equal(controller.state.loreEntries.length, 2);
+
+    const dels = () => dfr.requests.filter((r) => (r.init?.method ?? '') === 'DELETE');
+    await controller.handleAction('lore-delete', { dataset: { id: '3' } });
+    assert.equal(dels().length, 0, '★ 第一击不许发 DELETE');
+    assert.equal(controller.state.loreDeleteId, '3', '确认态点亮');
+
+    await controller.handleAction('lore-delete-cancel', { dataset: {} });
+    assert.equal(controller.state.loreDeleteId, null, '取消清掉确认态');
+    await controller.handleAction('lore-delete', { dataset: { id: '3' } });
+    assert.equal(dels().length, 0, '取消后再点又是第一击');
+
+    await controller.handleAction('lore-delete', { dataset: { id: '3' } });
+    assert.equal(dels().length, 1, '确认击才发 DELETE');
+    assert.ok(dels()[0].url.includes('/worldbook/'), '目标是世界书端点');
+    assert.equal(controller.state.loreDeleteId, null, '删除后清掉确认态');
 });

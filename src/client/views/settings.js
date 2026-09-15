@@ -31,7 +31,9 @@ export function SettingsView() {
 		Card({ tone: 'plain' },
 			Section({ icon: '🧩', title: '已装配' },
 				h('div', { style: stackStyle(space.sm) },
-					KV({ k: 'tools' }, '20 个 novel_* 工具已注册'),
+					// ⚠️ 不写死工具数：注册数随版本变（0.13.x 已从 17 涨到 20+），
+					// 数字一落字就是下一版必过期的漂移炸弹（common.js 注释同款教训）。
+					KV({ k: 'tools' }, '全部 novel_* 工具已注册'),
 					KV({ k: '通道' }, '宿主工具面 + MCP 双通道'),
 					KV({ k: '硬约束' }, '账本 / 门禁 / 机审 / 提案制 —— 判定权在代码，不在模型'),
 					KV({ k: '旁路引擎' }, '润色 / 校对 / 打标 / 起草 四通道（不占主对话、不写会话记录）'),
