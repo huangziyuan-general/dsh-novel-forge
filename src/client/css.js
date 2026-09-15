@@ -128,7 +128,11 @@ export function buildCss() {
 		}),
 
 		// ── 标题字重与行距（右侧栏窄，标题太轻会糊）──
-		rule(`${ROOT} button`, { font: 'inherit' }),
+		// ⚠️ 裸 <button> 的 UA 默认灰底（ButtonFace）会透出来 —— 书卡标题按钮走 TAP
+		// 不走 Btn，0.13.1 里书名底下那条"灰色横条"就是它（用户看作"与下方重叠"）。
+		// 这里统一抹掉 UA 外观；真按钮（[data-nf-btn] / [data-nf-seg]）的规则
+		// 权重更高，不受影响。
+		rule(`${ROOT} button`, { font: 'inherit', background: 'transparent', border: 'none' }),
 
 		// ── 深色专属微调 ──
 		// 用 `:where()` 把选择器权重降到 0，**否则会压过上面的 `:active` 内阴影**

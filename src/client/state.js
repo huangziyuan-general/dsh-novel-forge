@@ -44,6 +44,9 @@ export function initialState() {
 		detailTab: 'info',
 		chapterList: [], chapterListLoading: false,
 		playback: { status: 'idle', currentNo: null },
+		// 阅读器（0.13.1）：点目录行的 📖 展开正文。{ no, title, text, loading } | null
+		// 与播放互相独立——可以一边听一边看。
+		reader: null,
 		// 提案队列（0.7.0）：模型提的修订稿，pending 时等用户点「应用」才生成新版本。
 		// 工具面没有 apply（见 lib/proposals.js）——「批准钥匙」在面板这一侧。
 		proposals: [], proposalsLoading: false,

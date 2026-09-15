@@ -850,3 +850,26 @@ test('★ 样式表注入是 DOM 单例：反复装配只留一份，内容过�
     assert.equal(ensureStyles(null), null);
     assert.equal(ensureStyles({}), null);
 });
+
+test('★ 阅读器：📖 取正文展开；✕ 收起；章号只认 data-id（同播放钮的教训）', async () => {
+    const { requests, controller } = bootBook();
+    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+
+    // 点第 2 章的 📖 → 取正文、落 reader（标题取自目录）
+    await controller.handleAction('read-chapter', { dataset: { id: '2' } });
+    assert.ok(requests.some((r) => /\/chapters\/2($|\?)/.test(r.url)), '★ 阅读必须真的去取该章正文');
+    assert.equal(controller.state.reader?.no, 2);
+    assert.equal(controller.state.reader?.loading, false, '取完后退出加载态');
+    assert.ok(controller.state.reader?.text.includes('龙渊的清晨'), '正文落进 reader');
+    assert.equal(controller.state.reader?.title, '夜训', '标题取自章节目录');
+
+    // ✕ 收起
+    await controller.handleAction('close-reader', { dataset: {} });
+    assert.equal(controller.state.reader, null, '✕ 必须清掉阅读器');
+
+    // 反向锁定：章号缺失必须报错（不许静默）——与播放钮同一契约
+    controller.state.error = '';
+    await controller.handleAction('read-chapter', { dataset: {} });
+    assert.match(controller.state.error, /章号/, '★ 拿不到章号必须给可读报错');
+    assert.equal(controller.state.reader, null, '失败时不留半开的阅读器');
+});

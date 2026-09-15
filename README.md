@@ -375,7 +375,7 @@ npm run setup-dev   # 把 DSH checkout 的宿主 SDK 真包 symlink 进本地 no
 npm run build       # src/client/ → lib/client.js（改客户端源码后必须跑；npm test 会自动跑）
 npm run audit       # 静态自检：① 调用了但没导入/声明 / 导入了但没用 ② 孤儿 dataset.X 读取（也在 npm test 前置里跑）
 npm run preview     # 生成可交互 UI 预览 preview/forge-ui.html（内联真产物 + 宿主真 token，离线可开）
-npm test            # node --test：192 个用例（纯逻辑单测 + 假 fs 全链路冒烟 + 真校验器输出契约 + headless 行为测试）
+npm test            # node --test：194 个用例（纯逻辑单测 + 假 fs 全链路冒烟 + 真校验器输出契约 + headless 行为测试）
 node scripts/demo.mjs   # 端到端演示：init→细纲→写章→账本→扫描→提案 全流程
 ```
 
@@ -405,6 +405,7 @@ node scripts/demo.mjs   # 端到端演示：init→细纲→写章→账本→�
   本地看效果用 `npm run preview`（跑真产物 + 真 token，不漂移），**一键写章仍留在会话里**（工具面不缩）。
   项目详情含两个标签：**📋 基本信息**（读章 · 保存 · 导出 · 诊断）与
   **🎧 章节听书**（目录 + 语音连播：从任意章开始听、暂停/继续/停止、读完自动接下一章；
+  每行 **📖 阅读 / ▶ 朗读**——阅读卡展开正文可滚动、可顺手切朗读，看与听互相独立；
   Web Speech 合成，正文切块防 Chrome 长文本停摆）。写操作走 `/api/novel-forge` REST。
   **「一键写章 / 润色 / 诊断」需要模型参与**，面板只给引导 —— 真动作在会话里由 `novel_*` 工具完成。
   第五批起，润色/校对/批量起草也有了 REST 入口（`/polish`、`/proofread`、`/draft-batch`），
