@@ -75,6 +75,14 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		return `${path}${sep}session=${encodeURIComponent(state.sessionId)}`;
 	};
 
+	// ── 陈旧响应守卫（请求序号）──
+	// openProject / loadChapter 都是「await 完成后写 state」：快速连续切换时，
+	// 慢响应后到会把新状态覆盖成旧内容（编辑器显示别章正文；此时点保存，
+	// saveChapter 会把 A 章内容 POST 到现行 chapterNo —— 写错章）。每次发起
+	// 切换自增序号，响应落地前比对，过期即弃。
+	let openSeq = 0;     // 项目级：openProject / 目录、要素、提案加载
+	let chapterSeq = 0;  // 章级：章正文（baseline/draft）写入
+
 	// ── 章节听书（0.6.0）──
 	// 播放器先建好；onChange 把播放状态写进 state 再触发重渲染。
 	// synth 可能为 null（无语音引擎的环境）：playFrom 会抛可读错误，面板转成提示。
@@ -95,22 +103,28 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 	const loadElements = async (id) => {
 		const bookId = id || state.selected;
 		if (!bookId) return;
+		const seq = openSeq;
 		state.elementsLoading = true; notify();
 		try {
-			state.elements = await apiFetch(`/projects/${encodeURIComponent(bookId)}/elements`);
-		} catch { state.elements = null; }
-		finally { state.elementsLoading = false; notify(); }
+			const elements = await apiFetch(`/projects/${encodeURIComponent(bookId)}/elements`);
+			if (seq !== openSeq) return; // 期间已切书：丢弃陈旧要素
+			state.elements = elements;
+		} catch { if (seq === openSeq) state.elements = null; }
+		finally { if (seq === openSeq) { state.elementsLoading = false; notify(); } }
 	};
 
 	/** 拉章节目录（听书列表 + 连播边界）。 */
 	const loadChapterList = async (id) => {
 		const bookId = id || state.selected;
 		if (!bookId) return;
+		const seq = openSeq;
 		state.chapterListLoading = true; notify();
 		try {
-			state.chapterList = await apiFetch(`/projects/${encodeURIComponent(bookId)}/chapters`);
-		} catch { state.chapterList = []; }
-		finally { state.chapterListLoading = false; notify(); }
+			const list = await apiFetch(`/projects/${encodeURIComponent(bookId)}/chapters`);
+			if (seq !== openSeq) return; // 期间已切书：丢弃陈旧目录
+			state.chapterList = list;
+		} catch { if (seq === openSeq) state.chapterList = []; }
+		finally { if (seq === openSeq) { state.chapterListLoading = false; notify(); } }
 	};
 
 	// ── 业务动作 ──
@@ -180,6 +194,9 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 	};
 
 	const openProject = async (id) => {
+		const seq = ++openSeq;
+		// 换书必然换章内容：使所有在途 loadChapter 的响应作废（它们的 seq 已过期）
+		const cseq = ++chapterSeq;
 		state.selected = id; state.view = 'detail'; state.detail = null; state.chapterNo = 1;
 		state.draft = ''; state.error = ''; state.detailTab = 'info';
 		state.elements = null; state.discardPending = null; state.rename = null; state.listDeleteId = null;
@@ -196,21 +213,31 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 				apiFetch(`/projects/${encodeURIComponent(id)}`),
 				apiFetch(`/projects/${encodeURIComponent(id)}/chapters/1`).catch(() => ''),
 			]);
-			state.detail = detail; state.baseline = text ?? ''; state.draft = text ?? '';
-			state.draftVersion++; state.draftModified = false; state.undoStack = [];
-		} catch (error) { state.error = String(error?.message ?? error); }
+			if (seq !== openSeq) return; // 期间已打开别的书：整体作废
+			state.detail = detail;
+			// 章正文只在「期间没有更晚的 loadChapter 抢先」时才写——否则会把第 1 章
+			// 内容盖到用户刚点的章上（章号与正文错位）
+			if (cseq === chapterSeq) {
+				state.baseline = text ?? ''; state.draft = text ?? '';
+				state.draftVersion++; state.draftModified = false; state.undoStack = [];
+			}
+		} catch (error) { if (seq === openSeq) state.error = String(error?.message ?? error); }
+		if (seq !== openSeq) return; // 失败路径同样不再追拉旧书的目录/要素/提案
 		notify();
 		await Promise.all([loadChapterList(id), loadElements(id), loadProposals(id)]);
 	};
 
 	const loadChapter = async (no) => {
 		if (!state.selected) return;
+		const seq = ++chapterSeq;
 		state.chapterNo = no; state.discardPending = null; notify();
 		try {
 			const text = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/chapters/${no}`);
+			if (seq !== chapterSeq) return; // 期间已切章/切书：丢弃陈旧正文
 			state.baseline = text ?? ''; state.draft = text ?? ''; state.draftVersion++;
 			state.draftModified = false; state.undoStack = [];
 		} catch {
+			if (seq !== chapterSeq) return; // 陈旧失败的报错也不许覆盖新章
 			// 读不到正文不能静默——给一句人话，别让用户以为这一章是空的
 			state.baseline = ''; state.draft = ''; state.draftVersion++;
 			state.error = `读取第 ${no} 章失败（刷新或检查服务）`;
@@ -228,12 +255,14 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 	const loadProposals = async (id) => {
 		const bookId = id || state.selected;
 		if (!bookId) return;
+		const seq = openSeq;
 		state.proposalsLoading = true; notify();
 		try {
 			const value = await apiFetch(`/projects/${encodeURIComponent(bookId)}/proposals`);
+			if (seq !== openSeq) return; // 期间已切书：丢弃陈旧提案队列
 			state.proposals = Array.isArray(value?.proposals) ? value.proposals : [];
-		} catch { state.proposals = []; }
-		finally { state.proposalsLoading = false; notify(); }
+		} catch { if (seq === openSeq) state.proposals = []; }
+		finally { if (seq === openSeq) { state.proposalsLoading = false; notify(); } }
 	};
 
 	/** 应用提案：生成新版本（旧版保留），审计 actor 记 'user'。 */
@@ -348,6 +377,8 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 			await apiFetch('/projects', {
 				method: 'POST',
 				// 创建即打会话戳：面板按会话过滤时它才会出现在本会话里
+				// 题材：面板没有题材输入框，留空就不传（服务端默认「未分类」），
+				// 别再学早期把 'fantasy' 写死在默认值里（书卡上全是英文 chip 的来历）。
 				body: JSON.stringify({ title: state.title.trim(), genre: state.genre, session: state.sessionId ?? undefined }),
 			});
 			state.title = ''; await refreshProjects();
