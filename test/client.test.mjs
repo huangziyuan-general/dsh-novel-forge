@@ -511,7 +511,12 @@ test('★ 连播：从指定章开始，读完自动接下一章，目录尽头�
     await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
 
     // 指定从第 2 章开始听
-    await controller.handleAction('play-from', { dataset: { no: '2' } });
+    // ⚠️ 这里必须用 `id`：视图是 `Btn({ action:'play-from', id: c.no })`，
+    // 而 Btn 把 id 写成 **data-id**（全项目没有任何地方写 data-no）。
+    // 早先这行手写成 `{ no: '2' }` —— 测试**照着实现编了个 dataset**，
+    // 于是实现读错属性名也照样全绿，而真机上整列「▶」都是死的。
+    // 教训同 AGENTS.md「替身必须镜像宿主真机，不是镜像自己的实现」：这里的"真机"是**视图渲染出来的属性**。
+    await controller.handleAction('play-from', { dataset: { id: '2' } });
     assert.equal(controller.state.playback.currentNo, 2, '★ 「从哪章听」由用户指定');
     assert.equal(controller.state.playback.status, 'playing');
     assert.equal(synth.spoken.length, 1, '第 2 章正文已入朗读队列');
@@ -531,10 +536,48 @@ test('★ 连播：从指定章开始，读完自动接下一章，目录尽头�
     assert.equal(controller.state.playback.currentNo, null);
 });
 
+test('★ 播放钮的章号只认 data-id（视图怎么渲染，控制器就怎么读）', async () => {
+    const { synth, controller } = bootBook();
+    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+
+    // 视图真渲染出来的属性是 data-id（Btn 把 id 写成 data-id）
+    await controller.handleAction('play-from', { dataset: { id: '3' } });
+    assert.equal(controller.state.playback.currentNo, 3, '★ 章号必须来自 data-id —— 它才是视图真正写出来的属性');
+    assert.ok(synth.spoken.length >= 1, '指定章号后应当真的开始朗读');
+
+    // 反向锁定：data-no 是全项目的"幽灵属性"，谁都不写它。
+    // 读它 → Number(undefined) = NaN → 播放器转一圈回 idle → 界面毫无反应。
+    controller.state.playback = { status: 'idle', currentNo: null };
+    controller.state.error = '';
+    await controller.handleAction('play-from', { dataset: { no: '2' } });
+    assert.equal(controller.state.playback.status, 'idle', '读 data-no 必然拿不到章号（这就是当年的故障）');
+    assert.match(controller.state.error, /章号/, '★ 拿不到章号必须给可读报错，不许静默什么都不做');
+});
+
+test('★ 静默失败防线：任何 handler 都不该"点了跟没点一样"', async () => {
+    const { controller } = bootBook();
+    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+
+    // 空 dataset / 脏 dataset 一律要留下痕迹（error 或 notice），否则用户只会看到"按钮坏了"
+    for (const [action, dataset] of [
+        ['play-from', {}],
+        ['play-from', { id: 'NaN' }],
+        ['play-from', { id: '0' }],
+        ['play-from', { id: '-3' }],
+    ]) {
+        controller.state.error = ''; controller.state.notice = '';
+        await controller.handleAction(action, { dataset });
+        assert.ok(
+            controller.state.error || controller.state.notice,
+            `★ ${action} 收到 ${JSON.stringify(dataset)} 时必须给出反馈（不能静默）`,
+        );
+    }
+});
+
 test('★ stop 即停：必须 cancel 语音引擎，迟到的 onend 不复活播放', async () => {
     const { synth, controller } = bootBook();
     await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
-    await controller.handleAction('play-from', { dataset: { no: '1' } });
+    await controller.handleAction('play-from', { dataset: { id: '1' } });
     assert.equal(controller.state.playback.status, 'playing', '前置：已在播放');
 
     const spokenCount = synth.spoken.length;
@@ -552,7 +595,7 @@ test('★ stop 即停：必须 cancel 语音引擎，迟到的 onend 不复活�
 test('暂停 / 继续：状态机 playing ↔ paused', async () => {
     const { synth, controller } = bootBook();
     await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
-    await controller.handleAction('play-from', { dataset: { no: '1' } });
+    await controller.handleAction('play-from', { dataset: { id: '1' } });
 
     await controller.handleAction('playback-pause', { dataset: {} });
     assert.equal(controller.state.playback.status, 'paused');
@@ -567,7 +610,7 @@ test('★ 无语音引擎：给可读报错而不是静默炸掉', async () => {
     const { controller } = bootBook({ withSynth: false });
     await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
     controller.state.error = '';
-    await controller.handleAction('play-from', { dataset: { no: '1' } });
+    await controller.handleAction('play-from', { dataset: { id: '1' } });
     assert.match(controller.state.error, /语音|speechSynthesis/, '★ 报错要说人话（用户能看懂为什么没声音）');
     assert.notEqual(controller.state.playback.status, 'playing', '没引擎就不能进入播放态');
 });
@@ -728,4 +771,82 @@ test('★ 入口路线唯一：左侧栏 DOM 注入的痕迹必须退场（不�
             `★ 产物里还有「${gone}」——左侧栏路线（DOM 注入 + 自愈观察者）必须删干净，否则两条入口同时存在`);
     }
     assert.ok(code.includes('sidebarRightTabs'), '必须走官方右侧栏契约');
+});
+
+// ── 交互态样式表（0.13.1）──────────────────────────────────────────────────
+// 为什么这组必须有：内联样式**压不过** `:hover` / `:active`，所以「按钮有没有按下反馈」
+// 完全取决于生成出来的这张表。表里缺一条 = 那个变体静默没有反馈（不报错、不警告），
+// 表现就是用户说的「点了没反应」。
+
+const BTN_VARIANTS = ['primary', 'secondary', 'ghost', 'accent', 'danger'];
+
+test('★ 交互态样式表：每个按钮变体都齐备 rest / hover / active 三态', () => {
+    const { mod } = boot();
+    const { buildCss, PANEL_ATTR } = mod.exports.__internals;
+    const css = buildCss();
+    for (const variant of BTN_VARIANTS) {
+        const sel = `[${PANEL_ATTR}] [data-nf-btn][data-variant="${variant}"]`;
+        assert.ok(css.includes(`${sel}{`), `${variant} 缺常态规则`);
+        assert.ok(css.includes(`${sel}:hover:not(:disabled)`), `${variant} 缺 hover 规则`);
+        assert.ok(css.includes(`${sel}:active:not(:disabled)`),
+            `${variant} 缺 active 规则 —— 这就是「按钮按下去没反应」`);
+    }
+    // 按下必须真的"看得出"：位移 + 内阴影，而不只是换个底色
+    assert.ok(/translateY\(1px\)/.test(css), 'active 态要有下沉位移');
+    assert.ok(/inset 0 1px 3px/.test(css), 'active 态要有内阴影');
+});
+
+test('★ 交互态样式表：可点区域 / 分段控件 / 聚焦态都有规则', () => {
+    const { mod } = boot();
+    const { buildCss, PANEL_ATTR } = mod.exports.__internals;
+    const css = buildCss();
+    for (const need of [
+        '[data-nf-tap]:hover', '[data-nf-tap]:active',
+        '[data-nf-seg]:hover:not([data-active="1"])', '[data-nf-seg][data-active="1"]',
+        'input:focus', 'summary:hover',
+        // 卡片/行的底色是内联的（card() 给的）—— 内联优先级更高，
+        // hover/active 不写 `!important` 就永远压不过去，等于白写
+        '!important',
+    ]) {
+        assert.ok(css.includes(need), `样式表缺 ${need}`);
+    }
+    // 每条规则都必须以面板根限定（深色补丁允许前置 :where(...)），不许外溢到宿主界面
+    const bad = css.split('\n')
+        .filter((l) => l.includes('{') && !l.trimStart().startsWith('/*'))
+        .filter((l) => !l.includes(`[${PANEL_ATTR}]`));
+    assert.deepEqual(bad, [], '有规则没有以面板根限定：\n' + bad.join('\n'));
+});
+
+test('★ 深色补丁必须用 :where() 降权重（否则会压掉按下态）', () => {
+    const { mod } = boot();
+    const css = mod.exports.__internals.buildCss();
+    const dark = css.split('\n').filter((l) => l.includes('data-ds-dark-theme'));
+    assert.ok(dark.length > 0, '深色补丁一条都没有？');
+    for (const line of dark) {
+        // `body[data-ds-dark-theme] [y]` 的权重 (0,2,1) 高于 `[y]:active` (0,2,0)
+        // → 会把 :active 的内阴影吃掉，深色下按下又变得没反馈
+        assert.ok(line.startsWith(':where(body[data-ds-dark-theme])'),
+            '深色补丁必须写成 :where(body[...]) 保持权重为 0：' + line);
+    }
+});
+
+test('★ 样式表注入是 DOM 单例：反复装配只留一份，内容过期就就地更新', () => {
+    const { dom, mod } = boot();
+    const { ensureStyles, STYLE_ID } = mod.exports.__internals;
+    const first = ensureStyles(dom.document);
+    assert.ok(first, '应注入成功');
+    assert.equal(first.parentElement, dom.document.head, '<style> 应注入到 head');
+    // 宿主会反复装配插件（切会话 / 重挂载）→ 第二次必须"收养"，不能再插一份
+    ensureStyles(dom.document);
+    ensureStyles(dom.document);
+    assert.equal(dom.document.querySelectorAll(`#${STYLE_ID}`).length, 1,
+        '样式表必须只有一份（每次装配插一份的话，宿主里会越积越多）');
+    // 内容过期（换版本 / 热更）→ 就地刷新，不新增节点
+    first.textContent = 'stale';
+    ensureStyles(dom.document);
+    assert.equal(dom.document.querySelectorAll(`#${STYLE_ID}`).length, 1);
+    assert.ok(first.textContent.includes('data-nf-btn'), '过期内容应被就地刷新');
+    // 没有 document 的环境（headless / 非浏览器）不能抛
+    assert.equal(ensureStyles(null), null);
+    assert.equal(ensureStyles({}), null);
 });

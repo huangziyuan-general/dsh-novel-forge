@@ -230,6 +230,24 @@ test('engine: 无宿主 llm / 无路由 / 预先取消 各自返回可读错误�
     assert.equal(unknown.error.code, 'UNKNOWN_CHANNEL');
 });
 
+test('engine: cordis 风格 ctx——未注册服务的属性访问会抛，装配与调用都不得炸（0.13.1 真机事故回归）', async () => {
+    // 真机 cordis 的 ctx 是 proxy：访问未注册（未进 fiber store）的属性**直接 throw**。
+    // boot 时宿主服务大多还没注册 → 装配期探测 isAvailable() 曾把整个 boot 炸掉
+    // （"cannot get property 'llm' without inject"）。修法：readService 全程捕获。
+    const throwingCtx = new Proxy({}, {
+        get(_t, prop) {
+            if (prop === 'logger') return { info() {}, warn() {} }; // logger 由宿主 mixin，已注册
+            throw new Error(`cannot get property "${String(prop)}" without inject`);
+        },
+    });
+    const engine = createEngine({ ctx: throwingCtx, config: {}, sleep: noSleep });
+    assert.equal(engine.isAvailable(), false, '装配期 llm 未注册 → 不可用，但不抛');
+    assert.match(engine.unavailableReason(), /模型服务/);
+    const r = await engine.run('polish', { prompt: 'p' });
+    assert.equal(r.ok, false);
+    assert.equal(r.error.code, 'ENGINE_UNAVAILABLE', '拿不到服务给可读错误，不是异常');
+});
+
 test('engine: 重试策略——限流退避重试、鉴权不重试、空输出算失败', async () => {
     const rate = fakeLlm([], { fail: Object.assign(new Error('429'), { code: 'RATE_LIMIT' }) });
     const e1 = createEngine({ ctx: ctxWith(rate), config: { engine: { retries: 2 } }, sleep: noSleep });
