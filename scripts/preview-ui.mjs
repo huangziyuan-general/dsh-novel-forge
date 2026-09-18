@@ -183,8 +183,12 @@ const MOCK = {
 	].join('\n'),
 	proposals: {
 		proposals: [
-			{ id: 'P9-mf3k21', chapter: 9, status: 'pending', createdAt: '2026-09-13T21:12:00.000Z' },
-			{ id: 'P11-mf8a04', chapter: 11, status: 'pending', createdAt: '2026-09-13T23:40:00.000Z' },
+			{ id: 'P9-mf3k21', chapter: 9, status: 'pending', createdAt: '2026-09-13T21:12:00.000Z',
+				title: '夜探更楼', reason: '机审检出章末无钩子：末段落在静态收束上。重排结尾，把更楼的灯「自己亮了」压到末段收口，为第 11 章回收伏笔蓄力。正文其余未动。',
+				preview: '把结尾改成悬念对白——更楼的灯自己亮了，陈九的手按上了刀柄……' },
+			{ id: 'P11-mf8a04', chapter: 11, status: 'pending', createdAt: '2026-09-13T23:40:00.000Z',
+				title: '灯下对峙', reason: '去AI味：删除三处总结式比喻，对话口语化，节奏拉紧。',
+				preview: '「你说这灯是谁点的？」陈九没回头。身后的人笑了……' },
 			{ id: 'P7-mf1c99', chapter: 7, status: 'applied', createdAt: '2026-09-10T09:02:00.000Z' },
 		],
 	},
@@ -197,6 +201,19 @@ const MOCK = {
 			{ severity: 'warning', code: 'foreshadow-overdue', where: '伏笔 F3', message: '伏笔 F3 计划第 7 章回收，全书已写到第 12 章仍未回收。' },
 			{ severity: 'warning', code: 'chapter-gap', where: '第6→7章', message: '章号不连续：第 6 章之后直接是第 7 章之外的空档（请确认是不是漏写）。' },
 			{ severity: 'warning', code: 'chapter-version-mismatch', where: '第9章', message: 'novel.json 记的版本号与实际正文文件名不一致（v2 vs v1）。' },
+		],
+	},
+	diagnosis: {
+		overall: '可——钩子够但冲突/灌输需回调',
+		sampled: 3,
+		perChapter: [
+			{ chapter: 1, title: '雨夜来客', hook: 78, opening: 90, conflict: 52, infodump: 44 },
+			{ chapter: 2, title: '灯下对峙', hook: 66, opening: 74, conflict: 48, infodump: 63 },
+			{ chapter: 3, title: '更楼的灯', hook: 82, opening: 68, conflict: 71, infodump: 31 },
+		],
+		issues: [
+			'第2章章末钩子偏弱（66）——结尾补一问句式悬念/意外转折',
+			'第2章信息灌输偏高（63）——把设定拆成行为/事件，别成段说明',
 		],
 	},
 	worldbook: [
@@ -370,10 +387,18 @@ const previewFetch = async (url, init) => {
   }
 
   if (p === '/projects' && q.get('scope') === 'unclaimed') return json({ ok: true, value: MOCK.unclaimed });
+  // 带 session 的过滤恒空 → 演示「回落显示全部」说明条（0.13.2 真机同款症状）
+  if (p === '/projects' && q.get('session')) return json({ ok: true, value: [] });
   if (p === '/projects') return json({ ok: true, value: MOCK.projects });
   if (/^\\/projects\\/[^/]+\\/elements$/.test(p)) return json({ ok: true, value: MOCK.elements });
   if (/^\\/projects\\/[^/]+\\/continuity$/.test(p)) { await sleep(420); return json({ ok: true, value: MOCK.continuity }); }
+  if (/^\\/projects\\/[^/]+\\/diagnose$/.test(p)) { await sleep(380); return json({ ok: true, value: MOCK.diagnosis }); }
   if (/^\\/projects\\/[^/]+\\/proposals$/.test(p)) return json({ ok: true, value: MOCK.proposals });
+  if (/^\\/projects\\/[^/]+\\/proposals\\/[^/]+$/.test(p)) {
+    const id = p.split('/').pop();
+    const found = MOCK.proposals.proposals.find((x) => x.id === id);
+    return json({ ok: true, value: { ...found, content: '修订稿全文（预览 mock）：\\n\\n青州的晨，是从一张烧饼开始的。城北布市的天还没全亮，卖菜的已经占了半条街……\\n\\n把结尾改成悬念对白——更楼的灯自己亮了，陈九的手按上了刀柄，「这灯，是谁点的？」' } });
+  }
   if (/^\\/projects\\/[^/]+\\/chapters$/.test(p)) return json({ ok: true, value: MOCK.chapters });
   if (/^\\/projects\\/[^/]+\\/chapters\\/\\d+$/.test(p)) return json({ ok: true, value: MOCK.chapterText });
   if (/^\\/projects\\/[^/]+$/.test(p)) return json({ ok: true, value: MOCK.detail });
@@ -439,6 +464,8 @@ const tour = {
   },
   open: async () => click('[data-action="open"][data-id="星海拾骨"]'),
   checkup: async () => click('[data-action="continuity"]'),
+  diagnose: async () => click('[data-action="diagnose"]'),
+  write: async () => click('[data-action="write"]'),
   info: async () => click('[data-action="detail-tab"][data-tab="info"]'),
   chapters: async () => click('[data-action="detail-tab"][data-tab="chapters"]'),
   // 世界书入口只在「基本信息」标签里 —— 先切回去再点，否则点空

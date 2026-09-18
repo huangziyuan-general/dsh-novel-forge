@@ -7,8 +7,13 @@ DSH（DeepSeek Harness）小说创作插件。设计主线：**代码强制 > �
 
 ## 架构不变量（改代码前先读）
 
-1. **所有书稿文件读写必须走 `ctx.fs`**（lib/fsio.js 收口），禁止 `node:fs` 直接碰工作区——
-   只有 preset 部署（写 `~/.dsh/.agent-presets/`，工作区之外的基础设施）允许用 node:fs。
+1. **所有书稿文件读写必须走 `ctx.fs`**（lib/fsio.js 收口），禁止 `node:fs` 直接碰书稿内容——
+   当前获准的 node:fs 例外（新增例外必须先改本条再动代码）：
+   - preset 部署（`~/.dsh/.agent-presets/`，工作区之外的基础设施）；
+   - `lib/tools/search-tools.js` 的 **sqlite 派生索引**（`书/.novel/index.db` 二进制文件无法走文本
+     fs 通道；落盘路径必须经 `io.abs()` → `ctx.fs.resolve` 取得，容器防护不绕过）；
+   - `lib/mcp-standalone.js` / `lib/server-api.js` 的**非宿主通道**（node:fs 后端 / REST 数据面），
+     必须自带与宿主同语义的 containment 与版本守卫。
 2. **纯逻辑与 io 分离**：`lib/{noai,ledger,gate,versioning,audit,contextpack}.js` 必须保持
    纯函数（输入输出皆数据），便于 `node --test` 直测；io 只发生在 `lib/fsio.js` 与工具层。
 3. **`output.schema` 与 execute 返回值逐字段一致**（additionalProperties:false），

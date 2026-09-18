@@ -1253,3 +1253,122 @@ test('★ cloneProject（lib/clone.js 共享核心）：章节资产全带走、
     await assert.rejects(cloneProject(io, { fromBook: '源书', newBook: '新书' }), /目标书目已存在/);
     await assert.rejects(cloneProject(io, { fromBook: '没有的书', newBook: '另一本' }), /源书目不存在/);
 });
+
+test('★ chapterRelPath：章节记录只认 path / files[].file（0.13.1 阅读器恒空事故回归）', async () => {
+    const { chapterRelPath, chapterRecord } = await import('../lib/store.js');
+    // 真实形态：chapterRecord 产物，path/files 均为工作区相对路径（含书目前缀）
+    const rec = chapterRecord(null, { title: '旺财与剑来', version: 1, file: '剑来旺财/正文/第1章-旺财与剑来-v1.md', chars: 2000 });
+    assert.equal(chapterRelPath(rec), '剑来旺财/正文/第1章-旺财与剑来-v1.md', 'path 优先');
+    // 修订后多版本 → 回退取 files 末条（最高版本）
+    const rec2 = chapterRecord(rec, { title: '旺财与剑来', version: 2, file: '剑来旺财/正文/第1章-旺财与剑来-v2.md', chars: 2100 });
+    assert.equal(chapterRelPath(rec2), '剑来旺财/正文/第1章-旺财与剑来-v2.md', 'files 末条回退');
+    // 防再犯：不存在的 rec.file 字段绝不能被当成路径来源
+    assert.equal(chapterRelPath({ file: '第1章.md' }), null, '只有 rec.file（schema 外字段）时必须返回 null');
+    assert.equal(chapterRelPath(null), null, '缺记录安全');
+    assert.equal(chapterRelPath({}), null, '空记录安全');
+});
+
+test('★ listProposals 富化 + readProposal：reason/摘要/章标题齐备，丢文件有说法', async () => {
+    const { listProposals, readProposal } = await import('../lib/proposals.js');
+    const files = new Map();
+    files.set('书/novel.json', JSON.stringify({
+        title: '书', stage: 'drafting',
+        chapters: { 1: { title: '初入龙渊', files: [{ version: 1, file: '书/正文/第1章-v1.md' }], latest: 1, path: '书/正文/第1章-v1.md' } },
+        proposals: [
+            { id: 'P1-a', chapter: 1, status: 'pending', createdAt: '2026-09-15T06:39:13.577Z' },
+            { id: 'P9-lost', chapter: 2, status: 'pending', createdAt: '2026-09-15T07:00:00.000Z' },
+        ],
+    }, null, 2));
+    files.set('书/.novel/proposals/P1-a.json', JSON.stringify({
+        id: 'P1-a', book: '书', chapter: 1, reason: '机审检出章末无钩子', status: 'pending',
+        createdAt: '2026-09-15T06:39:13.577Z', content: '第一段……\n第二段，把结尾改成悬念对白。',
+    }));
+    const io = {
+        async readJson(p) { const v = files.get(p); return v === undefined ? null : JSON.parse(v); },
+        async readText(p) { return files.get(p) ?? null; },
+        async writeText(p, text) { files.set(p, text); return { version: 1 }; },
+        async writeJson(p, v) { files.set(p, JSON.stringify(v, null, 2)); return { version: 1 }; },
+        async appendLine(p, line) { files.set(p, (files.get(p) ?? '') + line + '\n'); },
+        async listNames() { return []; },
+    };
+    const v = await listProposals(io, '书');
+    assert.equal(v.proposals.length, 2);
+    const p1 = v.proposals[0];
+    assert.equal(p1.title, '初入龙渊', '章标题随列表给出——UI 才能显示「第 1 章 · 初入龙渊」');
+    assert.equal(p1.reason, '机审检出章末无钩子', '模型附的说明必须出列');
+    assert.ok(p1.preview.includes('悬念对白'), '摘要是正文压缩');
+    assert.ok(!p1.preview.includes('\n'), '摘要内换行必须压平（UI 单行显示）');
+    const lost = v.proposals[1];
+    assert.equal(lost.missing, true, '丢文件的提案要有 missing 标记，UI 才能明说');
+    assert.equal(lost.reason, '');
+
+    const full = await readProposal(io, '书', 'P1-a');
+    assert.ok(full.content.includes('第二段'), '全文可读（应用前让人看清改了什么）');
+    assert.equal(full.title, '初入龙渊');
+    await assert.rejects(readProposal(io, '书', 'P9-lost'), /缺失/, '丢文件要给人话报错');
+    await assert.rejects(readProposal(io, '书', 'P404'), /不存在/);
+});
+
+test('★ collectBookChapters + assembleBookText：章节索引 → 整本正文（0.5.x 坏调用致导出恒 500 的回归）', async () => {
+    const { collectBookChapters, assembleBookText, bookStats } = await import('../lib/export.js');
+    const files = new Map([
+        ['书/正文/第1章-v1.md', '一章内容'],
+        ['书/正文/第2章-v1.md', '二章旧稿'],
+        ['书/正文/第2章-v2.md', '二章新稿'],
+    ]);
+    const io = { async readText(p) { return files.get(p) ?? null; } };
+    const novel = {
+        title: '测试书',
+        chapters: {
+            1: { title: '一章', path: '书/正文/第1章-v1.md', latest: 1, files: [{ version: 1, file: '书/正文/第1章-v1.md' }] },
+            // path 指向 v2（当前正文）——collect 必须信 path，不能拿 files[0]
+            2: { title: '二章', path: '书/正文/第2章-v2.md', latest: 2, files: [{ version: 1, file: '书/正文/第2章-v1.md' }, { version: 2, file: '书/正文/第2章-v2.md' }] },
+            3: { title: '空章' },   // 无 path / files → 跳过，不让导出炸掉
+        },
+    };
+    const chapters = await collectBookChapters(io, novel);
+    assert.equal(chapters.length, 2, '读不出正文的章跳过');
+    assert.equal(chapters[0].chapter, 1);
+    assert.equal(chapters[1].versions[0].content, '二章新稿', 'path 优先（当前版本 v2）');
+
+    const md = assembleBookText(chapters, 'md');
+    assert.ok(md.includes('## 第1章 一章'), 'markdown 章节符');
+    assert.ok(md.includes('二章新稿'));
+    const txt = assembleBookText(chapters, 'txt');
+    assert.ok(txt.includes('第1章 一章') && !txt.includes('## '), 'txt 无 markdown 符');
+
+    const stats = bookStats(chapters);
+    assert.equal(stats.chapters, 2);
+    assert.equal(stats.totalChars, '一章内容二章新稿'.length);
+});
+
+// ── diagnose：黄金三章确定性诊断（0.13.2 面板诊断卡回归：REST 直跑同一函数）──
+test('diagnoseIntro: 四维打分取值域 0-100，缺大纲/logline 出建议', () => {
+    const good = '「谁在那儿？」陈默猛地回头，刀已经出了鞘。他盯着门口的黑影，一步步逼近，手心里全是汗。';
+    const d = diagnoseIntro({
+        chapters: [
+            { chapter: 1, title: '一章', content: good + '他一脚踏进院子，迎面撞上三个持刀的汉子。' },
+            { chapter: 2, title: '二章', content: good },
+            { chapter: 3, title: '三章', content: good },
+        ],
+        outline: '# 大纲\n第一卷：初入江湖',
+        logline: '一个刀客的复仇路',
+    });
+    assert.equal(d.perChapter.length, 3);
+    for (const r of d.perChapter) {
+        for (const k of ['hook', 'opening', 'conflict', 'infodump']) {
+            assert.ok(r[k] >= 0 && r[k] <= 100, `${k}=${r[k]} 应在 0-100`);
+        }
+    }
+    assert.ok(!d.issues.some((s) => s.includes('大纲') || s.includes('logline')), '大纲与 logline 齐备不应报');
+});
+
+test('diagnoseIntro: 空书给「先写第 1 章」，超三章只取前三', () => {
+    const empty = diagnoseIntro({ chapters: [], outline: 'x', logline: 'y' });
+    assert.equal(empty.perChapter.length, 0);
+    assert.ok(empty.issues.some((s) => s.includes('还没有任何章节')));
+    const many = diagnoseIntro({
+        chapters: [1, 2, 3, 4, 5].map((n) => ({ chapter: n, title: `${n}`, content: '内容' })),
+    });
+    assert.equal(many.perChapter.length, 3, '黄金三章只看前三章');
+});

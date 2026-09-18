@@ -5,14 +5,15 @@
 //   ② **查**：全书体检（GET /continuity，纯函数零 token）——哪儿对不上
 //   ③ **改**：提案队列 + 本章编辑 + 润色/校对 + 批量起草
 //
-// 能力边界（0.13.0 起如实呈现，别再写「需要模型参与」糊过去）：
+// 能力边界（0.13.2 起如实呈现，别再写「需要模型参与」糊过去）：
 //   · 润色 / 校对 → 服务端有真端点（D1 旁路引擎），产物是**提案**，点应用才生效
 //   · 批量起草 → 服务端有真端点（D2），并发生成、串行提交，每章仍过同一套门禁
-//   · 一键写章 —— 仍是 501（写章要走 briefing + 门禁，只能在会话里由工具做），
-//     面板给一条**可复制的调用提示**，而不是一个点了没反应的按钮
+//   · 写章 → 复用 D2 端点单章跑（from=当前章、count=1），同一条门禁链直接落盘
+//   · 结构诊断 / 全书体检 → 服务端纯函数端点，零 token，面板直出结果
+//   · 导入、带 continuity/voice/platform/censor 参数的 novel_audit → 仍在会话里调
 import { h } from '../react.js';
 import {
-	color, space, font, weight, hintStyle, okStyle,
+	color, space, font, weight, hintStyle, okStyle, errStyle,
 	inputStyle, manuscriptStyle, stackStyle, tint, rowWrapStyle,
 } from '../styles.js';
 import { Card, Btn, Chip, Stat, Fold, Mono, Feedback } from '../ui.js';
@@ -159,6 +160,43 @@ export function ProjectDetailView({ state: s }) {
 			: null,
 	);
 
+	// ── 黄金三章诊断（GET /diagnose · 与 novel_diagnose 同一纯函数，零 token）──
+	const diag = s.diagnosis;
+	const diagnosisBlock = Card({ tone: 'plain' },
+		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm } },
+			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small } }, '📐 黄金三章诊断'),
+			h('span', { style: { flex: '1 1 auto' } }),
+			Btn({
+				size: 'sm', variant: diag ? 'ghost' : 'secondary', action: 'diagnose',
+				disabled: s.diagnosisLoading,
+			}, s.diagnosisLoading ? '诊断中…' : diag ? '↻ 重跑' : '开始诊断'),
+		),
+		s.diagnosisLoading
+			? h('div', { style: { ...hintStyle, marginTop: space.sm } }, '正在按词表给前三章打分……')
+			: !diag
+				? h('div', { style: { ...hintStyle, fontSize: font.caption, marginTop: space.sm, lineHeight: 1.7 } },
+					'对前三章做确定性打分：钩子强度 / 开场质量 / 冲突密度 / 信息灌输度（0-100）。纯词表算法，零 token —— 与会话里调 novel_diagnose 是同一个函数。')
+				: h('div', { style: { marginTop: space.md } },
+					h('div', { style: { ...okStyle, fontSize: font.small, marginBottom: space.sm } }, diag.overall),
+					h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: `${space.xs}px ${space.lg}px`, marginBottom: space.sm } },
+						...(diag.perChapter ?? []).map((c) => h('div', {
+							key: c.chapter,
+							style: { fontSize: font.caption, color: color.text3, lineHeight: 1.9 },
+						}, `第 ${c.chapter} 章《${c.title}》`,
+						h('div', { style: { fontFamily: color.mono, fontSize: font.caption } },
+							`钩子 ${c.hook} · 开场 ${c.opening} · 冲突 ${c.conflict} · 灌输 ${c.infodump}`)))),
+					(diag.issues ?? []).length > 0
+						? h('div', { style: { display: 'flex', flexDirection: 'column', gap: `${space.xs}px` } },
+							...(diag.issues ?? []).slice(0, 8).map((it, i) => h('div', {
+								key: i, style: { ...hintStyle, fontSize: font.caption },
+							}, `· ${it}`)))
+						: null,
+				),
+		s.diagnosisError
+			? Feedback({ tone: 'err' }, s.diagnosisError)
+			: null,
+	);
+
 	// ── 提案队列（用户主权动作：工具面刻意没有 apply）──
 	const proposalsBlock = Card({ tone: pendingProposals.length > 0 ? 'warn' : 'plain' },
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm } },
@@ -175,20 +213,47 @@ export function ProjectDetailView({ state: s }) {
 				: h('div', { style: stackStyle(space.xs) },
 					...pendingProposals.map((p) => {
 						const busy = s.proposalBusy === p.id;
+						const open = s.proposalDetail?.id === p.id;
+						const when = p.createdAt ? String(p.createdAt).slice(5, 16).replace('T', ' ') : '';
+						// 「是什么」一句话：模型附的 reason 最能说明白改了什么；
+						// 没写 reason 就给正文摘要；文件丢了要明说（建议丢弃）。
+						const what = p.missing
+							? '⚠️ 提案文件缺失（索引还在、文件被删）——建议直接丢弃'
+							: (p.reason || p.preview || '（模型未附说明——点「查看」读全文再决定）');
+						const detail = s.proposalDetail;
 						return h('div', {
 							key: p.id,
 							style: {
-								display: 'flex', alignItems: 'center', gap: space.sm,
+								display: 'flex', flexDirection: 'column', gap: space.xs,
 								padding: `${space.sm}px ${space.md}px`,
 								borderRadius: '8px', background: color.surface2,
 							},
 						},
-							h('span', { style: { flex: '1 1 auto', minWidth: 0, fontSize: font.small } },
-								`第 ${p.chapter} 章`,
-								h('span', { style: { ...hintStyle, fontSize: font.caption, marginLeft: space.sm } }, p.id)),
-							Btn({ size: 'sm', variant: 'primary', action: 'proposal-apply', id: p.id, disabled: busy },
-								busy ? '…' : '应用'),
-							Btn({ size: 'sm', variant: 'danger', action: 'proposal-discard', id: p.id, disabled: busy }, '丢弃'),
+							// 行 1：哪一章 + 章标题 + 何时提的 + 三个动作
+							h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' } },
+								h('span', { style: { flex: '1 1 auto', minWidth: 0, fontSize: font.small, fontWeight: weight.semibold } },
+									`第 ${p.chapter} 章${p.title ? ' · ' + p.title : ''}`,
+									h('span', { style: { ...hintStyle, fontSize: font.caption, marginLeft: space.sm, fontWeight: weight.normal } },
+										`${p.id}${when ? ' · ' + when : ''}`)),
+								Btn({ size: 'sm', action: 'proposal-view', id: p.id }, open ? '收起' : '👁 查看'),
+								Btn({ size: 'sm', variant: 'primary', action: 'proposal-apply', id: p.id, disabled: busy },
+									busy ? '…' : '应用'),
+								Btn({ size: 'sm', variant: 'danger', action: 'proposal-discard', id: p.id, disabled: busy }, '丢弃'),
+							),
+							// 行 2：提案要干嘛（一句话说明 / 摘要）
+							h('div', { style: { ...hintStyle, fontSize: font.caption, lineHeight: 1.7 } }, what),
+							// 行 3：展开的全文（应用前可通读修订稿）
+							open && (detail.loading
+								? h('div', { style: { ...hintStyle, fontSize: font.caption } }, '加载全文中…')
+								: detail.error
+									? h('div', { style: { ...errStyle, fontSize: font.caption } }, detail.error)
+									: h('div', {
+										style: {
+											maxHeight: '260px', overflowY: 'auto', whiteSpace: 'pre-wrap',
+											fontSize: font.caption, lineHeight: 1.8, color: color.text2,
+											padding: space.sm, borderRadius: '6px', background: color.surface1,
+										},
+									}, detail.data?.content ?? '（提案内容为空）')),
 						);
 					}),
 				),
@@ -219,10 +284,10 @@ export function ProjectDetailView({ state: s }) {
 			}, revising === 'proofread' ? '校对中…' : '🔍 校对'),
 			Btn({
 				size: 'sm', variant: 'ghost', action: 'write',
-				disabled: s.writing,
-			}, s.writing ? '写作中…' : '🪶 写章'),
+				disabled: s.batchBusy,
+			}, s.batchBusy ? '写作中…' : '🪶 写章'),
 			h('span', { style: { ...hintStyle, fontSize: font.caption } },
-				s.chapterNo > maxWritten ? '这一章还没落盘 —— 先写章' : '润色/校对的产物是提案'),
+				s.chapterNo > maxWritten ? '这一章还没落盘 —— 点写章直接过门禁链落盘' : '写章=生成新版本（旧稿保留）；润色/校对的产物是提案'),
 		),
 
 		s.error ? Feedback({ tone: 'err' }, s.error) : null,
@@ -266,17 +331,23 @@ export function ProjectDetailView({ state: s }) {
 				s.deleteState === 'confirm' ? '确认删除这本书？' : '删除'),
 		),
 
-		// 诊断/去AI味这类「要靠模型判」的，如实说清在哪做
+		// 能力边界（0.13.2 起如实呈现）：写章/诊断/体检面板直做；导入与全量审计仍在会话
 		h('div', { style: { ...hintStyle, fontSize: font.caption, marginTop: space.md, lineHeight: 1.7 } },
-			'结构诊断、去AI味评级、写章本身需要模型参与且在会话里落审计 —— 在会话里调 ',
+			'写章（走门禁链落盘）、黄金三章诊断、全书体检都已在面板直做。仍需会话的：',
 			h('code', {
 				style: {
 					fontFamily: color.mono,
 					background: color.surface2, borderRadius: '4px', padding: '0 4px',
 				},
-			}, `novel_write_chapter / novel_audit`),
-			'，或点写章按钮看调用提示。'),
-		Btn({ size: 'sm', variant: 'ghost', action: 'diagnose' }, '结构诊断（在会话里做）'),
+			}, 'novel_import'),
+			'（导书）、带一致性/平台审稿/敏感自查参数的 ',
+			h('code', {
+				style: {
+					fontFamily: color.mono,
+					background: color.surface2, borderRadius: '4px', padding: '0 4px',
+				},
+			}, 'novel_audit'),
+			'（结果进审计流，面板的机审子集已在「全书体检」覆盖）。'),
 	);
 
 	// ── 批量起草（D2：并发生成、串行提交，每章仍过同一套门禁）──
@@ -343,6 +414,7 @@ export function ProjectDetailView({ state: s }) {
 	const infoView = h('div', { style: stackStyle(space.lg) },
 		ProjectOverviewView({ state: s }),
 		continuityBlock,
+		diagnosisBlock,
 		proposalsBlock,
 		editBlock,
 		batchBlock,

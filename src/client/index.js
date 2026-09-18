@@ -24,7 +24,7 @@ import { ProjectListView, projectMatches } from './views/project-list.js';
 
 // 版本号：必须与 package.json 的 version 一致。
 // build-client.mjs 会把它与 package.json 对账，不一致直接构建失败（防发行漂移）。
-const PLUGIN_VERSION = '0.13.1';
+const PLUGIN_VERSION = '0.13.2';
 
 // 供视图头部徽标读取 —— 让视图层不必反向 import 入口（避免循环依赖）。
 window.__NOVEL_FORGE_VERSION__ = PLUGIN_VERSION;
@@ -48,8 +48,13 @@ function apply(ctx) {
 	console.info('[novel-forge] client apply v' + PLUGIN_VERSION + ' — 注册右侧栏 tab');
 
 	// ① 类型 + ② 内容 seat（forge-tab.js 的 registerForgeTab）
+	// 包装一层：把 sessions 服务的「当前会话」读取器递给面板 —— slot inject 的
+	// 会话标识与真 agent 会话 id 被证实可能不同源（0.13.2），面板发请求前以它对齐。
 	try {
-		registerForgeTab(ctx, ForgePanel);
+		registerForgeTab(ctx, (props) => ForgePanel({
+			...props,
+			resolveSessionId: () => currentSessionId(ctx),
+		}));
 	} catch (error) {
 		console.error('[novel-forge] 右侧栏 tab 注册失败（可从右侧栏 guide 页手动进入）', error);
 	}

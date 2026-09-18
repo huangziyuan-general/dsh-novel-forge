@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.13.2 (2026-09-18) — 体检修复：严格参数 + schema 形状守卫 + 文档同步
+
+- **严格参数（全工具）**：宿主 `parameterSchemaSpecToJsonSchema` 生成的参数 schema 无 `additionalProperties:false` 开关——模型多传字段会静默通过。`define-tool.js` 垫片包装 `execute`，未知字段一律抛「无效参数（未知字段）」，20 个工具一处生效。
+- **全工具 schema 形状守卫**：装载测试新增遍历——每个工具 `output.schema`（type/additionalProperties:false/required 幽灵字段）与归一化 `parameters`（type/description/required 幽灵）逐一校验，新工具漏声明直接在测试期暴露。
+- **AGENTS.md 不变量 1 更新**：如实记录三处获准的 node:fs 例外（preset 部署 / sqlite 派生索引 / 非宿主通道），新增例外须先改本条。
+- README 测试数同步（228 → 237）。
+- **旁路引擎四连修（真机排障定案）**：① inject 补声明 `agents`（cordis 只物化声明过的服务，漏声明 → get/resume/initiator 三路全空）；② 父会话锚定加 `agents.resume({resumeSessionId})` 按需物化兜底——面板 REST 无执行边界，会话不驻留也能拉起；③ 通道 maxTokens 默认 0=不传（继承宿主按模型校准的上限），显式配置才设限——插件猜 8192/16384 都会被推理模型思考+整章重写烧穿；④ 长文通道 timeoutMs 600s；`stopReason=max-tokens` 拆出 OUTPUT_TRUNCATED 专门错误（带诊断与可执行建议），锚定失败报错自带诊断段。面板与引擎超时对齐（600s）。
+- **阅读器恒空修复**：章节索引 schema 从无 `rec.file` 字段，统一走 `store.chapterRelPath`（`path` ?? `files[].file`），存量三本书全兼容。
+- **导出 500 修复**：调用的 `assembleBook(fsio, novel,…)` 从不存在——改 `collectBookChapters` + `assembleBookText` + `bookStats` 正确链路。
+- **新端点**：GET `/diagnose`（黄金三章确定性诊断，纯词表零 token）、GET `/proposals/:pid`（单条提案全文，应用前可读）。
+- **章节版本链**：`prev?.latest` 起算 + `chapterRecord` 记 `path`/`files`/`latest`；chars 按非空白字符计。
+- **批量起草**：同锚定链路（sessionId + 书归属会话候选）。
+
+## 0.13.1 补五 (2026-09-16) — 提案卡可读性：不再只有「第 N 章」三个字
+
+## 0.13.1 补五 (2026-09-16) — 提案卡可读性：不再只有「第 N 章」三个字
+
+仙尊反馈：「待批准提案没有明确说明，看不出是什么」。列表投影原本刻意只回 id+章号
+（怕整章正文塞爆响应），结果用户连提案要干嘛都看不出来——过犹不及。三层修法：
+
+- **lib/proposals.js**：listProposals 每条附 reason（模型附的修订说明）、preview
+  （正文摘要 120 字、换行压平）、title（章标题）；提案文件丢失标 missing 让 UI 有话可说。
+  新增 readProposal 读单条全文（应用前让人看清改了什么）；
+- **REST**：GET /projects/:id/proposals/:pid —— 单提案全文；
+- **提案卡重做**：三行结构——「第 N 章 · 标题 + 提案号 + 时间 + 查看/应用/丢弃」、
+  一句话说明（reason 优先，无则摘要，丢了文件给处置建议）、👁 查看展开全文
+  （260px 可滚动，再点收起）；丢弃时联动收起展开区；陈旧响应守卫照搬（连点别条不串台）；
+- 顺手修 preview-ui.mjs：mock 路由正则被上轮工具链写成双反斜杠（内嵌模板区需双、
+  真代码区需单——两类区域一刀切归一曾两头翻车），已逐区归位，以内联脚本编译检查为闸；
+- 回归 2 条：listProposals/readProposal 内存 io 全链路（含丢文件与不存在）、
+  面板查看契约（拉全文/再点收起/提案号缺失必报错）。测试 208 → **210**。
+
+## 0.13.1 补四 (2026-09-16) — 阅读器恒空 + 章节路径三连修
+
+仙尊真机反馈：「阅读章节为什么是空的」。根因是 server-api 对章节记录 schema 的三处误读——
+
+- **读章端点（GET /chapters/:no）**：读了不存在的 `rec.file`（schema 只有 `path` 与 `files[].file`），
+  还另拼一层 `bookId/正文/`（而记录里的路径本就含书目前缀）→ 双错叠加，阅读器**恒返回空**；
+- **修订/润色旁路端点**：同样的双错——真机一点润色就会「第 N 章尚未保存」或读到空；
+- **面板保存章（POST /chapters/:no）**：版本号取 `prev?.version`（不存在）→ 恒 v1 **覆盖旧文件**；
+  `file` 传裸文件名而非工作区相对路径 → 存出来的记录 briefing/连播都读不到。
+
+修法：抽 `store.chapterRelPath(rec)`（path 优先、files 末条回退、schema 外字段返回 null），
+两处读端点共用；保存端点改 `prev?.latest` 取版本、存工作区相对路径。用《剑来旺财》真书
+四章逐章验证能读出全文。回归 1 条（5 断言）锁死 schema。测试 202 → **208**（含仙尊未提交批新增）。
+
 ## 0.13.1 (2026-09-15) — 深色主题配色修正 + 按钮按下反馈 + 装配期炸 boot 修复
 
 仙尊深色主题下实测：「配色不好看，刷新和导入按钮没有按下效果」。修完主题当晚重启 dsh，
@@ -154,9 +200,96 @@ cordis 抛错 ctx，锁住「装配与调用都不炸、返回可读错误」。
   筛中/空态）、筛选输入走事件代理、世界书删除两步确认全链路。假 DOM 的 `createElement`
   同步镜像真 React 元素形状（此前恒返回 null，视图层在测试里是盲区）。
 
+### 按钮排查与修复：导出恒 500 + 模型按钮 ENGINE_UNAVAILABLE（0.13.1 补六，仙尊：本章编辑按钮全无效）
+
+真机排查（REST 逐端点打点 + 宿主源码核对）结论：**派发链路是好的**（润色/校对的红字正是
+服务端回了结构化错误），坏的是三处实打实的问题：
+
+- **导出按钮自 0.5.x 起就是 500**：REST 端点调了不存在的 `exportLib.assembleBook(fsio, novel, …)`
+  （真函数是 `assembleBookText(chapters, mode)`，名字与签名都不对，且无人测过）。
+  修法：新增 `exportLib.collectBookChapters(io, novel)`（复用 `store.chapterRelPath` 逐章读当前
+  正文）→ `assembleBookText` 拼整本，返回 `{fileName, content, stats}`；回归 1 条（v1/v2 版本
+  指向、空章跳过、md/txt 两形态）。
+- **润色/校对/批量起草在 web profile 恒 ENGINE_UNAVAILABLE**：真机探针证实 `ctx.llm` 在根
+  fiber 解析不到——web 架构里 llm 服务不在插件所在的 fiber（第三方插件无一例外全走
+  subagents，mnemon 的 inject 是铁证）。修法：引擎增加 **subagents 备用传输**——
+  `subagents.start('spawn', {prompt, persona, toolFilter:{allow:[]}, agentOptions:{provider,
+  model, maxTokens}})`，`result.output` 取最终文本；isAvailable = llm 或 subagents 任一可用；
+  直连路径原样保留（CLI profile 若暴露根级 llm 仍走直连）。回归 2 条。
+- **字数标准被 cordis.patch.yml 覆盖回旧值**：patch 里显式写的 minChapterChars 500 /
+  maxChapterChars 12000 会盖掉 schema default——「2000–4000 起点」标准在真机从未生效。改为 2000/4000。
+- 顺手：修订端点的 `recRel === undefined` 判空改为 `!recRel`（chapterRelPath 缺失返回 null）。
+- 新增临时诊断端点 `GET /debug-services`（fence+token 双护），供重启后验证 ctx 服务解析——定位完成后移除。
+- **结构诊断从「去会话做」搬进面板（0.13.2）**：面板文案误称诊断「需要模型判断」——实际上
+  `novel_diagnose` 是**纯词表打分**（lib/diagnose.js 零 token），根本不用模型。此前只引导去会话
+  的真实原因是面板没有结果展示位。现与「全书体检」同款：新 REST 端点
+  `GET /projects/:id/diagnose`（前三章 diagnoseIntro，直跑同一纯函数）+ 基本信息页新增
+  「📐 黄金三章诊断」卡（每章四维数字 + 总评 + 建议）。写章的「只能会话」提示保留
+  （briefing + 门禁多轮闭环是真约束），但措辞改为只提写章，不再把诊断/审计捎带上。
+
+- **★ 0.13.2 真机事故修复：子代理调用把宿主进程打挂**。现象：面板点润色，`dsh web`
+  整个进程 fatal（`delegationDepthOf` 读 undefined 的 `.options`）。双根因：
+  ① 宿主 `SubagentStartRequest.parent` 是**必填**字段（子代理从父 agent 派生 workspace/
+  谱系/委托深度），引擎根本没传；② `subagents.start()` 未 await——rejection 无人接，
+  unhandled rejection 直接退进程。修复：引擎经 `agents.get(sessionId)` 解析**用户当前
+  会话的活 agent** 当 parent（REST 端点从请求体 `session` 字段穿进来，panel 三个模型
+  动作都带）；会话内工具路径（打标/检索）回退 `agents.currentInitiator()`；两者皆无 →
+  结构化 `NO_PARENT_AGENT`（人话指引），绝不碰 start。`start()` 改为 await，任何
+  rejection 收编为 ENGINE_FAILURE。回归 +2（病灶三连 / currentInitiator 回退）→ **219**。
+  debug-services 探针扩充 agents 注册表视图（活 agent 数/id/currentInitiator），重启后
+  一次验证「空闲会话的 agent 是否常驻」。
+- **「写章」按钮从引导文案变成真按钮（0.13.2）**：宿主核实结论——agent 的
+  `send/steer/followup`（往活动会话注入消息）只服务宿主自家前端，插件的
+  agent/session typert 面是只读的，**「替用户在会话里打字」做不了**；但写章不需要会话——
+  D2 批量起草已跑通「briefing → 生成 → commitChapter 全门禁链 → 版本化落盘」，
+  单章写= 批量起草 count=1。面板「写章」现在直接 POST draft-batch
+  （from=当前编辑章、count=1），被拦进批量结果区（细纲缺失/机审/熔断都能看到原因）。
+  版本化落盘保证旧稿永不覆盖。底部提示改为如实清单：面板可做=写章/诊断/体检，
+  仍需会话=novel_import 与带 continuity/voice/platform/censor 的 novel_audit。
+- **书单回落：会话过滤为空时自动显示全部书（0.13.2 真机实锤）**：用户新会话开书成功、
+  锻炉却显示「会话还没有项目」。真机排查：REST 全量列表有书、按书写入的 session id
+  过滤也正好命中、debug-services 探针证实该会话的 agent 活着——服务端全链路健康。
+  病灶在客户端：**面板 slot inject 拿到的会话标识与工具写入 novel.json 的 session id
+  不同源**（旁证：session-watch 用 `ctx.sessions.list` 的 id 能探到书才自动开的 tab，
+  面板用 slot 的 id 过滤却是空；两处 id 来源不同，宿主内部映射插件不可见）。
+  修法是优雅降级：过滤为空且带会话时补一次全量，命中即显示全部书 + 一条说明
+  （「本会话名下暂时没有匹配到书，先显示全部 N 本」），书照常打开；创建/认领仍带
+  面板会话戳不变。预览 mock 同步演示该回落。
+- **会话 id 校正：面板动作改用 sessions 服务的当前会话（0.13.2，校对按钮病灶）**：
+  上述不同源还有第二个症状——点校对报 `NO_PARENT_AGENT`（服务端 `agents.get(slot id)`
+  找不到活的父 agent）。修法：index.js 给面板注入 `resolveSessionId`（读
+  `ctx.sessions.list` 的当前会话，session-watch 同款来源、已被自动打开逻辑证实能对上）；
+  控制器在**每次发请求前** `syncSession()` 对齐——书单过滤、润色/校对/写章的
+  parent 锚定、认领、创建就都落在真会话 id 上；resolver 不可得时留在 slot inject
+  的 id 上（不炸不丢）。注册内容 seat 的 component 随之变成注入包装层，
+  ②号用例的身份断言同步升级为行为断言。
+
+- **parent 锚定升级为候选链（真机复诊 0.13.2）**：真机再次 NO_PARENT_AGENT——
+  slot inject 会话标识 ≠ 真 agent 会话 id 的老根因还在咬人（浏览器可能还跑着旧
+  bundle 发 slot 旧 id）。engine.run 新增 `sessionIds` 候选数组：解析顺序
+  ① 显式 sessionId ② **书的归属会话**（创建它的会话 agent 大概率活着，且其工作区
+  必然是书所在工作区——语义上比当前会话更正确）③ currentInitiator。修订/批量
+  起草端点把 `novel.sessions` 穿进候选。NO_PARENT_AGENT 报错改为**列出试过的
+  全部 id**（截断）——「面板没传」和「传了但注册表里没有」一眼分清。
+  debug-services 探针加 `getChecks`（逐个活 id 实测 agents.get——注册表
+  「列得出」≠「get 得到」）与 `?tryGet=<id>`。
+
+- **parent 解析加等待重试（真机实锤：注册表懒注册）**：候选链上线后真机仍
+  NO_PARENT_AGENT，而紧随其后的探针 getChecks 实测 `get(同一 id)` 成功——
+  宿主 agent 注册表是**懒注册 + 会退出**的（重启后逐个出现、会话关闭即消失，
+  一天内 live 数 3→1 变动）。修：第一轮候选全落空时等 2 秒（`PARENT_RETRY_DELAY_MS`，
+  可注入 wait）再试一轮；失败文案与 advice 同步如实（「重启后 agent 逐个注册——
+  先在会话里发一句话再点」）。不做 agents.resume 兜底（会拉起整个 agent loop，
+  不可代替用户拉起会话）。
+
 ### 测试
 
-**207/207 全绿**（0.13.0 是 185）。新增 22 条：每个按钮变体的三态规则齐备性、
+**228/228 全绿**（上一节 227）。新增 3 条：sessionIds 候选链兜住 parent、
+候选全空报错列出全部试过 id、第一轮锚不到→等待重试后锚定成功。
+
+### 测试
+
+**213/213 全绿**（0.13.0 是 185）。新增 25 条：每个按钮变体的三态规则齐备性、
 tap/seg/focus/summary 规则存在性、`ensureStyles` 幂等与降级、样式表注入不破坏渲染、
 **cordis 抛错 ctx 下引擎装配与调用不炸**、**字数标准两条**、**守卫写两条 intent 分支**。
 假 DOM（`test/helpers/dom.mjs`）顺带补齐 `head` 与 `#id` 选择器——样式表注入路径从此可测。
