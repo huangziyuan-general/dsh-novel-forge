@@ -1,5 +1,7 @@
 # dsh-novel-forge · 小说锻炉
 
+![release](https://img.shields.io/github/v/release/huangziyuan-general/dsh-novel-forge) ![license](https://img.shields.io/github/license/huangziyuan-general/dsh-novel-forge) ![tests](https://img.shields.io/badge/tests-237%20passing-brightgreen)
+
 DeepSeek Harness（DSH）的小说创作插件。设计主线只有一条：
 
 > **代码强制 > 提示词自觉。** 凡是"靠模型自觉"的约束都会失效——
