@@ -635,3 +635,343 @@ test('batch-draft: 没有场景契约时把并发压回 1（上下文预算 ×N 
     assert.equal(faster.concurrency, 2, '有契约就该按用户要的并发跑');
     assert.ok(faster.stats.committed === 2);
 });
+
+// ── 0.13.1 补六：web profile 模型传输（llm 不在根 fiber → subagents 备用通道）────────
+
+/** 活父 agent 替身：宿主 start 请求的 parent 必填（agent id 与 session id 同源）。 */
+const fakeParent = (id = 'sess-1') => ({ id, options: {}, session: { header: {} } });
+const fakeAgents = (parent) => ({ get: (id) => (id === parent.id ? parent : undefined) });
+
+test('engine: 无 ctx.llm 时经 subagents 跑通——web profile 主路径（真机 ctx.llm 解析不到）', async () => {
+    const calls = [];
+    const subagents = {
+        start(provider, opts) {
+            calls.push({ provider, opts });
+            return { result: Promise.resolve({ stopReason: 'completed', output: [{ type: 'text', text: '润色后的正文' }] }) };
+        },
+    };
+    const parent = fakeParent();
+    const engine = createEngine({
+        ctx: { subagents, agents: fakeAgents(parent), agentDefaultModel: { provider: 'p1', model: 'm1' } },
+        config: {}, sleep: noSleep,
+    });
+    assert.equal(engine.isAvailable(), true, 'subagents 可用即视为具备模型能力');
+    const r = await engine.run('polish', { system: '系统提示', prompt: '正文', sessionId: parent.id });
+    assert.equal(r.ok, true);
+    assert.equal(r.text, '润色后的正文');
+    assert.equal(r.finishKind, 'stop');
+    assert.deepEqual(r.route, { provider: 'p1', model: 'm1', source: 'default' }, 'agentDefaultModel 继承路由来源如实标 default');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].provider, 'spawn', 'mnemon 同款 spawn provider');
+    assert.equal(calls[0].opts.parent, parent, 'parent 必填（缺了宿主 resolveChildDepth 直接 TypeError 炸进程）');
+    assert.equal(calls[0].opts.persona, '系统提示', 'system 走 persona');
+    // 0.13.2 第三轮：默认不设限（tokenCap=0 → agentOptions 不带 maxTokens，继承宿主默认）
+    assert.deepEqual(calls[0].opts.agentOptions, { provider: 'p1', model: 'm1' });
+    assert.ok(!('maxTokens' in calls[0].opts.agentOptions), '不设限时不该传 maxTokens');
+    assert.deepEqual(calls[0].opts.toolFilter, { allow: [] }, '纯文本任务不带工具');
+});
+
+test('engine: 显式配置 channels.polish.maxTokens=0 也走继承宿主默认（0=不设限），不回落 base 值', async () => {
+    // 旧 budgetFor 的 positive(0, base) 会把 0 误规约回 base.maxTokens(8192)——
+    // 用户显式写 0 想「继承宿主」却仍被套上限。新逻辑 capOf 保持 0 → agentOptions
+    // 不带 maxTokens。覆盖「默认分支」之外的这条显式配置分支。
+    const calls = [];
+    const subagents = {
+        start(_p, opts) { calls.push(opts); return { result: Promise.resolve({ stopReason: 'completed', output: [{ type: 'text', text: 'ok' }] }) }; },
+    };
+    const parent = fakeParent();
+    const engine = createEngine({
+        ctx: { subagents, agents: fakeAgents(parent) },
+        config: { engine: { channels: { polish: { maxTokens: 0 } } } },
+        sleep: noSleep,
+    });
+    const r = await engine.run('polish', { prompt: '正文', sessionId: parent.id });
+    assert.equal(r.ok, true);
+    assert.ok(!('maxTokens' in calls[0].agentOptions), '显式 0 → 继承宿主默认，agentOptions 不带 maxTokens');
+});
+
+test('engine: 子代理 stopReason 非 completed / 空内容 / output 字符串形态 → 各自可读结果', async () => {
+    const parent = fakeParent();
+    const mk = (start) => createEngine({
+        ctx: { subagents: { start }, agents: fakeAgents(parent) },
+        config: {}, sleep: noSleep,
+    });
+    const fail = mk(() => ({ result: Promise.resolve({ stopReason: 'error' }) }));
+    const r = await fail.run('proofread', { prompt: 'x', sessionId: parent.id });
+    assert.equal(r.ok, false);
+    assert.equal(r.error.code, 'SUBAGENT_FAILED');
+    // 无 agentDefaultModel：路由继承，不报 NO_ROUTE（直连路径才要求显式路由）
+    assert.deepEqual(r.route, { provider: '(inherited)', model: '(inherited)', source: 'subagent' });
+
+    const empty = mk(() => ({ result: Promise.resolve({ stopReason: 'completed', output: [] }) }));
+    const r2 = await empty.run('polish', { prompt: 'x', sessionId: parent.id });
+    assert.equal(r2.ok, false);
+    assert.equal(r2.error.code, 'EMPTY_RESPONSE');
+
+    // output 直接给字符串（API 变形防御）
+    const str = mk(() => ({ result: Promise.resolve({ stopReason: 'completed', output: '字符串形态' }) }));
+    const r3 = await str.run('polish', { prompt: 'x', sessionId: parent.id });
+    assert.equal(r3.ok, true);
+    assert.equal(r3.text, '字符串形态');
+});
+
+test('engine: ★ start() 缺 parent 的历史病灶三连——不传 session / 会话无活 agent / start 被拒 → 全部结构化失败，绝不炸进程', async () => {
+    // 0.13.2 真机事故回归：start 返回 rejected promise 且调用方不 await →
+    // unhandled rejection 把整个 dsh web 进程打挂（"fatal load failure"）。
+    const parent = fakeParent();
+    const boom = createEngine({
+        ctx: {
+            subagents: { start: () => Promise.reject(new TypeError("Cannot read properties of undefined (reading 'options'))")) },
+            agents: fakeAgents(parent),
+        },
+        config: {}, sleep: noSleep,
+    });
+    const r = await boom.run('polish', { prompt: 'x', sessionId: parent.id });
+    assert.equal(r.ok, false);
+    assert.equal(r.error.code, 'ENGINE_FAILURE', 'start 的 rejection 必须被收编成结构化失败');
+
+    // 没穿 sessionId（旧客户端/旧端点）→ 人话指引，不碰 start
+    let touched = false;
+    const noSession = createEngine({
+        ctx: { subagents: { start: () => { touched = true; return { result: Promise.resolve({ stopReason: 'completed', output: [] }) }; } }, agents: fakeAgents(parent) },
+        config: {}, sleep: noSleep,
+    });
+    const r2 = await noSession.run('polish', { prompt: 'x' });
+    assert.equal(r2.ok, false);
+    assert.equal(r2.error.code, 'NO_PARENT_AGENT');
+    assert.equal(touched, false, '拿不到父 agent 就不该发起 start');
+
+    // 会话没有活 agent（历史会话已关）→ 同样 NO_PARENT_AGENT
+    const deadSession = createEngine({
+        ctx: { subagents: { start: () => { touched = true; return { result: Promise.resolve({ stopReason: 'completed', output: [] }) }; } }, agents: { get: () => undefined } },
+        config: {}, sleep: noSleep,
+    });
+    const r3 = await deadSession.run('polish', { prompt: 'x', sessionId: 'gone' });
+    assert.equal(r3.ok, false);
+    assert.equal(r3.error.code, 'NO_PARENT_AGENT');
+    assert.equal(touched, false);
+});
+
+test('engine: subagents 只能经 ctx.get() 解析时也可用（cordis 作用域链形态，补六真机复诊）', async () => {
+    // 真机复诊：novel-forge 未在顶层 inject 声明 subagents 时，cordis 不会把服务
+    // 物化到插件 ctx 的 fiber store——属性访问落空，但作用域链 ctx.get() 仍能解析。
+    // 探测必须双路都试，否则「服务在进程里存在（mnemon 能用）我却拿不到」。
+    const calls = [];
+    const subagents = {
+        start(provider, opts) {
+            calls.push({ provider, opts });
+            return { result: Promise.resolve({ stopReason: 'completed', output: [{ type: 'text', text: '校对结果' }] }) };
+        },
+    };
+    const parent = fakeParent('sess-9');
+    const ctx = new Proxy({}, {
+        get(_t, prop) {
+            if (prop === 'get') return (name) => (name === 'subagents' ? subagents : name === 'agents' ? fakeAgents(parent) : undefined);
+            if (prop === 'agentDefaultModel') return { provider: 'p9', model: 'm9' };
+            if (prop === 'logger') return { info() {}, warn() {} };
+            return undefined;
+        },
+    });
+    const engine = createEngine({ ctx, config: {}, sleep: noSleep });
+    assert.equal(engine.isAvailable(), true, 'get() 能解析 subagents → 视为具备模型能力');
+    const r = await engine.run('proofread', { prompt: '正文', sessionId: parent.id });
+    assert.equal(r.ok, true);
+    assert.equal(r.text, '校对结果');
+    assert.equal(calls[0].provider, 'spawn');
+    assert.equal(calls[0].opts.parent, parent, 'get() 解析到的 agents 服务同样要给出活父 agent');
+    assert.equal(calls[0].opts.agentOptions.provider, 'p9', '继承路由照带给子代理');
+});
+
+test('engine: 无 sessionId 时回退 currentInitiator——会话内工具路径（打标/检索）不识字也能锚到父会话', async () => {
+    const calls = [];
+    const parent = fakeParent('live-agent');
+    const subagents = {
+        start(provider, opts) {
+            calls.push({ provider, opts });
+            return { result: Promise.resolve({ stopReason: 'completed', output: [{ type: 'text', text: '标签' }] }) };
+        },
+    };
+    const engine = createEngine({
+        ctx: { subagents, agents: { get: () => undefined, currentInitiator: () => parent } },
+        config: {}, sleep: noSleep,
+    });
+    const r = await engine.run('annotate', { prompt: '正文片段' });
+    assert.equal(r.ok, true);
+    assert.equal(calls[0].opts.parent, parent, '发起边界里的 agent 兜底当父');
+});
+
+test('plugin inject: 顶层必须声明 subagents（声明是 cordis 物化服务的唯一开关——漏声明 = 真机静默 ENGINE_UNAVAILABLE 且全测试仍绿）', async () => {
+    const mod = await import('../lib/index.js');
+    assert.ok(Array.isArray(mod.inject) && mod.inject.includes('subagents'),
+        `inject = [${(mod.inject ?? []).join(', ')}]——缺 subagents 声明，润色/校对在 web profile 必挂`);
+});
+
+// ── parent 候选链（0.13.2 真机复诊升级）：显式会话没锚到 → 试书的归属会话
+//    （创建它的会话 agent 大概率活着、工作区必然是书所在工作区）──
+
+test('★ sessionIds 候选链：显式 sessionId 锚不到时，书的归属会话兜住 parent', async () => {
+    const bookParent = fakeParent('session-book-owner');
+    const started = [];
+    const engine = createEngine({
+        ctx: {
+            subagents: { start: (p, opts) => { started.push(opts); return { result: Promise.resolve({ stopReason: 'completed', output: [{ type: 'text', text: '校对稿' }] }) }; } },
+            agents: fakeAgents(bookParent),
+        },
+        config: {}, sleep: noSleep,
+    });
+    // 面板传来的会话（slot 旧 id）在注册表里没有活 agent；书的归属会话有
+    const r = await engine.run('proofread', { prompt: 'x', sessionId: 'session-slot-stale', sessionIds: ['session-book-owner'] });
+    assert.equal(r.ok, true, '候选链第二个 id 应锚定成功');
+    assert.equal(r.text, '校对稿');
+    assert.equal(started.length, 1);
+    assert.equal(started[0].parent, bookParent, 'parent 用的是书归属会话的活 agent');
+});
+
+test('★ 候选全空 + currentInitiator 无 → NO_PARENT_AGENT，报错列出试过的 id', async () => {
+    const engine = createEngine({
+        ctx: {
+            subagents: { start: () => { throw new Error('不应 start'); } },
+            agents: { get: () => undefined, currentInitiator: () => undefined },
+        },
+        config: {}, sleep: noSleep,
+    });
+    const r = await engine.run('polish', { prompt: 'x', sessionId: 'session-stale', sessionIds: ['session-dead'] });
+    assert.equal(r.ok, false);
+    assert.equal(r.error.code, 'NO_PARENT_AGENT');
+    assert.ok(r.error.message.includes('session-stale'), '报错要列出试过的 id 便于分清哪头丢的');
+    assert.ok(r.error.message.includes('session-dead'));
+});
+
+// ── parent 解析等待重试（真机实锤：agent 注册表懒注册——重启后逐个出现、
+//    会话关闭即消失。第一轮全落空等 2 秒再试，跨过注册窗口期）──
+
+test('★ 第一轮锚不到、agent 随后注册出现 → 等待重试后锚定成功', async () => {
+    const parent = fakeParent('session-late');
+    let getCalls = 0;
+    const waited = [];
+    const engine = createEngine({
+        ctx: {
+            subagents: { start: (p, opts) => ({ result: Promise.resolve({ stopReason: 'completed', output: [{ type: 'text', text: '成了' }] }) }) },
+            agents: { get: (id) => { getCalls += 1; return getCalls >= 2 ? parent : undefined; } },
+        },
+        config: {}, sleep: (ms) => { waited.push(ms); return Promise.resolve(); },
+    });
+    const r = await engine.run('polish', { prompt: 'x', sessionId: 'session-late' });
+    assert.equal(r.ok, true, '第二轮应锚定成功');
+    assert.equal(r.text, '成了');
+    assert.ok(waited.includes(2000), '重试前要等 PARENT_RETRY_DELAY_MS（实际等待：' + JSON.stringify(waited) + '）');
+    assert.ok(getCalls >= 2, '至少解析两轮（实际 ' + getCalls + ' 次）');
+});
+
+// ── 0.13.2 补七：父 agent 按需物化（agents.resume 兜底）─────────────────────
+// 真机复诊：孙宇测试会话存在，但其 agent 不在注册表（会话没开着就不驻留）——
+// 只查 get 的候选链对「面板旁路调用」结构性不可用，必须能按需把会话 agent 拉起来。
+
+test('engine: 候选会话未驻留时经 agents.resume 按需物化 parent——面板旁路的正路', async () => {
+    const parent = fakeParent('sess-9');
+    const resumeCalls = [];
+    const agents = {
+        get: () => undefined,
+        resume: async (opts) => { resumeCalls.push(opts); return parent; },
+    };
+    let gotParent;
+    const engine = createEngine({
+        ctx: {
+            subagents: { start: (_p, opts) => { gotParent = opts.parent; return { result: Promise.resolve({ stopReason: 'completed', output: [{ type: 'text', text: '润色稿' }] }) }; } },
+            agents,
+            agentDefaultModel: { provider: 'p1', model: 'm1' },
+        },
+        config: {}, sleep: noSleep,
+    });
+    const r = await engine.run('polish', { prompt: '正文', sessionId: 'sess-9' });
+    assert.equal(r.ok, true, 'resume 物化成功 → 调用放行');
+    assert.equal(r.text, '润色稿');
+    assert.deepEqual(resumeCalls[0], { resumeSessionId: 'sess-9' }, '按 resumeSessionId 拉起持久化会话');
+    assert.equal(gotParent, parent, '物化出的 handle 直接当 parent');
+});
+
+test('engine: resume 故障（缺 persistence 等）回退 currentInitiator，不炸', async () => {
+    const parent = fakeParent('init-1');
+    const engine = createEngine({
+        ctx: {
+            subagents: { start: () => ({ result: Promise.resolve({ stopReason: 'completed', output: [{ type: 'text', text: 'ok' }] }) }) },
+            agents: { get: () => undefined, resume: async () => { throw new Error('session persistence is not configured'); }, currentInitiator: () => parent },
+            agentDefaultModel: { provider: 'p1', model: 'm1' },
+        },
+        config: {}, sleep: noSleep,
+    });
+    const r = await engine.run('polish', { prompt: 'x', sessionId: 'sess-x' });
+    assert.equal(r.ok, true, 'resume 抛错 → 落到发起边界，整体仍成功');
+});
+
+test('engine: 候选会话已驻留（get 命中）时绝不触发 resume——零副作用路径优先', async () => {
+    const parent = fakeParent('sess-1');
+    let resumeCalled = false;
+    const engine = createEngine({
+        ctx: {
+            subagents: { start: () => ({ result: Promise.resolve({ stopReason: 'completed', output: [{ type: 'text', text: 'ok' }] }) }) },
+            agents: { get: (id) => (id === 'sess-1' ? parent : undefined), resume: async () => { resumeCalled = true; return parent; } },
+            agentDefaultModel: { provider: 'p1', model: 'm1' },
+        },
+        config: {}, sleep: noSleep,
+    });
+    const r = await engine.run('polish', { prompt: 'x', sessionId: 'sess-1' });
+    assert.equal(r.ok, true);
+    assert.equal(resumeCalled, false, 'get 已命中就不该去物化');
+});
+
+test('engine: NO_PARENT_AGENT 自带诊断——agents 服务整个不可解析时点名 inject 缺声明', async () => {
+    // 0.13.2 真机复诊：inject 漏声明 agents → readService('agents') 落空 →
+    // get/resume/currentInitiator 三路全空。报错必须自己说出这一层，不许让下轮排查再猜。
+    const engine = createEngine({ ctx: { subagents: { start: () => { throw new Error('不应走到 start'); } } }, config: {}, sleep: noSleep });
+    const r = await engine.run('polish', { prompt: 'x', sessionId: 'sess-1' });
+    assert.equal(r.ok, false);
+    assert.equal(r.error.code, 'NO_PARENT_AGENT');
+    assert.match(r.error.message, /agents 服务不可解析/);
+    assert.match(r.error.message, /inject/);
+});
+
+test('engine: NO_PARENT_AGENT 自带诊断——resume 抛错时把宿主拒绝原因带出来', async () => {
+    const engine = createEngine({
+        ctx: {
+            subagents: { start: () => { throw new Error('不应走到 start'); } },
+            agents: { get: () => undefined, resume: async () => { throw new Error('session persistence is not configured'); } },
+        },
+        config: {}, sleep: noSleep,
+    });
+    const r = await engine.run('polish', { prompt: 'x', sessionId: 'sess-1' });
+    assert.equal(r.error.code, 'NO_PARENT_AGENT');
+    assert.match(r.error.message, /resume 失败：session persistence is not configured/);
+});
+
+test('engine: stopReason=max-tokens → OUTPUT_TRUNCATED 专门错误（当前上限进报错，重试无意义）', async () => {
+    const engine = createEngine({
+        ctx: {
+            subagents: { start: () => ({ result: Promise.resolve({ stopReason: 'max-tokens' }) }) },
+            agents: { get: () => fakeParent('sess-1') },
+            agentDefaultModel: { provider: 'p1', model: 'm1' },
+        },
+        config: {}, sleep: noSleep,
+    });
+    const r = await engine.run('polish', { prompt: 'x', sessionId: 'sess-1' });
+    assert.equal(r.ok, false);
+    assert.equal(r.error.code, 'OUTPUT_TRUNCATED', 'max-tokens 不该落在笼统的 SUBAGENT_FAILED 里');
+    assert.match(r.error.message, /继承宿主默认上限/, '默认不设限时报错要如实说明继承语义');
+    assert.match(r.error.advice, /engine\.channels\.polish\.maxTokens/);
+});
+
+test('engine: 通道显式配置 maxTokens 时传给子代理，截断报错带具体数字', async () => {
+    const engine = createEngine({
+        ctx: {
+            subagents: { start: (_p, opts) => { seen = opts.agentOptions; return { result: Promise.resolve({ stopReason: 'max-tokens' }) }; } },
+            agents: { get: () => fakeParent('sess-1') },
+            agentDefaultModel: { provider: 'p1', model: 'm1' },
+        },
+        config: { engine: { channels: { polish: { maxTokens: 8192 } } } }, sleep: noSleep,
+    });
+    let seen;
+    const r = await engine.run('polish', { prompt: 'x', sessionId: 'sess-1' });
+    assert.equal(r.error.code, 'OUTPUT_TRUNCATED');
+    assert.equal(seen.maxTokens, 8192, '显式配置要生效');
+    assert.match(r.error.message, /8192/);
+});

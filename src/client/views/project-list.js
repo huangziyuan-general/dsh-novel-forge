@@ -72,6 +72,11 @@ export function ProjectListView({ state: s }) {
 
 		s.error ? Feedback({ tone: 'err' }, s.error) : null,
 		s.notice ? Feedback({ tone: 'ok' }, s.notice) : null,
+		// 会话过滤空、回落显示全部时的说明（0.13.2：宿主 slot 会话标识与书写入的 id 不同源）
+		s.sessionFallback === true
+			? h('div', { style: { ...hintStyle, fontSize: font.caption, marginBottom: space.sm } },
+				`本会话名下暂时没有匹配到书，先显示全部 ${s.projects.length} 本 —— 书都能正常打开；新建的书会归属到本会话。`)
+			: null,
 
 		// ── 列表 ──
 		s.loading

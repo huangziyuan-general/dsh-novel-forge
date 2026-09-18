@@ -7,6 +7,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { apply } from '../lib/index.js';
+import { applyProposal } from '../lib/proposals.js';
+import { createFsio } from '../lib/fsio.js';
 
 const c = (s) => `\x1b[36m${s}\x1b[0m`;
 const g = (s) => `\x1b[32m${s}\x1b[0m`;
@@ -47,6 +49,9 @@ const ctx = {
     fs: backend, emit() {}, logger: { info() {} },
     tools: { register: (t) => registered.push(t) },
     systemPrompt: { section: () => {} },
+    // server-api / 氛围基线等新通道在 apply() 里会经 ctx.inject / ctx.effect 挂载
+    inject: (deps, fn) => { fn({ effect: (f) => f(), webServer: { register: () => () => {} } }); },
+    effect: (f) => f(),
 };
 const exec = { signal: new AbortController().signal, agent: { session: { header: { cwd: root } } } };
 
@@ -126,9 +131,11 @@ try {
     ]);
 
     const p = await T('novel_propose').execute({ action: 'propose', book: '星海拾骨', chapter: 1, content: `${CHAPTER}\n\n她把那只鞋收进了棺材底下。`, reason: '补收束动作' }, exec);
-    const ap = await T('novel_propose').execute({ action: 'apply', book: '星海拾骨', proposal_id: p.id }, exec);
-    say('⑥ 提案制修订（旧版永不覆盖）', [
-        `  提案 ${p.id} → apply → ${ap.path}`,
+    // apply 是面板上的用户主权动作（工具面已移除）；这里经 proposals 库模拟面板点击。
+    const io = createFsio(ctx, exec, root);
+    const ap = await applyProposal(io, '星海拾骨', p.id, { minChapterChars: 150, maxChapterChars: 5000, repetitionWindow: 10 }, 'user');
+    say('⑥ 提案制修订（apply=面板用户主权；旧版永不覆盖）', [
+        `  提案 ${p.id} → 面板应用 → ${ap.path}`,
         `  v1 仍在：${fs.existsSync(path.join(root, '星海拾骨', '正文', '第1章-雨夜来客-v1.md')) ? g('是') : r('否')}`,
     ]);
 
@@ -137,4 +144,4 @@ try {
 } finally {
     fs.rmSync(root, { recursive: true, force: true });
 }
-console.log(`\n${g('演示完成（临时目录已清理）。npm test 看 61 个断言级用例。')}\n`);
+console.log(`\n${g('演示完成（临时目录已清理）。npm test 看 237 个断言级用例。')}\n`);

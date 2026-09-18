@@ -60,7 +60,7 @@ const ForgeBoundary = typeof Component === 'function'
  * @param {string|null} [opts.sessionId] 当前会话（slot inject 工厂给的）
  * @param {Function} [opts.onChange] 需要重渲染时的回调
  */
-export function createForgeController({ sessionId = null, onChange = () => {} } = {}) {
+export function createForgeController({ sessionId = null, resolveSessionId = null, onChange = () => {} } = {}) {
 	const state = initialState();
 	state.sessionId = sessionId ?? null;
 
@@ -68,8 +68,22 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		try { onChange(); } catch (error) { console.error('[novel-forge] 面板重渲染失败：', error); }
 	};
 
+	/** 会话 id 校正：slot inject 的标识可能与真 agent 会话 id 不同源（0.13.2 真机实锤：
+	 *  session-watch 用 sessions 服务的 id 能探到书，slot 的 id 过滤却是空、
+	 *  服务端 agents.get(slot id) 也找不到父会话）。sessions 服务的「当前会话」
+	 *  是已被证实能对上的来源 —— 发请求前对齐一次，过滤 / parent 锚定 / 认领 / 创建
+	 *  就都落在真 id 上。 */
+	const syncSession = () => {
+		if (typeof resolveSessionId !== 'function') return;
+		try {
+			const id = resolveSessionId();
+			if (typeof id === 'string' && id !== '' && id !== state.sessionId) state.sessionId = id;
+		} catch { /* sessions 面不可得：留在 slot inject 的 id 上 */ }
+	};
+
 	/** 给请求带上会话 —— 「项目跟会话走」就靠这一处收口。 */
 	const withSession = (path) => {
+		syncSession();
 		if (!state.sessionId) return path;
 		const sep = path.includes('?') ? '&' : '?';
 		return `${path}${sep}session=${encodeURIComponent(state.sessionId)}`;
@@ -129,11 +143,22 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 
 	// ── 业务动作 ──
 	const refreshProjects = async () => {
+		syncSession();
 		state.loading = true; state.error = ''; notify();
 		// 探针日志：用户卡「加载中」时，console 里有没有这行 + 后面有没有收尾，直接分诊
 		console.info('[novel-forge] GET /projects' + (state.sessionId ? `?session=${state.sessionId}` : '（无会话）'));
 		try {
 			state.projects = await apiFetch(withSession('/projects'));
+			// 回落：会话过滤为空但全量有书 → 显示全部。宿主 slot inject 给的会话
+			// 标识与工具写入 novel.json 的 session id 可能不同源（0.13.2 真机实锤：
+			// session-watch 用 sessions 服务的 id 能探到书、slot 的 id 过滤却是空），
+			// 与其让用户对着「还没有项目」发呆，不如摊开全部书让他点开。
+			if (state.projects.length === 0 && state.sessionId) {
+				state.projects = await apiFetch('/projects');
+				state.sessionFallback = state.projects.length > 0;
+			} else {
+				state.sessionFallback = false;
+			}
 		} catch (error) {
 			state.error = String(error?.message ?? error);
 			console.warn('[novel-forge] 项目列表加载失败：', state.error);
@@ -219,10 +244,11 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		state.selected = id; state.view = 'detail'; state.detail = null; state.chapterNo = 1;
 		state.draft = ''; state.error = ''; state.detailTab = 'info';
 		state.elements = null; state.discardPending = null; state.rename = null; state.listDeleteId = null; state.clone = null;
-		state.proposals = []; state.proposalBusy = null;
+		state.proposals = []; state.proposalBusy = null; state.proposalDetail = null; // 展开的全文也属于上一本书
 		// 换书：体检结果与批量结果都属于「上一本书」，必须清掉（否则会把 A 书的红字
 		// 挂在 B 书头上——这类串台比不显示更糟）
 		state.continuity = null; state.continuityError = ''; state.batchResult = null; state.revising = null;
+		state.diagnosis = null; state.diagnosisError = '';
 		state.reader = null; // 阅读器也属于「上一本书」
 		player.stop();
 		notify();
@@ -305,9 +331,35 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		try {
 			await apiFetch(`/projects/${encodeURIComponent(state.selected)}/proposals/${encodeURIComponent(proposalId)}/discard`, { method: 'POST' });
 			state.notice = `已丢弃提案 ${proposalId}`;
+			if (state.proposalDetail?.id === proposalId) state.proposalDetail = null;
 			await loadProposals(state.selected);
 		} catch (error) { state.error = String(error?.message ?? error); }
 		finally { state.proposalBusy = null; notify(); }
+	};
+
+	/** 展开/收起单条提案全文——应用前让人看清楚到底改了什么。
+	 *  0.13.1 之前提案卡只有「第 N 章」三个字，看不出提案要干嘛（仙尊实测反馈）。 */
+	const toggleProposalDetail = async (proposalId) => {
+		if (!state.selected) return;
+		if (!proposalId) {
+			state.error = '拿不到提案号（查看钮上应有 data-id）';
+			notify();
+			return;
+		}
+		// 再点一次收起
+		if (state.proposalDetail?.id === proposalId && !state.proposalDetail.loading) {
+			state.proposalDetail = null; notify();
+			return;
+		}
+		state.proposalDetail = { id: proposalId, loading: true, data: null, error: '' }; notify();
+		try {
+			const value = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/proposals/${encodeURIComponent(proposalId)}`);
+			if (state.proposalDetail?.id !== proposalId) return; // 期间已点别条/换书：丢弃陈旧响应
+			state.proposalDetail = { id: proposalId, loading: false, data: value, error: '' };
+		} catch (error) {
+			if (state.proposalDetail?.id !== proposalId) return;
+			state.proposalDetail = { id: proposalId, loading: false, data: null, error: String(error?.message ?? error) };
+		} finally { notify(); }
 	};
 
 	// ── 旁路引擎动作（0.13.0 · 融合第五批 D1）────────────────────────────────
@@ -336,7 +388,12 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		try {
 			const value = await apiFetch(
 				`/projects/${encodeURIComponent(state.selected)}/chapters/${state.chapterNo}/${mode}`,
-				{ method: 'POST', timeoutMs: REVISION_TIMEOUT_MS },
+				{
+					method: 'POST', timeoutMs: REVISION_TIMEOUT_MS,
+					// session = 面板锚定的会话 id：服务端拿它找活的父 agent 起子代理
+					// （SubagentStartRequest.parent 必填，缺了宿主直接炸进程——0.13.2 事故）。
+					body: JSON.stringify({ session: state.sessionId ?? undefined }),
+				},
 			);
 			const what = mode === 'proofread' ? '校对' : '润色';
 			const delta = Number(value?.deltaChars ?? 0);
@@ -358,10 +415,35 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		} finally { state.continuityLoading = false; notify(); }
 	};
 
+	/** 黄金三章诊断：钩子/开场/冲突/灌输四维数字。与 novel_diagnose 同一纯函数，零 token。 */
+	const loadDiagnosis = async () => {
+		if (!state.selected || state.diagnosisLoading) return;
+		state.diagnosisLoading = true; state.diagnosisError = ''; notify();
+		try {
+			state.diagnosis = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/diagnose`);
+		} catch (error) {
+			state.diagnosis = null;
+			state.diagnosisError = String(error?.message ?? error);
+		} finally { state.diagnosisLoading = false; notify(); }
+	};
+
 	// ── 批量起草（D2）──
 	//
 	// 服务端是**并发生成 + 串行提交**：每章照样过机审/内容门禁/账本/契约指标，
 	// 单章被拦不影响其余章。所以失败不是异常，是结果的一部分——摊给用户看，不吞。
+	/** 单章写章（0.13.2）：复用批量起草端点——from=当前编辑章、count=1。
+	 *  与会话里 novel_write_chapter 同一条 commitChapter 门禁链，直接落盘（版本化，旧稿保留）。
+	 *  被拦（细纲缺失/机审不过/熔断）不算异常——结果摊在批量结果区看。 */
+	const writeSingleChapter = async () => {
+		if (!state.selected || state.batchBusy) return;
+		const no = state.chapterNo || 1;
+		// 借用批量表单的值通道（表单会同步显示为单章，所见即所跑）
+		state.batchFrom = String(no);
+		state.batchCount = '1';
+		state.batchConcurrency = '1';
+		await runBatch();
+	};
+
 	const runBatch = async () => {
 		if (!state.selected || state.batchBusy) return;
 		state.batchBusy = true; state.error = ''; state.notice = ''; state.batchResult = null; notify();
@@ -374,6 +456,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 					count: Number(state.batchCount) || 1,
 					concurrency: Number(state.batchConcurrency) || 1,
 					force: state.batchForce === true,
+					session: state.sessionId ?? undefined,
 				}),
 			});
 			const st = state.batchResult?.stats ?? {};
@@ -381,6 +464,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 			// 新章会改变账本与提案队列；同时体检结果作废（它按章算的）
 			await Promise.all([loadChapterList(state.selected), loadProposals(state.selected)]);
 			state.continuity = null;
+			state.diagnosis = null; // 批量可能覆盖前三章（force 时），诊断同样作废
 		} catch (error) {
 			const raw = String(error?.message ?? error);
 			state.error = /ENGINE_UNAVAILABLE|引擎未就绪/.test(raw)
@@ -501,6 +585,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 	};
 
 	const handleAction = async (action, target) => {
+		syncSession();   // 所有带会话戳的动作（润色/校对/写章/认领/创建）先对齐真会话 id
 		state.error = ''; state.notice = '';
 		switch (action) {
 			case 'refresh-projects': await refreshProjects(); break;
@@ -593,16 +678,17 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 			case 'back-from-lore':
 			case 'back-from-settings': state.view = state.selected ? 'detail' : 'projects'; notify(); break;
 			case 'goto-settings': state.view = 'settings'; notify(); break;
-			case 'write': needsModel('一键写章要拼上下文包并走落盘门禁，只能在会话里做 —— 让 AI 调 novel_write_chapter，或直接说「写第 N 章」。'); break;
+			case 'write': await writeSingleChapter(); break;
 			case 'polish': await runRevision('polish'); break;
 			case 'proofread': await runRevision('proofread'); break;
 			case 'continuity': await loadContinuity(); break;
 			case 'draft-batch': await runBatch(); break;
-			case 'diagnose': needsModel('结构诊断需要模型判断，请在会话里调 novel_diagnose 或 novel_audit（诊断结果会落到审计里）。'); break;
+			case 'diagnose': await loadDiagnosis(); break;
 			case 'import-demo': case 'import-file': needsModel('请在会话中调用 novel_import 导入'); break;
 			case 'save': await saveChapter(); break;
 			case 'refresh': if (state.selected && state.chapterNo) await loadChapter(state.chapterNo); break;
 			// 提案：应用 / 丢弃都是**用户主权动作**（工具面刻意不提供，见 lib/proposals.js）
+			case 'proposal-view': await toggleProposalDetail(target.dataset.id); break;
 			case 'proposal-apply': await applyProposalAction(target.dataset.id); break;
 			case 'proposal-discard': await discardProposalAction(target.dataset.id); break;
 			case 'export': await exportProject(); break;
@@ -730,7 +816,7 @@ export function createForgeController({ sessionId = null, onChange = () => {} } 
 		void refreshProjects();
 	};
 
-	return { state, notify, attach, detach, start, setSession, refreshProjects, handleAction, loadProposals,
+	return { state, notify, attach, detach, start, setSession, refreshProjects, handleAction, syncSession, loadProposals,
 		stopPlayback: () => player.stop() };
 }
 
@@ -754,10 +840,13 @@ function panelSubtitle(s) {
 
 /**
  * 右侧栏面板组件（slot 框架渲染它）。
- * props.sessionId 由 forge-tab.js 的 inject 工厂注入 —— 会话身份的唯一来源。
+ * props.sessionId 由 forge-tab.js 的 inject 工厂注入；props.resolveSessionId 由
+ * index.js 的包装闭包注入（读 sessions 服务的当前会话 —— 0.13.2 起 slot 标识
+ * 与真 agent 会话 id 被证实可能不同源，发请求前以 resolver 对齐为准）。
  */
 export function ForgePanel(props) {
 	const sessionId = props?.sessionId ?? null;
+	const resolveSessionId = props?.resolveSessionId ?? null;
 	const [, forceTick] = useState(0);
 	const controllerRef = useRef(null);
 	const nodeRef = useRef(null);
@@ -765,6 +854,7 @@ export function ForgePanel(props) {
 	if (controllerRef.current === null) {
 		controllerRef.current = createForgeController({
 			sessionId,
+			resolveSessionId,
 			onChange: () => forceTick((n) => n + 1),
 		});
 	}

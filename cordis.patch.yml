@@ -5,8 +5,11 @@
     - id: 'dsh-novel-forge'
       name: 'dsh-novel-forge'
       config:
-        minChapterChars: 500
-        maxChapterChars: 12000
+        # 与 lib/index.js Config 默认值保持一致（起点标准 2000–4000）。
+        # ⚠️ patch 里显式给的值会覆盖 schema default——0.13.1 曾在这里留了旧值
+        # 500/12000，导致「字数标准升级」在真机上从未生效。
+        minChapterChars: 2000
+        maxChapterChars: 4000
         contextBudgetChars: 6000
         scanTopK: 8
         repetitionWindow: 10
