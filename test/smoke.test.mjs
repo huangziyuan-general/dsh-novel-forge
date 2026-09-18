@@ -143,6 +143,37 @@ const GOOD_CHAPTER = [
 test('装载：20 个工具注册 + 系统提示注入', () => {
     assert.equal(hasSdk, true, '缺宿主 SDK symlink：先 npm run setup-dev');
     assert.equal(ctx._registered.length, 20);
+    // 全工具 schema 形状守卫（parameters 已被 define-tool 归一为 JSON Schema）：
+    // 新工具最容易漏 output.schema 声明 / additionalProperties:false / required 指向不存在的字段。
+    for (const t of ctx._registered) {
+        const s = t.output?.schema;
+        assert.ok(s && s.type === 'object' && s.additionalProperties === false && s.properties
+            && Object.keys(s.properties).length > 0, `工具 ${t.name} 的 output.schema 形状不合规`);
+        for (const req of s.required ?? []) {
+            assert.ok(Object.hasOwn(s.properties, req), `工具 ${t.name} output.required 声明了不存在的字段 ${req}`);
+        }
+        const p = t.parameters;
+        assert.ok(p?.type === 'object' && p.properties
+            && Object.keys(p.properties).length > 0, `工具 ${t.name} 的 parameters 应归一为 JSON Schema`);
+        for (const [pname, pspec] of Object.entries(p.properties)) {
+            assert.ok(pspec.type !== undefined && pspec.description, `工具 ${t.name} 参数 ${pname} 缺 type/description`);
+        }
+        for (const req of p.required ?? []) {
+            assert.ok(Object.hasOwn(p.properties, req), `工具 ${t.name} required 声明了不存在的参数 ${req}`);
+        }
+    }
+});
+
+test('严格参数：垫片包装 execute 拒绝未知字段（宿主参数 schema 无严格开关）', async () => {
+    await assert.rejects(
+        () => tool('novel_project').execute({ action: 'status', book: '契约楼', bogus_field: 1 }, exec),
+        /无效参数（未知字段）/,
+    );
+    // 合法参数不受影响（契约楼在第 528 行的契约测试里创建，若先跑本用例则 book 校验在参数校验之后）
+    await assert.rejects(
+        () => tool('novel_project').execute({ action: 'status', book: '契约楼' }, exec),
+        (e) => !/无效参数/.test(e.message),
+    );
     assert.deepEqual(
         ctx._registered.map((t) => t.name),
         ['novel_project', 'novel_outline', 'novel_character', 'novel_worldbook', 'novel_scene', 'novel_briefing',

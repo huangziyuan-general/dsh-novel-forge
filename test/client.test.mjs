@@ -96,7 +96,9 @@ test('② 注册内容 seat：key 用 definition.id，且 inject 工厂能拿到
     //（跨 realm 的 Object.prototype 不同，strict deepEqual 会误判为不相等）
     assert.equal(seat.spec.inject('session-abc').sessionId, 'session-abc',
         'inject 工厂必须把 sessionId 交给面板（「项目跟会话走」的全部依据）');
-    assert.equal(seat.component, mod.exports.__internals.ForgePanel, '内容必须是面板组件');
+    // 0.13.2 起 component 是「注入 resolveSessionId 的包装层」（slot 标识 ≠ 真 agent
+    // 会话 id 时用 sessions 服务对齐），不再是裸 ForgePanel —— 行为由下方 resolver 用例直测。
+    assert.equal(typeof seat.component, 'function', '内容必须是（包装后的）面板组件');
 });
 
 // ── ③ 打开时机：有项目才显示 ──
@@ -361,6 +363,12 @@ function makeFetchRouter(requests) {
         requests.push({ url: u, init });
         const respond = (value) => Promise.resolve({ json: () => Promise.resolve({ ok: true, value }) });
         if (/\/elements($|\?)/.test(u)) return respond(ELEMENTS);
+        if (/\/proposals\/P\d[^/]*($|\?)/.test(u)) {
+            return respond({ id: 'P1-x', chapter: 1, title: '初入龙渊', reason: '补章末钩子', status: 'pending', content: '修订后的全文——结尾改成悬念对白。' });
+        }
+        if (/\/proposals($|\?)/.test(u)) {
+            return respond({ proposals: [{ id: 'P1-x', chapter: 1, status: 'pending', createdAt: '2026-09-15T06:39:13.577Z', title: '初入龙渊', reason: '补章末钩子', preview: '把结尾改成悬念对白' }] });
+        }
         if (/\/chapters\/\d+($|\?)/.test(u)) return respond(CHAPTER_TEXT);
         if (/\/chapters($|\?)/.test(u)) return respond(CHAPTERS);
         if (/\/projects\/[^/?]+($|\?)/.test(u)) return respond({ title: '星海拾骨', stage: 'planning', chapters: {} });
@@ -1139,4 +1147,147 @@ test('★ 世界书删除必须两步确认：第一击只点亮确认行，确�
     assert.equal(dels().length, 1, '确认击才发 DELETE');
     assert.ok(dels()[0].url.includes('/worldbook/'), '目标是世界书端点');
     assert.equal(controller.state.loreDeleteId, null, '删除后清掉确认态');
+});
+
+test('★ 提案卡富化：👁 查看拉全文展开（再点收起）；提案号缺失必须报错——提案不再只有「第 N 章」', async () => {
+    const { requests, controller } = bootBook();
+    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+
+    // 队列富化：章标题 / 理由 / 摘要随列表落 state（视图直接可显示）
+    assert.equal(controller.state.proposals?.length, 1, '提案队列落到 state');
+    assert.equal(controller.state.proposals[0].title, '初入龙渊');
+    assert.equal(controller.state.proposals[0].reason, '补章末钩子');
+    assert.ok(controller.state.proposals[0].preview);
+
+    // 👁 查看 → 拉全文展开
+    await controller.handleAction('proposal-view', { dataset: { id: 'P1-x' } });
+    assert.ok(requests.some((r) => /\/proposals\/P1-x($|\?)/.test(r.url)), '★ 查看必须真的去取该提案全文');
+    assert.equal(controller.state.proposalDetail?.id, 'P1-x');
+    assert.ok(controller.state.proposalDetail?.data?.content?.includes('修订后的全文'), '全文落进展开区');
+
+    // 再点一次收起
+    await controller.handleAction('proposal-view', { dataset: { id: 'P1-x' } });
+    assert.equal(controller.state.proposalDetail, null, '再点收起必须清空');
+
+    // 反向锁定：提案号缺失必须报错，不许静默（同 play-from / read-chapter 契约）
+    controller.state.error = '';
+    await controller.handleAction('proposal-view', { dataset: {} });
+    assert.match(controller.state.error, /提案号/, '★ 拿不到提案号必须给可读报错');
+});
+
+// ── 会话过滤空 → 回落显示全部（0.13.2 真机实锤：宿主 slot inject 的会话标识
+//    与工具写入 novel.json 的 session id 可能不同源——session-watch 用 sessions
+//    服务的 id 能探到书，面板用 slot 的 id 过滤却是空）──
+
+test('★ 会话过滤为空但全量有书：自动回落显示全部并标记 sessionFallback', async () => {
+    const calls = [];
+    const fetch = (url) => {
+        calls.push(String(url));
+        const isAll = !url.includes('session=') && !url.includes('scope=');
+        return Promise.resolve({
+            json: () => Promise.resolve({
+                ok: true,
+                value: isAll ? [{ name: '开局觉醒加特林' }] : [],
+            }),
+        });
+    };
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 'slot-side-id' });
+
+    await controller.refreshProjects();
+
+    assert.ok(calls.includes('/api/novel-forge/projects?session=slot-side-id'), '先按会话过滤查一次');
+    assert.ok(calls.some((u) => u === '/api/novel-forge/projects'), '★ 过滤为空要补一次全量');
+    assert.equal(controller.state.projects.length, 1, '回落后的全量书目要落到 state.projects');
+    assert.equal(controller.state.sessionFallback, true, '★ 标记回落，视图据此显示说明条');
+});
+
+test('★ 会话过滤非空：不回落、sessionFallback=false（不多发全量请求）', async () => {
+    const calls = [];
+    const fetch = (url) => {
+        calls.push(String(url));
+        return Promise.resolve({ json: () => Promise.resolve({ ok: true, value: [{ name: '书A' }] }) });
+    };
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+
+    await controller.refreshProjects();
+
+    assert.equal(controller.state.sessionFallback, false);
+    assert.equal(calls.filter((u) => u === '/api/novel-forge/projects').length, 0,
+        '过滤有结果就不该再打全量');
+});
+
+test('★ 会话过滤与全量都为空：sessionFallback=false，视图走「还没有项目」空态', async () => {
+    const seq = scriptedFetch([{ value: [] }, { value: [] }, { value: [] }]);
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch: seq.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+
+    await controller.refreshProjects();
+
+    assert.equal(controller.state.projects.length, 0);
+    assert.equal(controller.state.sessionFallback, false, '全量也空就不是回落场景');
+});
+
+// ── 会话 id 校正（0.13.2：slot inject 标识 ≠ 真 agent 会话 id 时，发请求前
+//    用 resolveSessionId（sessions 服务同源）对齐 —— parent 锚定/过滤/创建全落真 id）──
+
+test('★ resolveSessionId 提供真 id：列表请求按真 id 过滤，state.sessionId 被校正', async () => {
+    const calls = [];
+    const fetch = (url, init) => {
+        calls.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+        return Promise.resolve({ json: () => Promise.resolve({ ok: true, value: [] }) });
+    };
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch });
+    const controller = mod.exports.__internals.createForgeController({
+        sessionId: 'slot-side-id',
+        resolveSessionId: () => 'session-real-1',
+    });
+
+    await controller.refreshProjects();
+    const urls = calls.map((c) => c.url).join(' , ');
+    assert.ok(calls.some((c) => c.url === '/api/novel-forge/projects?session=session-real-1'),
+        '列表要按真会话 id 过滤（请求：' + urls + '）');
+    assert.equal(controller.state.sessionId, 'session-real-1', 'state 里也换成真 id');
+});
+
+test('★ 润色/校对的请求体带校正后的真会话 id（服务端 agents.get 靠它锚定父 agent）', async () => {
+    const calls = [];
+    const fetch = (url, init) => {
+        calls.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+        return Promise.resolve({ json: () => Promise.resolve({ ok: true, value: { proposalId: 'p1', chars: 100, deltaChars: 2 } }) });
+    };
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch });
+    const controller = mod.exports.__internals.createForgeController({
+        sessionId: 'slot-side-id',
+        resolveSessionId: () => 'session-real-2',
+    });
+    controller.state.selected = '某书';
+    controller.state.chapterNo = 1;
+
+    await controller.handleAction('proofread', { dataset: {} });
+
+    const post = calls.find((c) => c.url.indexOf('/chapters/1/proofread') !== -1);
+    assert.ok(post, '必须发出校对请求');
+    assert.equal(post.body.session, 'session-real-2', '请求体的 session 必须是真会话 id');
+});
+
+test('★ resolver 抛错：留在 slot inject 的 id 上（不炸不丢会话）', async () => {
+    const calls = [];
+    const fetch = (url) => { calls.push(String(url)); return Promise.resolve({ json: () => Promise.resolve({ ok: true, value: [{ name: '书A' }] }) }); };
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch });
+    const controller = mod.exports.__internals.createForgeController({
+        sessionId: 'slot-fallback',
+        resolveSessionId: () => { throw new Error('sessions 面不可得'); },
+    });
+
+    await controller.refreshProjects();
+    assert.equal(controller.state.sessionId, 'slot-fallback', 'resolver 抛错不得清掉会话 id');
+    assert.ok(calls.some((u) => u.indexOf('session=slot-fallback') !== -1), '退回 slot inject 的 id 继续请求');
 });

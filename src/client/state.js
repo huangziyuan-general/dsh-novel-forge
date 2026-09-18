@@ -22,7 +22,9 @@ export function initialState() {
 		view: 'projects', // 'projects' | 'detail' | 'lorebook' | 'settings'
 		selected: null,
 		// 项目列表
-		projects: [], unclaimed: [], loading: true, error: '', notice: '',
+		// sessionFallback：会话过滤为空但全量有书 → 回落显示全部（宿主 slot 会话标识
+		// 与工具写入的 session id 可能不同源，0.13.2 真机实锤）。null = 未触发过回落。
+		projects: [], sessionFallback: null, unclaimed: [], loading: true, error: '', notice: '',
 		creating: false, busy: false, title: '', genre: '',
 		// titleReset：书名输入是非受控的（defaultValue + key），创建成功清空后 bump 重置
 		titleReset: 0,
@@ -40,6 +42,8 @@ export function initialState() {
 		revising: null,
 		// 全书体检（GET /continuity，纯函数零 token）：null = 没查过
 		continuity: null, continuityLoading: false, continuityError: '',
+		// 黄金三章诊断（GET /diagnose，同为纯函数零 token）：null = 没查过
+		diagnosis: null, diagnosisLoading: false, diagnosisError: '',
 		// 批量起草（D2）：表单值 + 忙标记 + 结果
 		batchFrom: 1, batchCount: 3, batchConcurrency: 1, batchForce: false,
 		batchBusy: false, batchResult: null,
@@ -55,6 +59,8 @@ export function initialState() {
 		// 提案队列（0.7.0）：模型提的修订稿，pending 时等用户点「应用」才生成新版本。
 		// 工具面没有 apply（见 lib/proposals.js）——「批准钥匙」在面板这一侧。
 		proposals: [], proposalsLoading: false,
+		// 提案全文展开（👁 查看）：{ id, loading, data, error } | null
+		proposalDetail: null,
 		// 正在处理的提案 id（应用/丢弃中，按钮禁用以防重复点）；null = 空闲
 		proposalBusy: null,
 		// 世界书
