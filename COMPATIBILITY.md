@@ -3,7 +3,7 @@
 | dsh-novel-forge | 宿主 dsh（已验证） | 依据 |
 | --- | --- | --- |
 | 0.2.x – 0.13.x | 0.1.5-rc.1 | 本仓库开发与测试所用的宿主版本；插件只消费稳定面 |
-| 0.11.x（D1 旁路引擎） | dsh-llm 0.1.5-rc.2 | `ctx.llm.stream` 的调用契约按该版本核对（见下方依赖表） |
+| 0.13.1+（旁路引擎双路传输） | 同上 | web profile 走 `subagents`，直连 `ctx.llm` 保留（见下方依赖表） |
 
 ## 我们依赖的宿主面（升级宿主前逐条核对）
 
@@ -18,10 +18,13 @@
 | `ctx.fs.listDir` | `@deepseek-ai/dsh-fs` | 0.2.1 起依赖：`novel_clone_project` 经 `fsio.listNames` 扫描细纲目录（未批准细纲一并复制）。若宿主移除该面，克隆退化为"只复制已批准/已写章" |
 | `ctx.systemPrompt.section({name, order, text})` | 宿主 system-prompt 服务 | 工作流纪律注入 |
 | `exec.agent?.session?.header?.cwd` | 工具执行上下文 | 会话工作目录解析（`dsh-files` 同款） |
-| `ctx.llm.stream(options)` | `@deepseek-ai/dsh-llm`（0.1.5-rc.2） | **0.11.0 起**：D1 旁路引擎用它跑润色/校对/打标/起草。**可选依赖**——`inject` 没有可选形式，所以引擎在**调用时**自检 `ctx.llm`，缺失则优雅降级（插件照常装载，调用返回可读错误）。`purpose` 是封闭联合 `'compaction' \| 'session-title'`，**不要**用它做通道路由 |
+| `ctx.llm.stream(options)` | `@deepseek-ai/dsh-llm`（0.1.5-rc.2） | **0.11.0 起**：D1 旁路引擎直连传输（CLI profile 若暴露根级 llm）。**可选依赖**——引擎在**调用时**自检 `ctx.llm`，缺失则降级走 subagents（插件照常装载）。`purpose` 是封闭联合 `'compaction' \| 'session-title'`，**不要**用它做通道路由 |
+| `ctx.subagents.start('spawn', {…})` | 宿主 subagents 服务 | **0.13.1 起是 web profile 的主传输**：润色/校对/打标/起草经子代理跑（`parent` 必填且必须 await，`result.output` 取文本，`stopReason` 分类重试性）。web 架构里 `ctx.llm` 在插件所在 fiber 解析不到——第三方插件无一例外走 subagents |
+| `ctx.agents.get / ctx.agents.resume` | 宿主 agents 服务 | **0.13.2 起父会话锚定**：agent id == session id；`get` 只在会话 agent 驻留时有值，不驻留用 `resume({ resumeSessionId })` 按需物化（面板 REST 无执行边界）。inject 须同时声明 `subagents` 与 `agents`，缺一不可（cordis 只物化声明过的服务） |
 | `ctx.agentDefaultModel` | `dsh-agent-default-model` | 旁路通道的默认路由来源（不给 `engine.channels.*` 覆盖时继承它） |
 | `node:sqlite`（`DatabaseSync` + FTS5） | Node 运行时自带（22.19+ / 24+） | **0.11.0 起**：G1 检索索引。**非宿主依赖，是运行时依赖**——不可用时检索自动退化为子串匹配，其余功能不受影响。不引入 `better-sqlite3` |
 | `@deepseek-ai/schemastery` | 宿主自带 | Config schema |
+| 通道 maxTokens 语义 | 引擎层约定 | `engine.channels.<通道>.maxTokens` **默认 0＝不传**，继承宿主按模型校准的上限；显式设小会被推理模型（思考+整章重写）烧穿输出预算（`stopReason=max-tokens` → `OUTPUT_TRUNCATED`，不重试）。长文通道（polish/proofread/draft）`timeoutMs` 默认 600000，面板请求超时对齐 |
 | 宿主主题 CSS 变量 `--dsw-alias-*` | `@deepseek-ai/dsh-client-ui-theme` | **0.13.0 起明确依赖**：右侧栏面板的样式全部走宿主主题变量（`link` / `state-*-primary` / `bg-layer-*` / `border-l*` / `button-primary-fill` + `label-primary-foreground` 等）。**只用真名**——0.13.0 之前用的 `accent-strong` / `accent-soft` / `label-danger` / `bg-primary` 四个名字**宿主里根本不存在**，`var()` 全落到写死的深色回退值，跟随主题从未生效。不确定时先核该包的导出表；软底/软描边用 `color-mix(in srgb, <语义色> N%, transparent)` 可自动跟随浅/深主题 |
 
 ## 已知断裂史（改这些行为时务必 bump 主版本）
