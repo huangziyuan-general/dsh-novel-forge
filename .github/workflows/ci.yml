@@ -15,4 +15,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # 宿主真实 SDK（@deepseek-ai/dsh-tools 等）不在依赖里，本地靠
+      # setup-dev symlink 进来；CI 同构复刻：装一次 dsh，DSH_CHECKOUT 指
+      # 到安装根（其 node_modules/@deepseek-ai 下有 hoist 出来的宿主包）。
+      - name: Link host SDK (dsh)
+        run: |
+          npm install --prefix "$HOME/.dsh-ci" @deepseek-ai/dsh
+          DSH_CHECKOUT="$HOME/.dsh-ci" npm run setup-dev
       - run: npm test
