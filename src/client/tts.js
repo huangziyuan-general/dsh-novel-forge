@@ -28,7 +28,10 @@ export function chunkText(text, limit = 180) {
 		// 句末标点后断开（中英文标点都照顾到）
 		for (const s of p.split(/(?<=[。！？；!?;.])\s*/)) {
 			const t = s.trim();
-			if (t) pieces.push(t);
+			if (!t) continue;
+			// L16 修复：无句读的超长段按字数硬切——整段塞给 TTS 引擎会被拒或整块吞掉
+			if (t.length <= limit) { pieces.push(t); continue; }
+			for (let i = 0; i < t.length; i += limit) pieces.push(t.slice(i, i + limit));
 		}
 	}
 	const chunks = [];
@@ -97,6 +100,7 @@ export function createTtsPlayer({ synth, loadChapter, hasChapter, nextChapterAft
 	let generation = 0;         // stop() / 新一次 playFrom 各 +1；旧代际的 onend 一律作废
 	let queue = [];
 	let idx = 0;
+	let speaking = false;       // 有没有一块utterance正挂在引擎上（L15：暂停时机补偿用）
 
 	// 连播要找"目录里下一章"，而不是无脑 currentNo+1 —— 章号有缺口不能卡在缺口处。
 	const getNext = nextChapterAfter ?? ((no) => (hasChapter(no + 1) ? no + 1 : null));
@@ -113,6 +117,9 @@ export function createTtsPlayer({ synth, loadChapter, hasChapter, nextChapterAft
 
 	const speakNext = (gen) => {
 		if (gen !== generation) return;
+		// L15 修复：暂停态不开新块——「取文窗口期按下暂停」时正文随后回来，
+		// 不该无视 paused 状态直接开腔（恢复播放由 resume() 统一踢一脚）
+		if (status === 'paused') return;
 		if (idx >= queue.length) {
 			// 本章读完 → 连播下一章（按目录找第一个编号更大的章）；目录尽头自动收工
 			const next = getNext(currentNo);
@@ -123,11 +130,12 @@ export function createTtsPlayer({ synth, loadChapter, hasChapter, nextChapterAft
 		const text = queue[idx++];
 		// 真机必须用 SpeechSynthesisUtterance 实例（见 defaultUtteranceFactory 注释）
 		const u = makeUtterance(text);
-		u.onend = () => speakNext(gen);
-		u.onerror = () => speakNext(gen);
+		speaking = true;
+		u.onend = () => { speaking = false; speakNext(gen); };
+		u.onerror = () => { speaking = false; speakNext(gen); };
 		// 引擎对某一块同步抛错不能把链卡死在 playing —— 跳过继续（异常引擎最终会收工）
 		try { synth.speak(u); }
-		catch { speakNext(gen); }
+		catch { speaking = false; speakNext(gen); }
 	};
 
 	const startChapter = async (no, gen) => {
@@ -172,6 +180,9 @@ export function createTtsPlayer({ synth, loadChapter, hasChapter, nextChapterAft
 		try { synth.resume(); } catch { /* 同上 */ }
 		status = 'playing';
 		emit();
+		// L15 修复：暂停落在「取文窗口」时引擎里根本没有块，synth.resume() 是空操作
+		// ——恢复时若没有在播的块，由这里把队列踢起来，否则永远停在假暂停
+		if (!speaking) speakNext(generation);
 	};
 
 	const stop = () => {
