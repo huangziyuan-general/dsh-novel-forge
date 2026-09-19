@@ -5,8 +5,8 @@
 // dsh 只加载 package.json 的 exports["./client"]，也就是那个**构建产物**；
 // 源码本身是 ESM，dsh 看不懂也不会去读。所以改完源码必须跑 build，再重启 dsh。
 //
-// 0.5.0 入口路线（仙尊 2026-09-13 定）：**右侧栏 tab**，不再往左侧栏注入 DOM。
-//   · 没写过小说的会话不打扰 —— 本会话有项目时才把它放上屏幕（session-watch.js）；
+// 0.13.x 入口路线（仙尊 2026-09-13 定，0.13.6 现状）：**右侧栏常驻独立 tab**。
+//   · 会话里有没有项目都放上屏幕（空会话由 project-list.js 给引导空态）；
 //   · 项目跟会话走 —— 列表按会话过滤（sessionId 来自 slot inject 工厂）。
 //
 // 契约（被 test/client.test.mjs 与 dsh 双向依赖）：
@@ -18,13 +18,16 @@ import { ForgePanel, createForgeController } from './panel.js';
 import { chunkText, createTtsPlayer, resolveSynth } from './tts.js';
 import { apiFetch, FETCH_TIMEOUT_MS } from './api.js';
 import { buildCss, ensureStyles, PANEL_ATTR, STYLE_ID } from './css.js';
-// 纯渲染原语：测试直测 role 契约（Feedback）与列表筛选（projectMatches / ProjectListView）
-import { Feedback } from './ui.js';
+// 纯渲染原语：测试直测 role 契约（Feedback）与列表筛选（projectMatches / ProjectListView）。
+// Btn / ChapterListView 也在此列：aria-label 这类「参数被白名单静默吞掉」的缺陷
+// 只有渲染结果能证明（控制器测不到视图真正写出去的 props）。
+import { Feedback, Btn } from './ui.js';
 import { ProjectListView, projectMatches } from './views/project-list.js';
+import { ChapterListView } from './views/chapters.js';
 
 // 版本号：必须与 package.json 的 version 一致。
 // build-client.mjs 会把它与 package.json 对账，不一致直接构建失败（防发行漂移）。
-const PLUGIN_VERSION = '0.13.6';
+const PLUGIN_VERSION = '0.13.7';
 
 // 供视图头部徽标读取 —— 让视图层不必反向 import 入口（避免循环依赖）。
 window.__NOVEL_FORGE_VERSION__ = PLUGIN_VERSION;
@@ -65,7 +68,11 @@ function apply(ctx) {
 	//    面板内部仍按会话语义过滤项目列表，空会话给引导空态（见 project-list.js），
 	//    所以无条件打开不会露丑。延迟重试由 openForgeTab 自己兜（seat 未挂载会抛）。
 	try {
-		openForgeTab(ctx);
+		// openForgeTab 返回 disposer（内部最多重试 120×250ms ≈ 30s）。原先返回值被丢弃
+		// ⇒ 插件卸载后重试链还在跑。ctx.effect 的回调立即执行、**返回值登记为清理函数**，
+		// 正好用来在卸载时把 disposer 叫上。
+		const dispose = openForgeTab(ctx);
+		if (typeof ctx.effect === 'function') ctx.effect(() => dispose);
 	} catch (error) {
 		console.warn('[novel-forge] 独立打开右侧栏 tab 失败，可从右侧栏 guide 页手动进入（"小说锻炉"）', error);
 	}
@@ -99,4 +106,6 @@ export const __internals = {
 	buildCss, ensureStyles, PANEL_ATTR, STYLE_ID,
 	// 视图原语：Feedback 的 role 契约、列表筛选的匹配与渲染
 	projectMatches, ProjectListView, Feedback,
+	// Btn（无障碍名是否真落到 props）与章节目录视图（图标按钮的 aria-label 端到端）
+	Btn, ChapterListView,
 };

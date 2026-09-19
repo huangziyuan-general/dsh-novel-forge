@@ -311,6 +311,11 @@ export const errStyle = {
 	wordBreak: 'break-word', lineHeight: 1.6,
 };
 export const okStyle = { color: color.ok, fontSize: font.small };
+/** 警告类状态文案（门禁提示等）：比红字轻、比绿字认真。 */
+export const warnStyle = {
+	flex: 'auto', minWidth: 0, color: color.warn, fontSize: font.small,
+	wordBreak: 'break-word', lineHeight: 1.6,
+};
 
 /**
  * 空态：图标 + 一句主文案 + 可选的次文案/动作。

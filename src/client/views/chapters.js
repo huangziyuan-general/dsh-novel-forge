@@ -83,8 +83,8 @@ export function ChapterListView({ state: s }) {
 			isCurrent && playing ? Chip({ tone: 'accent' }, '♪ 播报中') : null,
 			c.version > 1 ? Chip({}, `v${c.version}`) : null,
 			h('span', { style: { ...hintStyle, fontSize: font.caption, whiteSpace: 'nowrap' } }, `${c.chars ?? 0} 字`),
-			Btn({ variant: 'ghost', size: 'sm', action: 'read-chapter', id: c.no, title: `阅读第 ${c.no} 章`, 'aria-label': `阅读第 ${c.no} 章` }, '📖'),
-			Btn({ variant: 'ghost', size: 'sm', action: 'play-from', id: c.no, title: `从第 ${c.no} 章开始听`, 'aria-label': `从第 ${c.no} 章开始听` }, '▶'),
+			Btn({ variant: 'ghost', size: 'sm', action: 'read-chapter', id: c.no, title: `阅读第 ${c.no} 章`, ariaLabel: `阅读第 ${c.no} 章` }, '📖'),
+			Btn({ variant: 'ghost', size: 'sm', action: 'play-from', id: c.no, title: `从第 ${c.no} 章开始听`, ariaLabel: `从第 ${c.no} 章开始听` }, '▶'),
 		);
 	});
 
@@ -96,7 +96,7 @@ export function ChapterListView({ state: s }) {
 				style: { flex: '1 1 auto', minWidth: 0, fontWeight: weight.semibold, fontSize: font.small },
 			}, `📖 第 ${s.reader.no} 章 · ${s.reader.title}`),
 			Btn({ variant: 'secondary', size: 'sm', action: 'play-from', id: s.reader.no, title: `从第 ${s.reader.no} 章开始听` }, '▶ 朗读本章'),
-			Btn({ variant: 'ghost', size: 'sm', action: 'close-reader', title: '收起阅读器', 'aria-label': '收起阅读器' }, '✕'),
+			Btn({ variant: 'ghost', size: 'sm', action: 'close-reader', title: '收起阅读器', ariaLabel: '收起阅读器' }, '✕'),
 		),
 		h('div', {
 			style: {

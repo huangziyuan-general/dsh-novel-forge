@@ -1291,3 +1291,153 @@ test('★ resolver 抛错：留在 slot inject 的 id 上（不炸不丢会话�
     assert.equal(controller.state.sessionId, 'slot-fallback', 'resolver 抛错不得清掉会话 id');
     assert.ok(calls.some((u) => u.indexOf('session=slot-fallback') !== -1), '退回 slot inject 的 id 继续请求');
 });
+
+// ── 0.13.7 复核补账 ──
+// 这一批全部来自「修复复核」：四项都曾在实现层修好、却在别处静默失效，
+// 而既有测试面（只测控制器读到的参数、不测渲染结果 / 不测被丢弃的返回字段）拦不住。
+
+/** 一本小书的完整 REST 路由；applyValue 决定「应用提案」端点返回什么。 */
+function forgeRouter(requests, { applyValue, onDelete } = {}) {
+    const respond = (value) => Promise.resolve({ json: () => Promise.resolve({ ok: true, value }) });
+    return (url, init) => {
+        const u = decodeURIComponent(String(url));
+        requests.push({ url: u, init });
+        if (init?.method === 'POST' && /\/proposals\/[^/?]+\/apply($|\?)/.test(u)) {
+            return respond(applyValue ?? { chapter: 1, version: 2, gate: null });
+        }
+        if (init?.method === 'DELETE') return onDelete ?? respond({});
+        if (/\/proposals($|\?)/.test(u)) return respond({ proposals: [] });
+        if (/\/elements($|\?)/.test(u)) {
+            return respond({
+                meta: null, outline: { full: null, chapterOutlines: [] }, characters: [],
+                worldbookCount: 0, glossaryCount: 0, facts: [], foreshadows: [],
+            });
+        }
+        if (/\/chapters\/\d+($|\?)/.test(u)) return respond('第一章正文。');
+        if (/\/chapters($|\?)/.test(u)) return respond([{ no: 1, title: '第一章', chars: 20, version: 1 }]);
+        if (/\/projects\/[^/?]+($|\?)/.test(u)) return respond({ title: '书A', stage: 'planning', chapters: {} });
+        return respond([{ name: '书A' }]);
+    };
+}
+
+function bootWith(fetch) {
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+    return { dom, mod, controller };
+}
+
+test('★ 应用提案：服务端 gate 的阻断/警告必须进 state 并在文案留痕（面板丢弃 = M6 只修了数据层）', async () => {
+    const gate = {
+        ok: false,
+        blocking: ['第1章 林晚 已死亡仍行动'],
+        warnings: ['悬念保护：隐藏人物「白衣人」在正文出现'],
+    };
+    const requests = [];
+    const { controller } = bootWith(forgeRouter(requests, { applyValue: { chapter: 1, version: 2, gate } }));
+    await controller.handleAction('open', { dataset: { id: '书A' } });
+    await controller.handleAction('proposal-apply', { dataset: { id: 'P1-x' } });
+
+    assert.ok(controller.state.gateNotice, '★ gate 不许被丢弃：必须有 state 承载');
+    assert.deepEqual(controller.state.gateNotice.blocking, gate.blocking, '阻断项原样呈现');
+    assert.deepEqual(controller.state.gateNotice.warnings, gate.warnings, '警告项原样呈现');
+    assert.equal(controller.state.gateNotice.chapter, 1, '提示要说清是哪一章');
+    assert.equal(controller.state.gateNotice.version, 2, '…哪一版');
+    assert.match(controller.state.notice, /门禁提示 2 条/, '★ notice 里必须留一句：视图哪天真化漏了也不至于回到静默');
+});
+
+test('★ 门禁干净（gate.ok / gate=null）：不制造噪音', async () => {
+    for (const gate of [{ ok: true, blocking: [], warnings: [] }, null]) {
+        const requests = [];
+        const { controller } = bootWith(forgeRouter(requests, { applyValue: { chapter: 1, version: 2, gate } }));
+        await controller.handleAction('open', { dataset: { id: '书A' } });
+        await controller.handleAction('proposal-apply', { dataset: { id: 'P1-x' } });
+        assert.equal(controller.state.gateNotice, null, `gate=${JSON.stringify(gate)} 时不该弹提示`);
+        assert.doesNotMatch(controller.state.notice, /门禁提示/, '没问题就别提');
+    }
+});
+
+test('★ 删除确认态不得跨书存活：A 书点过「删除」→ 开 B 书必须回到未确认', async () => {
+    const requests = [];
+    const { controller } = bootWith(forgeRouter(requests));
+    await controller.handleAction('open', { dataset: { id: '书A' } });
+    await controller.handleAction('delete', { dataset: {} });
+    assert.equal(controller.state.deleteState, 'confirm', '第一步 = 进入确认态');
+
+    await controller.handleAction('open', { dataset: { id: '书B' } });
+    assert.equal(controller.state.deleteState, null, '★ openProject 必须清掉上一本书的确认态');
+
+    const deletions = () => requests.filter((r) => r.init?.method === 'DELETE').length;
+    const before = deletions();
+    await controller.handleAction('delete', { dataset: {} });
+    assert.equal(controller.state.deleteState, 'confirm', '在 B 书点「删除」仍然只是确认');
+    assert.equal(deletions(), before, '★ 绝不能因为残留的 confirm 就直接把 B 书删了');
+});
+
+test('★ goBack 同样清 deleteState（回列表再进详情页，确认态不许复活）', async () => {
+    const requests = [];
+    const { controller } = bootWith(forgeRouter(requests));
+    await controller.handleAction('open', { dataset: { id: '书A' } });
+    await controller.handleAction('delete', { dataset: {} });
+    await controller.handleAction('back', { dataset: {} });
+    assert.equal(controller.state.deleteState, null, '返回时确认态必须归零');
+    assert.equal(controller.state.gateNotice, null, '门禁提示也属于上一本书');
+});
+
+test('★ 列表删除在途：确认行留在原位，用独立 listDeleting 而非 listDeleteId 哨兵', async () => {
+    const requests = [];
+    let release;
+    const pending = new Promise((resolve) => { release = resolve; });
+    const { controller } = bootWith(forgeRouter(requests, {
+        onDelete: pending.then(() => ({ json: () => Promise.resolve({ ok: true, value: {} }) })),
+    }));
+
+    await controller.handleAction('list-delete', { dataset: { id: '书A' } });
+    assert.equal(controller.state.listDeleteId, '书A', '第一步进入待确认');
+
+    const running = controller.handleAction('list-delete', { dataset: { id: '书A' } });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(controller.state.listDeleting, true, '在途必须打独立标记');
+    assert.equal(controller.state.listDeleteId, '书A',
+        '★ 不许把 listDeleteId 改成 busy 哨兵：确认行按 listDeleteId === p.name 渲染，哨兵会让整行在请求期间消失，视图里的「删除中…」分支也就成了死代码');
+
+    release();
+    await running;
+    assert.equal(controller.state.listDeleting, false, '收尾必须复位');
+    assert.equal(controller.state.listDeleteId, null, '删完确认行收起');
+});
+
+test('★ Btn：ariaLabel 与 kebab 的 aria-label 两种写法都必须落到 DOM 属性', () => {
+    const { mod } = boot();
+    const { Btn } = mod.exports.__internals;
+    assert.equal(Btn({ action: 'read-chapter', id: 1, ariaLabel: '阅读第 1 章' }, '📖').props['aria-label'],
+        '阅读第 1 章', 'camelCase 入参要写成 aria-label');
+    assert.equal(Btn({ action: 'play-from', id: 1, 'aria-label': '从第 1 章开始听' }, '▶').props['aria-label'],
+        '从第 1 章开始听',
+        '★ kebab 写法同样必须生效：0.13.6 只认 camelCase，而调用点写的是 kebab → 三个图标按钮全部静默失声');
+    assert.equal(Btn({ action: 'x' }, '普通按钮').props['aria-label'], undefined, '不传时不得凭空造属性');
+});
+
+test('★ 章节目录：纯图标按钮（📖 / ▶）端到端必须带 aria-label，读屏不能只听到 emoji', () => {
+    const { mod } = boot();
+    const { ChapterListView } = mod.exports.__internals;
+    const tree = ChapterListView({
+        state: {
+            chapterList: [{ no: 1, title: '第一章', chars: 20, version: 2 }],
+            chapterListLoading: false, playback: { status: 'idle', currentNo: null },
+            reader: { no: 1, title: '第一章', text: '正文', loading: false },
+            chapterNo: 1, selected: '书A', batchBusy: false, writing: false, revising: null,
+        },
+    });
+    const textOf = (el) => {
+        const c = el.props?.children;
+        const v = Array.isArray(c) ? c[0] : c;
+        return typeof v === 'string' ? v : '';
+    };
+    const iconOnly = collect(tree, (el) => el.props?.['data-action']
+        && ['📖', '▶', '✕'].includes(textOf(el)));
+    assert.ok(iconOnly.length >= 2, `前置：目录里应有图标按钮（实测 ${iconOnly.length} 个）`);
+    for (const b of iconOnly) {
+        assert.ok(b.props['aria-label'], `★ ${textOf(b)} 按钮必须有 aria-label（视图传的键名要和 Btn 收的键名对上）`);
+    }
+});
