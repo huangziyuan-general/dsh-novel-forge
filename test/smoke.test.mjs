@@ -1283,3 +1283,29 @@ test('★ G2 书库：导入饲料 → 拆结构 → 与本书并排 → 只移�
     assert.ok(del.note.includes('手工删'), '必须告诉用户原文还在磁盘上');
     assert.equal(fs.existsSync(path.join(root, '书库', '对标样本', '原文.txt')), true, 'delete 不得删原文');
 });
+
+// ── 会话「孙宇」真机事故回归：novel_scene 恒 invalid output（13 次全军覆没）──
+// 根因：normalizeContract 产出 updatedAt，output schema 没声明 → 宿主
+// additionalProperties:false 直接拒收。schema 补字段 + 出口盖章双保险。
+
+test('★ novel_scene 输出 schema 必须声明 updatedAt（contract 与 contracts[] 两处）', () => {
+    const scene = tool('novel_scene');
+    const contractProps = scene.output.schema.properties.contract.properties;
+    assert.ok(contractProps.updatedAt !== undefined, 'contract 的 schema 缺 updatedAt');
+    const itemProps = scene.output.schema.properties.contracts.items.properties;
+    assert.ok(itemProps.updatedAt !== undefined, 'contracts[] 条目的 schema 缺 updatedAt');
+});
+
+test('★ 存量契约缺 updatedAt（旧版数据）：出口盖章成 string，不漏 null', async () => {
+    const scene = tool('novel_scene');
+    const cPath = path.join(root, '星海拾骨', '设定', '场景契约.json');
+    assert.ok(fs.existsSync(cPath), '前置：B3 测试已落盘契约');
+    const legacy = JSON.parse(fs.readFileSync(cPath, 'utf8'));
+    delete legacy['2'].updatedAt;
+    fs.writeFileSync(cPath, JSON.stringify(legacy));
+
+    const got = await scene.execute({ action: 'get', book: '星海拾骨', chapter: 2 }, exec);
+    assert.equal(typeof got.contract.updatedAt, 'string', 'get 出口 updatedAt 必须是 string');
+    const listed = await scene.execute({ action: 'list', book: '星海拾骨' }, exec);
+    for (const c of listed.contracts) assert.equal(typeof c.updatedAt, 'string', 'list 出口同样盖章');
+});

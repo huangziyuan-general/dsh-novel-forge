@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.13.3 (2026-09-19)
+
+- **novel_scene 恒 invalid output 修复**：`normalizeContract` 产出 `updatedAt`，
+  但 output schema 的 `contract` / `contracts[]` 条目都没声明它——宿主按
+  `additionalProperties:false` 严格校验直接拒收。真机会话复盘：该工具在
+  整个连载会话 **13 次调用全军覆没、0 成功**（场景契约读写一直没生效过）。
+  修：schema 两处补 `updatedAt`；出口对存量数据（无 updatedAt）盖章成 string。
+- **novel_style check 对旧基线防御**：旧版本基线条目可能缺 `sigma`/`tolerance`，
+  `judgeAgainstBaseline` 逐项兜底（undefined 混进输出会被宿主 lossless JSON
+  拒收，报「value is not lossless JSON」）；`chapters` 同样兜底为整数。
+- 测试 240 项（新增 3 条：schema 声明、存量盖章、旧基线无 undefined）。
+
 ## 0.13.2 (2026-09-18)
 
 - **工具参数严格化（全工具）**：`define-tool.js` 垫片包装 `execute`，未知参数字段一律拒绝，20 个工具一处生效（宿主参数 schema 无 `additionalProperties:false` 开关）。

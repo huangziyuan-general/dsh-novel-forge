@@ -1372,3 +1372,23 @@ test('diagnoseIntro: 空书给「先写第 1 章」，超三章只取前三', ()
     });
     assert.equal(many.perChapter.length, 3, '黄金三章只看前三章');
 });
+
+// ── 会话「孙宇」真机事故回归（0.13.3 复盘）：宿主对工具输出做 strict
+//    lossless-JSON 校验，undefined / 未声明字段都会被判 invalid output ──
+
+test('judgeAgainstBaseline: 旧基线条目缺 sigma/tolerance → 输出补齐、无 undefined 混入', () => {
+    const metrics = measureStyleMetrics('林晚把刀收进鞘，转身走了。雨还在下，落在青石板上。');
+    // 模拟旧版本基线：条目只有 mu（没有 sigma / tolerance）
+    const legacy = { chapters: 3, dims: { syntax: { mu: 2 }, modifier: { mu: 20, tolerance: 30 } } };
+    const judged = judgeAgainstBaseline(metrics, legacy, {});
+    const bad = [];
+    const walk = (v, p) => {
+        if (v === undefined) { bad.push(p); return; }
+        if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) walk(x, p + '.' + k);
+    };
+    walk(judged.dims, 'dims');
+    assert.deepEqual(bad, [], 'dims 里不得有 undefined（宿主 lossless JSON 拒收）');
+    assert.equal(judged.dims.syntax.tolerance, 35, '缺 tolerance 兜底 35');
+    assert.equal(judged.dims.syntax.sigma, null, '缺 sigma 兜底 null');
+    assert.equal(judged.dims.modifier.tolerance, 30, '给了 tolerance 照用');
+});
