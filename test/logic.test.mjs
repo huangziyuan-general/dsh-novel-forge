@@ -1176,27 +1176,40 @@ test('★ 字数标准：写前简报带「本章字数目标」段（会话写�
     assert.ok(b.totalChars >= own, 'totalChars 要计入字数目标段');
 });
 
-test('★ createServerFsio.writeTextIfVersion：有版本走 replaceIfVersion，无版本普通新建（REST 认领/写章的守卫写）', async () => {
+test('★ createServerFsio 乐观并发原语：读时带回版本，写时按**读取那一刻**的版本下守卫 intent', async () => {
     const { createServerFsio } = await import('../lib/fsio.js');
     const writes = [];
-    const files = new Map([['书/novel.json', { type: 'file', version: 7 }]]);
+    const files = new Map([['书/novel.json', { type: 'file', version: 7, text: '{"a":1}' }]]);
     const fakeCtx = {
         fs: {
             async resolve(p) { return `/abs/${p}`; },
             async stat(target) { const name = target.slice(5); return files.get(name); },
+            async readText(target) { return files.get(target.slice(5))?.text ?? null; },
             async writeText(target, text, intent) { writes.push({ target, text, intent }); return { version: 8 }; },
         },
     };
     const fsio = createServerFsio(fakeCtx, '/root');
 
-    // 已有文件 → 带 replaceIfVersion + stat 到的 version
-    await fsio.writeTextIfVersion('书/novel.json', 'x');
-    assert.deepEqual(writes[0].intent, { kind: 'replaceIfVersion', version: 7 }, '必须带版本守卫 intent');
+    const { text, version } = await fsio.readTextWithVersion('书/novel.json');
+    assert.equal(text, '{"a":1}');
+    assert.equal(version, 7, '★ 版本必须来自读取这一刻（H2 的根因就是它来自写前一刻）');
+    const absent = await fsio.readTextWithVersion('书/没有.json');
+    assert.deepEqual(absent, { text: null, version: null });
+
+    const json = await fsio.readJsonWithVersion('书/novel.json');
+    assert.deepEqual(json, { value: { a: 1 }, version: 7 });
+
+    // 已有基线 → replaceIfVersion(读取时的版本)
+    await fsio.writeTextAtVersion('书/novel.json', 'x', version);
+    assert.deepEqual(writes[0].intent, { kind: 'replaceIfVersion', version: 7 });
     assert.equal(writes[0].target, '/abs/书/novel.json');
 
-    // 新文件 → 无 intent（普通新建）
-    await fsio.writeTextIfVersion('书/新.json', 'y');
-    assert.equal(writes[1].intent, undefined, '目标不存在时不应带 intent');
+    // 读时不存在 → createIfAbsent（期间被人建了就该响亮失败，而不是覆盖）
+    await fsio.writeTextAtVersion('书/新.json', 'y', null);
+    assert.deepEqual(writes[1].intent, { kind: 'createIfAbsent' });
+
+    await fsio.writeJsonAtVersion('书/novel.json', { b: 2 }, 7);
+    assert.deepEqual(writes[2].intent, { kind: 'replaceIfVersion', version: 7 }, 'writeJsonAtVersion 同构');
 });
 
 test('★ cloneProject（lib/clone.js 共享核心）：章节资产全带走、阶段重置、会话归属、防呆三连', async () => {
