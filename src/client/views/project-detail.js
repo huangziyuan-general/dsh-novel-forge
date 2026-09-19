@@ -13,7 +13,7 @@
 //   · 导入、带 continuity/voice/platform/censor 参数的 novel_audit → 仍在会话里调
 import { h } from '../react.js';
 import {
-	color, space, font, weight, hintStyle, okStyle, errStyle,
+	color, space, font, weight, hintStyle, okStyle, errStyle, warnStyle,
 	inputStyle, manuscriptStyle, stackStyle, tint, rowWrapStyle,
 } from '../styles.js';
 import { Card, Btn, Chip, Stat, Fold, Mono, Feedback } from '../ui.js';
@@ -293,6 +293,20 @@ export function ProjectDetailView({ state: s }) {
 		s.error ? Feedback({ tone: 'err' }, s.error) : null,
 		s.notice ? Feedback({ tone: 'ok' }, s.notice) : null,
 
+		// 应用提案后的门禁提示：服务端已把这版正文过了一遍内容门禁（lib/proposals.js），
+		// 应用是用户主权（不拦），但「改出了死人复活 / 隐藏人物泄底」必须当场看见。
+		s.gateNotice ? h('div', {
+			role: 'alert',
+			style: { ...stackStyle, marginTop: space.sm, gap: space.xs },
+		},
+			h('div', { style: warnStyle },
+				`⚠ 刚应用的第 ${s.gateNotice.chapter} 章 v${s.gateNotice.version} 有门禁提示：`),
+			...(s.gateNotice.blocking ?? []).map((m, i) =>
+				h('div', { key: `gb${i}`, style: errStyle }, `✗ ${m}`)),
+			...(s.gateNotice.warnings ?? []).map((m, i) =>
+				h('div', { key: `gw${i}`, style: warnStyle }, `· ${m}`)),
+		) : null,
+
 		// 未保存离开确认：返回 / 换章前有改动时，先问一句
 		s.discardPending
 			? h('div', {
@@ -327,8 +341,10 @@ export function ProjectDetailView({ state: s }) {
 			s.deleteState === 'confirm'
 				? Btn({ size: 'sm', action: 'delete-cancel' }, '取消删除')
 				: null,
-			Btn({ size: 'sm', variant: 'danger', action: 'delete' },
-				s.deleteState === 'confirm' ? '确认删除这本书？' : '删除'),
+			// 'busy'（请求在途）也必须有自己的样子：只判 'confirm' 会让按钮在 await
+			// 窗口里退回「删除」，看着像确认被吞掉。控制器已忽略重复点击，这里补视觉。
+			Btn({ size: 'sm', variant: 'danger', action: 'delete', disabled: s.deleteState === 'busy' },
+				s.deleteState === 'busy' ? '删除中…' : s.deleteState === 'confirm' ? '确认删除这本书？' : '删除'),
 		),
 
 		// 能力边界（0.13.2 起如实呈现）：写章/诊断/体检面板直做；导入与全量审计仍在会话

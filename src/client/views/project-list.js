@@ -195,9 +195,9 @@ export function ProjectListView({ state: s }) {
 										h('span', { style: { flex: '1 1 auto' } }),
 										Btn({
 											variant: 'danger', action: 'list-delete', id: p.name,
-											disabled: s.listDeleteId === 'busy',
-										}, s.listDeleteId === 'busy' ? '删除中…' : '确认删除'),
-										Btn({ action: 'list-delete-cancel' }, '取消'),
+											disabled: s.listDeleting,
+										}, s.listDeleting ? '删除中…' : '确认删除'),
+										Btn({ action: 'list-delete-cancel', disabled: s.listDeleting }, '取消'),
 									)
 									: null,
 							),

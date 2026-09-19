@@ -1,5 +1,80 @@
 # Changelog
 
+## 0.13.7 (2026-09-19)
+
+复核 0.13.5/0.13.6 后补的账：**上一版有四处「修到数据层就停手」或「名义修复」**，
+本轮把它们真正落到用户可见的行为上，并把 REST 半边天的测试护栏从零建起来。
+
+- **aria-label 真正生效**（0.13.6 声称已修，实际无效）：Btn 只认 camelCase
+  `ariaLabel`，而三个图标按钮的调用点写的是 kebab-case `'aria-label'` —— 键名对不上
+  不报错，无障碍名照旧被静默丢弃（与 0.13.0 的 `dataset.no` 事故同族）。Btn 改为两种
+  写法都收，调用点统一 camelCase，并补「渲染结果里必须有 aria-label」的断言。
+- **门禁提示进面板**：0.13.6 让 applyProposal 返回 gate（死人复活 / 隐藏人物泄底），
+  但 panel 只读 chapter/version，gate 被丢弃 = 用户端仍然静默。现在 gateNotice 进
+  state、在详情页渲染（阻断红字、警告琥珀），notice 里也留一条计数。
+- **删除确认态不跨书存活**：openProject / goBack 漏清 `deleteState`，在 A 书点过
+  「删除」→ 打开 B 书后**单击即删**（两步确认失效）。同族修掉列表删除的 `'busy'` 哨兵
+  （确认行整行卸载、视图「删除中…」分支永不可达）→ 改独立 `listDeleting`；
+  详情页 busy 态补视觉反馈。
+- **REST 面加固**：POST /projects 建书从 `auto` 改 `'create'`（同名书过去会被
+  defaultNovel 整体覆盖，章节索引/会话归属丢失、正文成孤儿）→ 409 BOOK_EXISTS；
+  非法书名从 500 IO_FAILURE 改 400 BAD_BOOK；GET chapters/:no 补与 POST 同款的
+  正整数守卫（过去 NaN 当键查恒返回空串，看着像「这章是空的」）；删掉白名单之后的
+  死分支 `..` 判断。
+- **落盘后的审计失败不再拖垂整章**：saved 审计行写失败（并发版本冲突）会让
+  commitChapter 整体抛错，调用方（含批量起草）把已保存的章报成失败 → 重试造重复版本。
+  改 console.warn 降级（静默降级不等于静默）。
+- **检索幽灵块出口过滤**：索引清理只发生在全量 build，删章后未重建前 query 仍会命中
+  指向不存在章节的块 → 按现有章号过滤并给重建提示；sqlite 句柄补 try/finally。
+- **提案链与 REST 写路径的丢更新（H2 根因修复）**：新增乐观并发通道
+  `readJsonWithVersion` / `writeJsonAtVersion` / `updateJson`（读时捕获基线版本 →
+  守卫写 → 冲突则**重读最新内容重放**，默认 3 次），提案的登记/应用/丢弃/清理、
+  REST 的认领/改名/章节保存/世界书 CRUD 全部改走它。
+  0.13.6 那句「writeJson 缺省 'auto' 已是版本守卫」是**看着有、实际拦不住**的东西：
+  'auto' 在写前一刻才 stat，版本永远匹配，陈旧对象照样把别人的更新整体覆盖掉
+  （幽灵提案、自增 id 撞车都源于此）。据此**删除** `writeTextIfVersion`——
+  守卫基线必须由调用方从读取那一刻带进来。附带修掉世界书删除的假成功：条目不存在
+  时不再无条件写回（原先连 `世界书.json` 都能凭空建出来）。
+  同一条链上最后那个旧快照回写也补了：`rememberSession`（每个工具入口都走，含
+  `isConcurrencySafe` 的读工具）原先把调用方手上的整本 novel 写回盘 —— 与面板并发时
+  正是幽灵提案的另一条成因；现在只重放「补一条会话归属」这个增量（并把归属同步回
+  手上的对象，免得随后 saveBook 又把它写丢）。
+- **导出不是自毁通道**：`novel_export` 的 `file` 过去只要落在本书目录内就行，于是可以
+  指到自己的 `novel.json` / `账本/facts.json` / `.novel/audit.jsonl`，`replace` 一次
+  就把索引与账本抹掉。现在只允许落在 `书/导出/` 内（白名单目录比黑名单文件稳），
+  参数描述同步收紧。
+- **杂项**：openForgeTab 的 disposer 接进 ctx.effect 清理（卸载后最多 30s 的重试链
+  不再照跑）；session-watch / index 头注释订正为「常驻独立 tab」的现实。
+- **repair 孤儿正文扫描**：列出`正文/`下盘上有、`novel.json.chapters[*].files`
+  没引用的 `.md` 进 orphanFiles——提案重放中途失败留下的孤儿版本文件有了
+  确定的发现通道。仅报告不删除，next 提示手动处理；schema 同步声明，
+  audit 带 orphan 计数。兜底清理钩子不做：事后自愈、纯防线、不碰热路径。
+- **真机复验炸出的旧病：面板存过章的书调 novel_project status/repair 必报
+  value is not lossless JSON**：REST 面板存章走 chapterRecord 不传 summary，
+  undefined 原样进记录、落盘后 summary 键整个消失，status/repair 的输出装配
+  `summary: c.summary` 把 undefined 带进宿主 → 整次调用被拒（与 0.13.3
+  novel_style 同族）。修三层：chapterRecord 缺省补 `''` 且保留 prev.summary
+  （工具写的梗概不被面板再存抹掉）；status/repair 出口 `c.summary ?? ''`
+  （治愈已在盘上的旧记录）；smoke 补「REST 形状章记录 + 孤儿文件」端到端回归。
+
+测试面（这次的重点是「护栏别只修半边」）：
+
+- **REST 数据面首批行为测试** `test/server-api.test.mjs`（13 例）：路由清单驱动的
+  fence 全覆盖（将来加端点漏 trusted() 必红）、workspace 白名单、非法书名 400、
+  重复建书 409、章节号守卫、章节保存写审计、createServerFsio 的 create/replace/auto
+  intent 语义。**假 fs 按宿主 dsh-fs 真语义实现 createIfAbsent / replaceIfVersion
+  拒绝**（沿用「替身必须镜像真机」的纪律）。
+- **H2 的回归钉法**（关键是让替身真能造出冲突，否则测了个寂寞）：
+  `test/batch5.test.mjs` 的内存 io 补上与生产同名同义的 `readJsonWithVersion` /
+  `writeJsonAtVersion`（版本按内容长度变化，版本不符抛 `FS_STALE_VERSION`），
+  `test/server-api.test.mjs` 的 R6b 从「记录现状·待修」翻转成**断言不丢更新**
+  （并发新增世界书 → 两条都在且 id 不撞；并发保存同一章 → 两个版本各占一号、
+  正文文件互不覆盖），并新增 `updateJson` 重放用例（读写之间被插一刀 →
+  `attempts >= 2` 且两边更新都留得下来）与 `submitRevisionProposal` 幽灵提案用例。
+  `test/logic.test.mjs` 改测新原语的 intent 逐字段正确性（原 writeTextIfVersion 用例退役）。
+- 面板新增 7 例（gate 进 state、门禁干净不吵、删除态跨书、goBack 清理、列表删除在途、
+  Btn 两种写法、目录图标按钮端到端 aria-label）；工具面补 2 例（saved 审计写失败、REST 形状章记录的 status/repair + 孤儿通道）。
+
 ## 0.13.6 (2026-09-19)
 
 审查报告第二、三批（高 / 中 / 轻微级）全部落地。

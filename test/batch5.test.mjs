@@ -27,6 +27,7 @@ import {
     runDraftBatch, MAX_CONCURRENCY, DRAFT_SYSTEM,
 } from '../lib/batch-draft.js';
 import { pathsFor } from '../lib/store.js';
+import { updateJson, isVersionConflict } from '../lib/fsio.js';
 
 // ── 测试脚手架：假 llm 服务 + 内存 io ────────────────────────────────────────
 
@@ -81,6 +82,28 @@ function memIo(initial = {}) {
             return { version: String(text).length };
         },
         async writeJson(p, value) { return api.writeText(p, `${JSON.stringify(value, null, 2)}\n`); },
+        // ↓ 与 lib/fsio.js 的两个适配器同名同义：版本来自读的那一刻，写时不符即冲突。
+        //   替身必须镜像真机，否则 updateJson 的重放路径压根测不到。
+        async readTextWithVersion(p) {
+            return files.has(p) ? { text: files.get(p), version: String(files.get(p)).length } : { text: null, version: null };
+        },
+        async readJsonWithVersion(p) {
+            const { text, version } = await api.readTextWithVersion(p);
+            return { value: text === null ? null : JSON.parse(text), version };
+        },
+        async writeTextAtVersion(p, text, version) {
+            if (version === null || version === undefined) return api.writeText(p, text, 'create');
+            if (!files.has(p) || String(files.get(p)).length !== version) {
+                const error = new Error(`FS_STALE_VERSION: ${p}（期望 ${version}，实际 ${files.has(p) ? String(files.get(p)).length : '不存在'}）`);
+                error.code = 'FS_STALE_VERSION';
+                throw error;
+            }
+            files.set(p, text);
+            return { version: String(text).length };
+        },
+        async writeJsonAtVersion(p, value, version) {
+            return api.writeTextAtVersion(p, `${JSON.stringify(value, null, 2)}\n`, version);
+        },
         async appendLine(p, line) { return api.writeText(p, `${files.get(p) ?? ''}${line}\n`); },
         async listNames() { return []; },
     };
@@ -1088,4 +1111,100 @@ test('batch-draft: 引擎无 anchor（旧替身/降级）时不炸——并发�
     });
     assert.equal(result.concurrency, 2, '没有 anchor 面也不该把并发压回 1');
     assert.ok(result.stats.committed === 2);
+});
+
+// ── H2：novel.json 读-改-写的乐观并发（读时捕获版本 + 冲突重放）──────────────
+
+test('isVersionConflict：认得宿主两类守卫失败（版本不符 / 读时不存在）', () => {
+    for (const code of ['FS_STALE_VERSION', 'FS_NOT_OBSERVED', 'FS_VERSION_CONFLICT']) {
+        const error = new Error(`${code}: 书/novel.json`);
+        error.code = code;
+        assert.equal(isVersionConflict(error), true, `${code} 必须判为冲突`);
+    }
+    assert.equal(isVersionConflict(new Error('FS_SANDBOX_DENIED: 越界')), false, '沙箱拒绝不是冲突，不得被重试吞掉');
+    assert.equal(isVersionConflict(new Error('网络错误')), false);
+});
+
+test('★ updateJson：读写之间被人插一刀，两边的更新都留得下来（H2 根因）', async () => {
+    const book = '并发书';
+    const meta = `${book}/novel.json`;
+    const io = memIo({ [meta]: JSON.stringify({ title: book, proposals: [] }) });
+
+    // 模拟另一端：在本次「读→写」之间提交一次自己的更新（真机上就是面板另一路的写入）
+    const realWriteAt = io.writeJsonAtVersion.bind(io);
+    let tripped = false;
+    io.writeJsonAtVersion = async (p, value, version) => {
+        if (!tripped && p === meta) {
+            tripped = true;
+            const other = JSON.parse(io.files.get(meta));
+            other.proposals.push({ id: 'OTHER', chapter: 2, status: 'pending', createdAt: 't' });
+            await io.writeJson(p, other);
+        }
+        return realWriteAt(p, value, version);
+    };
+
+    const { written, attempts } = await updateJson(io, meta, (novel) => {
+        novel.proposals.push({ id: 'MINE', chapter: 1, status: 'pending', createdAt: 't' });
+        return { value: novel, result: { ids: novel.proposals.map((x) => x.id) } };
+    });
+    assert.equal(written, true);
+    assert.ok(attempts >= 2, '★ 必须真的撞上冲突并重放，否则这条用例什么都没测');
+    const ids = JSON.parse(io.files.get(meta)).proposals.map((x) => x.id).sort();
+    assert.deepEqual(ids, ['MINE', 'OTHER'],
+        '陈旧对象整体覆盖会把 OTHER 抹掉（幽灵提案的成因）——重读重放后两边的更新都该在');
+});
+
+test('★ 并发登记提案：两份提案索引都在 novel.json 里（不产生幽灵提案）', async () => {
+    const { submitRevisionProposal } = await import('../lib/proposals.js');
+    const book = '提案并发书';
+    const meta = `${book}/novel.json`;
+    const novel = {
+        title: book, stage: 'writing', chapters: { 1: { title: '第一章', latest: 1, files: [], path: `${book}/正文/第1章-第一章-v1.md` } },
+        proposals: [], cast: [],
+    };
+    const io = memIo({ [meta]: JSON.stringify(novel) });
+
+    // 第一份登记在写回前，第二份已经落盘 → 第一份必须重放而不是覆盖掉它
+    const realWriteAt = io.writeJsonAtVersion.bind(io);
+    let injected = false;
+    io.writeJsonAtVersion = async (p, value, version) => {
+        if (!injected && p === meta) {
+            injected = true;
+            const cur = JSON.parse(io.files.get(meta));
+            cur.proposals.push({ id: 'EARLY', chapter: 1, status: 'pending', createdAt: 't0' });
+            await io.writeJson(p, cur);
+        }
+        return realWriteAt(p, value, version);
+    };
+
+    await submitRevisionProposal(io, book, { chapter: 1, content: '正文 A', reason: 'A' });
+    assert.ok(injected, '前置：确实制造了一次读-改-写竞态');
+    const ids = JSON.parse(io.files.get(meta)).proposals.map((x) => x.id).sort();
+    assert.ok(ids.includes('EARLY'), '插进去的那条不能被抹掉');
+    assert.equal(ids.length, 2, `两条提案都该在索引里，实际：${ids.join(',')}`);
+});
+
+test('★ rememberSession：只重放归属增量，不许拿调用方手上的旧快照整体回写', async () => {
+    const { rememberSession } = await import('../lib/tools/common.js');
+    const book = '归属并发书';
+    const meta = `${book}/novel.json`;
+    const io = memIo({
+        [meta]: JSON.stringify({
+            title: book, sessions: [],
+            proposals: [{ id: 'PANEL-1', chapter: 1, status: 'pending', createdAt: 't' }],
+        }),
+    });
+    io.sessionId = 'sess-9';
+    // 调用方手上是**更早**读到的快照（没有面板刚登记的那条提案）
+    const stale = JSON.parse(io.files.get(meta));
+    stale.proposals = [];
+
+    const added = await rememberSession(io, pathsFor(book), stale);
+    assert.equal(added, true, '补录成功要回 true（调用方据此判断）');
+
+    const onDisk = JSON.parse(io.files.get(meta));
+    assert.deepEqual(onDisk.sessions, ['sess-9'], '归属要落到盘上');
+    assert.deepEqual(onDisk.proposals.map((x) => x.id), ['PANEL-1'],
+        '★ 旧快照整体回写会把面板刚登记的提案抹掉（幽灵提案的另一条成因）——只能重放增量');
+    assert.deepEqual(stale.sessions, ['sess-9'], '调用方手上的对象也要同步归属，免得它随后 saveBook 又把它写丢');
 });

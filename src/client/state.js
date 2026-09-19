@@ -31,8 +31,11 @@ export function initialState() {
 		// 列表筛选（>8 本才显示输入框）：按书名/目录名/题材做客户端子串匹配
 		filter: '',
 		// 列表内联改名 / 删除：rename = {id, value} | null；listDeleteId = 待确认删除的书 id | null
+		// listDeleting：删除请求在途的**独立**标记。不能拿 listDeleteId 塞 'busy' 当哨兵——
+		// 确认行的渲染条件是 `listDeleteId === p.name`，哨兵会让整行卸载（闪一下）且
+		// 「删除中…」分支永远不可达。
 		// clone = {id, value} | null：克隆为模板的输入行（value 是新书目录名）
-		rename: null, renaming: false, listDeleteId: null, clone: null, cloning: false,
+		rename: null, renaming: false, listDeleteId: null, listDeleting: false, clone: null, cloning: false,
 		// 项目详情
 		detail: null, chapterNo: 1, writing: false,
 		draft: '', draftVersion: 0,
@@ -63,6 +66,10 @@ export function initialState() {
 		proposalDetail: null,
 		// 正在处理的提案 id（应用/丢弃中，按钮禁用以防重复点）；null = 空闲
 		proposalBusy: null,
+		// 应用提案时服务端跑出的内容门禁提示：{ok, blocking[], warnings[]} | null。
+		// 应用是用户主权（不拦），但「这版改出了死人复活/隐藏人物泄底」必须当场看见，
+		// 不能等下一次写章才在别的章节冒出来。
+		gateNotice: null,
 		// 世界书
 		loreEntries: [], loreForm: emptyLoreForm(), loreBusy: false,
 		// loreDeleteId：待确认删除的世界书条目 id（字符串，与 dataset.id 同形）| null

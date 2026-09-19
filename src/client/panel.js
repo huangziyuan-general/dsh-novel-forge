@@ -226,7 +226,11 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 
 	/** 列表删除：软删（服务端清 novel.json 标记非书）。 */
 	const deleteListProject = async (id) => {
-		state.listDeleteId = 'busy'; notify();
+		// 用独立的 listDeleting，而不是往 listDeleteId 里塞 'busy'：
+		// 确认行按 `listDeleteId === p.name` 渲染，哨兵会让整行在请求期间消失（闪烁），
+		// 并把视图里「删除中…」的禁用分支变成死代码。
+		if (state.listDeleting) return;
+		state.listDeleting = true; notify();
 		try {
 			await apiFetch(`/projects/${encodeURIComponent(id)}`, { method: 'DELETE' });
 			state.notice = `已删除：${id}`;
@@ -234,7 +238,7 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 			state.listDeleteId = null;
 			await refreshProjects();
 		} catch (error) { state.error = String(error?.message ?? error); }
-		finally { state.listDeleteId = null; notify(); }
+		finally { state.listDeleting = false; notify(); }
 	};
 
 	const openProject = async (id) => {
@@ -244,6 +248,9 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 		state.selected = id; state.view = 'detail'; state.detail = null; state.chapterNo = 1;
 		state.draft = ''; state.error = ''; state.detailTab = 'info';
 		state.elements = null; state.discardPending = null; state.rename = null; state.listDeleteId = null; state.clone = null;
+		// deleteState 属于「上一本书的删除确认」：漏清会让 B 书的「删除」单击直接生效
+		//（两步确认跨书泄漏）。gateNotice/listDeleting 同理，都是上一本书的残留。
+		state.deleteState = null; state.gateNotice = null; state.listDeleting = false;
 		state.proposals = []; state.proposalBusy = null; state.proposalDetail = null; // 展开的全文也属于上一本书
 		// 换书：体检结果与批量结果都属于「上一本书」，必须清掉（否则会把 A 书的红字
 		// 挂在 B 书头上——这类串台比不显示更糟）
@@ -317,6 +324,16 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 		try {
 			const value = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/proposals/${encodeURIComponent(proposalId)}/apply`, { method: 'POST' });
 			state.notice = `已应用提案 ${proposalId}：第${value.chapter}章 v${value.version}（旧版保留）`;
+			// 服务端已把这版正文过了一遍内容门禁（lib/proposals.js）：应用是用户主权不拦，
+			// 但「改出了死人复活/隐藏人物泄底」必须当场看见。gate 为 null = 门禁输入读不到，跳过。
+			const gate = value.gate;
+			state.gateNotice = gate && ((gate.blocking?.length ?? 0) > 0 || (gate.warnings?.length ?? 0) > 0)
+				? { chapter: value.chapter, version: value.version, ...gate }
+				: null;
+			if (state.gateNotice) {
+				const bits = [...(state.gateNotice.blocking ?? []), ...(state.gateNotice.warnings ?? [])];
+				state.notice += ` ⚠ 门禁提示 ${bits.length} 条（详见下方）`;
+			}
 			await Promise.all([loadProposals(state.selected), loadChapterList(state.selected)]);
 			// 正开着被改的那一章就刷新正文，让用户立刻看到新版本
 			if (state.chapterNo === value.chapter) await loadChapter(value.chapter);
@@ -611,6 +628,7 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 	const goBack = async () => {
 		player.stop(); state.view = 'projects'; state.selected = null; state.detail = null;
 		state.discardPending = null; state.draftModified = false; state.rename = null; state.listDeleteId = null; state.clone = null;
+		state.deleteState = null; state.gateNotice = null;
 		await refreshProjects();
 	};
 
