@@ -32,6 +32,15 @@ AI 长篇写作的通病不是玄学，每一个都有对应的工程解法。�
 | 批量起草绕过门禁 | 并发生成、**串行提交**：每章仍过同一道门禁，单章失败不回滚整批 | `draft-batch` |
 | 写到百章后"看不见前文" | 本地检索索引：按**记忆碎片**把段落找回来（中文手工二元切分，零依赖） | `novel_search` |
 
+## 界面一览
+
+右侧栏「锻炉」面板实机截图（演示书目为演示新建的虚构内容）：
+
+| | |
+| --- | --- |
+| **项目列表**<br><img src="assets/screenshots/1-项目列表.png" width="100%"> | **详情 · 基本信息**<br><img src="assets/screenshots/2-详情-基本信息.png" width="100%"> |
+| **章节听书**<br><img src="assets/screenshots/3-章节听书.png" width="100%"> | **阅读卡**<br><img src="assets/screenshots/4-阅读卡.png" width="100%"> |
+
 ## 快速开始（约 5 分钟）
 
 **前提**：已安装 [DeepSeek Harness](https://github.com/deepseek-ai)（DSH）并跑通模型；Node ≥ 22（22.19+ / 24+ 可启用检索索引，否则自动降级，不影响其他功能）。
