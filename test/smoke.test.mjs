@@ -1309,3 +1309,93 @@ test('★ 存量契约缺 updatedAt（旧版数据）：出口盖章成 string�
     const listed = await scene.execute({ action: 'list', book: '星海拾骨' }, exec);
     for (const c of listed.contracts) assert.equal(typeof c.updatedAt, 'string', 'list 出口同样盖章');
 });
+
+// ── 全工具×全 action 输出契约护栏 ──────────────────────────────────────
+// 背景（0.13.5 复盘）：scene 的 updatedAt、propose list 的 title/reason/preview、
+// project set_stage 的 render 崩溃——三个同类事故全部落在「测试只调 execute、
+// 不验 schema/render」的盲区里。本护栏把宿主**真校验器**（validateJsonSchemaValue，
+// 与宿主拒收 INVALID_TOOL_OUTPUT 的同一套实现）铺到每个工具的每个 action 上：
+// execute 成功返回 → 输出必须过 output.schema → output.render 必须不抛。
+// 业务性抛错（缺前置数据等）记为 skip 不算失败——护栏拦的是「成功了但不合法」。
+
+test('★ 全工具×全 action：真校验器验证输出 + render 冒烟', async () => {
+    assert.equal(hasSdk, true, '缺宿主 SDK symlink：先 npm run setup-dev');
+    const { validateJsonSchemaValue } = await import('@deepseek-ai/dsh-tools');
+
+    const A = '输出契约自检书';
+    await tool('novel_project').execute({ action: 'init', book: A, genre: '测试', logline: '护栏专用，用后即弃' }, exec);
+
+    // [工具名, action, args]；顺序即状态构建顺序（先建内容，后跑读侧）
+    const matrix = [
+        ['novel_project', 'status', { action: 'status', book: A }],
+        ['novel_project', 'phase', { action: 'phase', book: A }],
+        ['novel_project', 'set_stage', { action: 'set_stage', book: A, stage: 'character' }],
+        ['novel_project', 'repair', { action: 'repair', book: A }],
+        ['novel_project', 'check', { action: 'check', book: A }],
+        ['novel_project', 'promise', { action: 'promise', book: A }],
+        ['novel_outline', 'save_book', { action: 'save_book', book: A, outline: '# 全书大纲\n自检用大纲' }],
+        ['novel_outline', 'save_chapter', { action: 'save_chapter', book: A, chapter: 1, outline: '# 第1章细纲\n- 场景：自检场景' }],
+        ['novel_outline', 'approve', { action: 'approve', book: A, chapter: 1 }],
+        ['novel_character', 'save', { action: 'save', book: A, name: '测者甲', card: '外在底色：自检用人物卡' }],
+        ['novel_character', 'list', { action: 'list', book: A }],
+        ['novel_glossary', 'add', { action: 'add', book: A, term: '自检词', definition: '自检定义' }],
+        ['novel_glossary', 'list', { action: 'list', book: A }],
+        ['novel_glossary', 'remove', { action: 'remove', book: A, term: '自检词' }],
+        ['novel_worldbook', 'add', { action: 'add', book: A, id: '自检设定', keywords: '自检', content: '自检世界书条目' }],
+        ['novel_worldbook', 'list', { action: 'list', book: A }],
+        ['novel_worldbook', 'update', { action: 'update', book: A, id: '自检设定', content: '自检世界书条目（更新）' }],
+        ['novel_worldbook', 'export', { action: 'export', book: A }],
+        ['novel_worldbook', 'remove', { action: 'remove', book: A, id: '自检设定' }],
+        ['novel_scene', 'save', { action: 'save', book: A, chapter: 1, scene: '自检场景', participants: '测者甲' }],
+        ['novel_scene', 'get', { action: 'get', book: A, chapter: 1 }],
+        ['novel_scene', 'list', { action: 'list', book: A }],
+        ['novel_ledger', 'update', { action: 'update', book: A, chapter: 1, updates: '测者甲|境界|练气一层' }],
+        ['novel_ledger', 'query', { action: 'query', book: A, entity: '测者甲' }],
+        ['novel_ledger', 'status_at', { action: 'status_at', book: A, at: 1 }],
+        ['novel_ledger', 'timeline', { action: 'timeline', book: A, entity: '测者甲' }],
+        ['novel_ledger', 'foreshadow_setup', { action: 'foreshadow_setup', book: A, chapter: 1, setup: '自检伏笔', plan: 2 }],
+        ['novel_write_chapter', null, { book: A, chapter: 1, title: '自检第一章', content: GOOD_CHAPTER, cast: '测者甲', summary: '自检用一章' }],
+        ['novel_style', 'build', { action: 'build', book: A }],
+        ['novel_style', 'check', { action: 'check', book: A, chapter: 1 }],
+        ['novel_search', 'build', { action: 'build', book: A }],
+        ['novel_search', 'status', { action: 'status', book: A }],
+        ['novel_search', 'query', { action: 'query', book: A, q: '自检' }],
+        ['novel_library', 'import', { action: 'import', title: '自检饲料', text: '第一章 试\n\n正文内容。' }],
+        ['novel_library', 'list', { action: 'list' }],
+        ['novel_library', 'read', { action: 'read', title: '自检饲料' }],
+        ['novel_library', 'analyze', { action: 'analyze', title: '自检饲料' }],
+        ['novel_library', 'delete', { action: 'delete', title: '自检饲料' }],
+        ['novel_import', 'preview', { action: 'preview', book: '自检导入书', title: '自检导入书', text: '第一章 试\n\n正文内容。' }],
+        ['novel_audit', null, { book: A, chapter: 1 }],
+        ['novel_briefing', null, { book: A, chapter: 1 }],
+        ['novel_diagnose', null, { book: A }],
+        ['novel_polish', 'analyze', { action: 'analyze', book: A, chapter: 1 }],
+        ['novel_propose', 'propose', { action: 'propose', book: A, chapter: 1, content: GOOD_CHAPTER.replace('咳嗽', '咳嗽了两声'), reason: '自检提案' }],
+        ['novel_propose', 'list', { action: 'list', book: A }],
+        ['novel_export', null, { book: A, format: 'md' }],
+    ];
+
+    const validated = [], skipped = [];
+    for (const [name, action, args] of matrix) {
+        const t = tool(name);
+        assert.ok(t.output?.schema, `${name} 缺 output.schema 声明`);
+        let value;
+        try {
+            value = await t.execute(args, exec);
+        } catch (error) {
+            skipped.push(`${name}${action ? '.' + action : ''}（${String(error.message).slice(0, 60)}）`);
+            continue;
+        }
+        const violations = validateJsonSchemaValue(t.output.schema, value);
+        assert.deepEqual(violations, [], `${name}.${action ?? '(单路径)'} 输出违反自身 output.schema：${JSON.stringify(violations).slice(0, 300)}`);
+        if (typeof t.output?.render === 'function') {
+            // render 的返回契约是「宿主能吃的内容块」（字符串或结构化对象），
+            // 护栏只保证不抛——S2（set_stage 读 undefined.length 崩）就死在这一步
+            assert.doesNotThrow(() => t.output.render(args, value), `${name}.${action ?? '(单路径)'} render 抛错`);
+        }
+        validated.push(`${name}.${action ?? '*'}`);
+    }
+    // 护栏不能静默退化成全 skip：一旦大面积跳过说明夹具坏了，必须当场报出来
+    assert.ok(validated.length >= 35, `覆盖塌方：只验证了 ${validated.length} 个 action（skip ${skipped.length}）——检查夹具状态`);
+    assert.ok(!skipped.some((s) => s.startsWith('novel_propose.list')), `novel_propose list 不允许 skip——它是 S1 事故的当事 action`);
+});

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.13.5 (2026-09-19)
+
+- **novel_propose list 输出修复**：`proposals[]` 条目实际携带的 title / missing /
+  reason / preview 四字段未在 output.schema 声明（additionalProperties:false），
+  宿主严格校验拒收——模型每次调用 list 均得无效输出。修：schema 补四字段；
+  章标题为 null 时改缺键不再显式携带。
+- **novel_project set_stage render 修复**：set_stage 返回值落进 render 链的
+  status 兜底分支读 `v.chapters.length` 必 TypeError（输出被判无效）。补专属分支。
+- **REST 面 fence 校验补齐**：`GET /projects/:id/continuity` 与
+  `GET /projects/:id/diagnose` 补 trusted(req) 前置检查，与其余端点一致。
+- **REST 章节保存加固**：章节号正整数校验（原先 `chapters/abc` 会落出
+  「第NaN章」文件与索引键）；每笔保存写审计行（actor=user），「谁改的这一版」
+  在 audit.jsonl 可查。
+- **内容门禁误伤修正**：「待定」「略去」从阻断级降为软警告——『后续安排待定』
+  『细节略去不表』是正常叙事措辞（「略去不表」为传统套语），阻断会产生假阳性
+  熔断计数。
+- **敏感自查词表修正**：亲密词表移除单字「性」（性格/理性/可能性全命中），
+  以 性爱/性行为/性器官 替代；未成年主体词补 十一岁/十二岁/十七岁 与
+  阿拉伯数字写法（12岁–17岁）。
+- **测试面护栏**：新增「全工具×全 action」用例——用宿主真校验器
+  （validateJsonSchemaValue）验证每个成功 action 的输出，并对 output.render
+  冒烟。scene updatedAt（0.13.3）、propose list、set_stage render 三个同类
+  事故覆盖的盲区自此结构性关闭。测试 245 项。
+
 ## 0.13.4 (2026-09-19)
 
 - **批量起草并发父锚定收敛**：并发>1 时原先每章独立走候选链，多章并发
