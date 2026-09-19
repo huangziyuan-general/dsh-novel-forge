@@ -80,14 +80,14 @@ test('ledger: 追加/幂等/同章冲突拒绝/跨章推进放行', () => {
     assert.equal(r1.added.length, 1);
     facts = r1.facts;
 
-    const r2 = applyFactUpdates(facts, [{ entity: '林晚', key: '境界', value: '练气三层' }], { chapter: 4 });
+    const r2 = applyFactUpdates(facts, [{ entity: '林晚', key: '境界', value: '练气三层' }], { chapter: 4, now: 't2' });
     assert.equal(r2.added.length, 0, '同值幂等');
 
-    const r3 = applyFactUpdates(facts, [{ entity: '林晚', key: '境界', value: '筑基一层' }], { chapter: 3 });
+    const r3 = applyFactUpdates(facts, [{ entity: '林晚', key: '境界', value: '筑基一层' }], { chapter: 3, now: 't3' });
     assert.equal(r3.conflicts.length, 1, '同章内改值=冲突');
     assert.equal(r3.facts.length, 1, '冲突不落账');
 
-    const r4 = applyFactUpdates(facts, [{ entity: '林晚', key: '境界', value: '筑基一层' }], { chapter: 12 });
+    const r4 = applyFactUpdates(facts, [{ entity: '林晚', key: '境界', value: '筑基一层' }], { chapter: 12, now: 't4' });
     assert.equal(r4.conflicts.length, 0);
     assert.equal(r4.added[0].chapter, 12);
 

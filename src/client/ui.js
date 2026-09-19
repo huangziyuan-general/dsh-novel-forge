@@ -50,7 +50,7 @@ export function Section({ icon = '', title, right = null } = {}, ...children) {
  * ⚠️ 这里**只给几何**（`btnLayout`）：底色/描边/字色由 `css.js` 按 `data-variant` 给，
  * 因为内联样式优先级高于 `:hover` / `:active` —— 外观留在内联里按钮就永远没有按下反馈。
  */
-export function Btn({ variant = 'secondary', size = 'md', action, id, disabled = false, title, block = false } = {}, ...label) {
+export function Btn({ variant = 'secondary', size = 'md', action, id, disabled = false, title, ariaLabel, block = false } = {}, ...label) {
 	const style = { ...btnLayout({ size }) };
 	if (block) style.width = '100%';
 	return h('button', {
@@ -61,6 +61,8 @@ export function Btn({ variant = 'secondary', size = 'md', action, id, disabled =
 		...(id === undefined || id === null ? {} : { 'data-id': String(id) }),
 		...(disabled ? { disabled: true } : {}),
 		...(title ? { title } : {}),
+		// M17 修复：aria-label 此前被参数白名单丢掉——纯图标按钮（▶⏸⏹）对读屏器不可名
+		...(ariaLabel ? { 'aria-label': ariaLabel } : {}),
 		style,
 	}, ...label);
 }
