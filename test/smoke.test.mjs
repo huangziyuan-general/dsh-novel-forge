@@ -503,6 +503,17 @@ test('资产/评审工具端到端：import → diagnose → export → glossary
     assert.ok(ex.chapters >= 2);
     assert.ok(ex.stats.totalChars >= 1);
 
+    // ★ 导出不是自毁通道：file 只许落本书的 导出/，指到机器状态文件（或别的书）必须被拒
+    for (const evil of ['拾骨记/novel.json', '拾骨记/账本/facts.json', '拾骨记/.novel/audit.jsonl', '别的书/导出/x.md']) {
+        await assert.rejects(
+            () => tool('novel_export').execute({ book: '拾骨记', format: 'md', file: evil }, exec),
+            /导出目录/,
+            `file=${evil} 必须被拒`,
+        );
+    }
+    assert.ok(JSON.parse(fs.readFileSync(path.join(root, '拾骨记', 'novel.json'), 'utf8')).chapters,
+        '被拒的导出不得碰坏 novel.json');
+
     await tool('novel_glossary').execute({ action: 'add', book: '拾骨记', term: '乱葬岗红泥', definition: '遇水不散，是识尸标记。' }, exec);
     const brief = await tool('novel_briefing').execute({ book: '拾骨记', chapter: 1 }, exec);
     assert.ok(brief.rendered.includes('乱葬岗红泥'), '术语表应进上下文包');
@@ -1398,4 +1409,101 @@ test('★ 全工具×全 action：真校验器验证输出 + render 冒烟', asy
     // 护栏不能静默退化成全 skip：一旦大面积跳过说明夹具坏了，必须当场报出来
     assert.ok(validated.length >= 35, `覆盖塌方：只验证了 ${validated.length} 个 action（skip ${skipped.length}）——检查夹具状态`);
     assert.ok(!skipped.some((s) => s.startsWith('novel_propose.list')), `novel_propose list 不允许 skip——它是 S1 事故的当事 action`);
+});
+
+// ── P4a：落盘后的审计写失败不得拖垂整章 ────────────────────────────────
+
+const AUDIT_CHAPTER = [
+    '沈砚把族谱摊在长案上，指腹顺着墨迹一行行往下走。祠堂的灯芯爆了个火星，他也没抬头。',
+    '',
+    '「这一页不对。」他说。',
+    '',
+    '从曾祖到祖父，名讳、生卒、葬地，笔笔工整。独独第七行下面空出一线毛边，像被人撕走后又被草草粘回。',
+    '',
+    '守祠的老头提着灯笼进来，看见他手里的册子，脚步在门槛上停了一瞬。',
+    '',
+    '「少爷，天黑了。」老头把灯搁在案角，灯焰歪了歪，「族谱不是给您对账用的。」',
+    '',
+    '沈砚笑了一下，把册子合上，压在手掌底下。',
+    '',
+    '「那它是给谁用的？」',
+    '',
+    '老头没有答。他袖口沾着新泥，颜色不对——不是后山那种黄的，是河滩上发灰的青泥。',
+    '',
+    '他把灯芯拨亮，重新把册子从第一行走了一遍。墨色新旧不齐，第七行那处毛边的纤维还发白，撕走的时间不长，也许就在昨夜。',
+    '',
+    '沈砚盯着那点泥，忽然觉得第七行空出来的位置，正好能写下一个人的名字。',
+].join('\n');
+
+test('★ 落盘成功后的 saved 审计写失败：整章不得被报成失败（假阴性会诱导出重复版本）', async () => {
+    const B = '审计断链书';
+    await tool('novel_project').execute({ action: 'init', book: B, title: B, genre: '悬疑', logline: '族谱少了一行' }, exec);
+    await tool('novel_outline').execute({
+        action: 'save_chapter', book: B, chapter: 1,
+        outline: '第1章：祠堂对账。出场：沈砚。事件：族谱第七行被撕走（伏笔：河滩青泥）。',
+    }, exec);
+    await tool('novel_outline').execute({ action: 'approve', book: B, chapter: 1 }, exec);
+
+    // 只拦最后一行是 write_chapter/saved 的那一次追加 —— 前面的门禁/账本审计照常落盘
+    const realWrite = ctx.fs.writeText.bind(ctx.fs);
+    let tripped = 0;
+    ctx.fs.writeText = async (target, content, intent) => {
+        const lastLine = String(content).trimEnd().split('\n').pop() ?? '';
+        if (String(target?.targetKey ?? '').endsWith('audit.jsonl') && lastLine.includes('write_chapter/saved')) {
+            tripped += 1;
+            const error = new Error('FS_STALE_VERSION: 审计并发冲突（测试注入）');
+            error.code = 'FS_STALE_VERSION';
+            throw error;
+        }
+        return realWrite(target, content, intent);
+    };
+    const warns = [];
+    const realWarn = console.warn;
+    console.warn = (...args) => { warns.push(args.join(' ')); };
+    try {
+        const r = await tool('novel_write_chapter').execute({
+            book: B, chapter: 1, title: '祠堂对账', content: AUDIT_CHAPTER,
+            summary: '沈砚在祠堂发现族谱第七行被撕走，守祠人袖口有河滩青泥。', cast: '沈砚',
+        }, exec);
+        assert.ok(tripped >= 1, '前置：这一章必须真的撞上 saved 审计写失败');
+        assert.equal(r.version, 1,
+            '★ 正文/账本/索引都已成功落盘 → 必须返回成功。抛错会让调用方（含批量起草）把已保存的章当失败重试，造出重复版本');
+        assert.ok(fs.existsSync(path.join(root, B, '正文', '第1章-祠堂对账-v1.md')), '章节文件必须在盘上');
+        assert.ok(warns.some((w) => /审计/.test(w)), '★ 静默降级不等于静默：必须留下可见警告');
+    } finally {
+        console.warn = realWarn;
+        ctx.fs.writeText = realWrite;
+    }
+});
+
+test('★ 面板 REST 存章不带 summary：novel_project status/repair 不得因 undefined 炸 lossless JSON（真机 0.13.7 复现）', async () => {
+    const B = '面板存章书';
+    await tool('novel_project').execute({ action: 'init', book: B, title: B, genre: '悬疑' }, exec);
+    // 直接落一个「REST 形状」的章记录：面板 POST /chapters/:no 走 chapterRecord 旧版
+    // 原样存 summary=undefined，JSON.stringify 落盘后 summary 键整个消失——这就是
+    // 面板存过章的盘面状态，novel_project status/repair 一调即 value is not lossless JSON
+    fs.mkdirSync(path.join(root, B, '正文'), { recursive: true });
+    fs.writeFileSync(path.join(root, B, '正文', '第1章-第一章-v1.md'), '夜色压城，巡夜人把灯笼拧亮了一格。\n\n城门下的影子长了一寸。\n');
+    const metaPath = path.join(root, B, 'novel.json');
+    const novel = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    novel.chapters = { '1': {
+        title: '第一章', versions: [1], files: [{ version: 1, file: `${B}/正文/第1章-第一章-v1.md` }],
+        latest: 1, path: `${B}/正文/第1章-第一章-v1.md`, chars: 25, updatedAt: 't',
+    } };
+    fs.writeFileSync(metaPath, `${JSON.stringify(novel, null, 2)}\n`);
+    // 孤儿：盘上有、索引没引用（repair 的发现通道一并验）
+    fs.writeFileSync(path.join(root, B, '正文', '第1章-第一章-v9.md'), '重放失败残留。\n');
+
+    const status = await tool('novel_project').execute({ action: 'status', book: B }, exec);
+    assert.equal(status.chapters[0].summary, '',
+        '★ 输出 summary 必须是字符串——undefined 会让宿主 lossless JSON 拒收整次调用');
+    const repair = await tool('novel_project').execute({ action: 'repair', book: B }, exec);
+    assert.equal(repair.chapters[0].summary, '', 'repair 同罪同修');
+    assert.deepEqual(repair.orphanFiles, ['第1章-第一章-v9.md'], '★ 孤儿通道：盘上有、索引没引用的正文 md 必须列出来');
+    assert.ok(fs.existsSync(path.join(root, B, '正文', '第1章-第一章-v9.md')), 'repair 仅报告不删除');
+    // 修过的 chapterRecord：REST 再存一版（不传 summary）不得抹掉工具写下的旧 summary
+    const { chapterRecord } = await import('../lib/store.js');
+    const rec = chapterRecord({ summary: '工具写的梗概' }, { title: '第一章', version: 2, file: `${B}/正文/第1章-第一章-v2.md`, chars: 30 });
+    assert.equal(rec.summary, '工具写的梗概', '★ REST 路径不得把旧 summary 冲掉');
+    assert.equal(chapterRecord(null, { title: 'x', version: 1, file: 'f', chars: 1 }).summary, '', '全新记录缺省补空串');
 });
