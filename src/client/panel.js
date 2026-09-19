@@ -406,25 +406,33 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 	/** 全书体检：死人复活 / 账本矛盾 / 伏笔超期 / 章号断档 / 人物卡缺失。零 token。 */
 	const loadContinuity = async () => {
 		if (!state.selected) return;
+		const seq = openSeq;
 		state.continuityLoading = true; state.continuityError = ''; notify();
 		try {
-			state.continuity = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/continuity`);
+			const result = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/continuity`);
+			if (seq !== openSeq) return; // 期间已切书：丢弃陈旧体检（M12）
+			state.continuity = result;
 		} catch (error) {
+			if (seq !== openSeq) return;
 			state.continuity = null;
 			state.continuityError = String(error?.message ?? error);
-		} finally { state.continuityLoading = false; notify(); }
+		} finally { if (seq === openSeq) { state.continuityLoading = false; notify(); } }
 	};
 
 	/** 黄金三章诊断：钩子/开场/冲突/灌输四维数字。与 novel_diagnose 同一纯函数，零 token。 */
 	const loadDiagnosis = async () => {
 		if (!state.selected || state.diagnosisLoading) return;
+		const seq = openSeq;
 		state.diagnosisLoading = true; state.diagnosisError = ''; notify();
 		try {
-			state.diagnosis = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/diagnose`);
+			const result = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/diagnose`);
+			if (seq !== openSeq) return; // 期间已切书：丢弃陈旧诊断（M12）
+			state.diagnosis = result;
 		} catch (error) {
+			if (seq !== openSeq) return;
 			state.diagnosis = null;
 			state.diagnosisError = String(error?.message ?? error);
-		} finally { state.diagnosisLoading = false; notify(); }
+		} finally { if (seq === openSeq) { state.diagnosisLoading = false; notify(); } }
 	};
 
 	// ── 批量起草（D2）──
@@ -465,6 +473,16 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 			await Promise.all([loadChapterList(state.selected), loadProposals(state.selected)]);
 			state.continuity = null;
 			state.diagnosis = null; // 批量可能覆盖前三章（force 时），诊断同样作废
+			// M15 修复：正被编辑的章若在本次批量范围内（且真的落了盘），重拉正文——
+			// 否则编辑器里还是旧稿，用户一点「保存」就把旧内容盖回成新版本
+			const batchFrom = Number(state.batchFrom) || 1;
+			const batchCount = Number(state.batchCount) || 1;
+			if ((st.committed ?? 0) > 0
+				&& state.selected !== null
+				&& state.chapterNo >= batchFrom && state.chapterNo < batchFrom + batchCount) {
+				await loadChapter(state.chapterNo);
+				state.notice += `；第 ${state.chapterNo} 章已在编辑器里重载为最新版本`;
+			}
 		} catch (error) {
 			const raw = String(error?.message ?? error);
 			state.error = /ENGINE_UNAVAILABLE|引擎未就绪/.test(raw)
@@ -491,12 +509,21 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 
 	const saveChapter = async () => {
 		if (!state.selected) return;
+		// M13 修复：await 期间用户可能已切书/切章/继续打字——保存完成后先核对
+		// 「还是这本书的这一章、编辑器正文也还是存出去的那份」，再标记干净
+		const bookId = state.selected;
+		const no = state.chapterNo;
+		const snapshot = state.draft;
 		try {
-			await apiFetch(`/projects/${encodeURIComponent(state.selected)}/chapters/${state.chapterNo}`, {
-				method: 'POST', body: JSON.stringify({ title: `第 ${state.chapterNo} 章`, text: state.draft }),
+			await apiFetch(`/projects/${encodeURIComponent(bookId)}/chapters/${no}`, {
+				method: 'POST', body: JSON.stringify({ title: `第 ${no} 章`, text: snapshot }),
 			});
-			state.notice = `已保存：第 ${state.chapterNo} 章`;
-			state.baseline = state.draft; state.draftModified = false; state.undoStack = [];
+			if (state.selected === bookId && state.chapterNo === no && state.draft === snapshot) {
+				state.notice = `已保存：第 ${no} 章`;
+				state.baseline = snapshot; state.draftModified = false; state.undoStack = [];
+			} else {
+				state.notice = `已保存：第 ${no} 章——但编辑器已切走或继续改动，当前改动仍未保存`;
+			}
 		} catch (error) { state.error = String(error?.message ?? error); }
 		notify();
 	};
@@ -524,8 +551,11 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 			player.stop();
 			state.selected = null; state.view = 'projects'; state.detail = null; state.chapterList = [];
 			await refreshProjects();
-		} catch (error) { state.error = String(error?.message ?? error); }
-		finally { state.deleteState = null; notify(); }
+		} catch (error) {
+			state.error = String(error?.message ?? error);
+			state.deleteState = 'confirm'; // L17：失败退回确认态，不在按钮上闪一下又消失
+		}
+		notify();
 	};
 
 	const loadLoreEntries = async (bookId) => {
@@ -686,13 +716,21 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 			case 'diagnose': await loadDiagnosis(); break;
 			case 'import-demo': case 'import-file': needsModel('请在会话中调用 novel_import 导入'); break;
 			case 'save': await saveChapter(); break;
-			case 'refresh': if (state.selected && state.chapterNo) await loadChapter(state.chapterNo); break;
+			// M14 修复：刷新会重拉当前章、覆盖编辑器——有未保存改动时走同一套
+			// 「确认丢弃」流程（与切章一致），不再静默把草稿冲掉
+			case 'refresh':
+				if (state.selected && state.chapterNo) {
+					if (state.draftModified) { state.discardPending = { kind: 'chapter', no: state.chapterNo }; notify(); }
+					else await loadChapter(state.chapterNo);
+				}
+				break;
 			// 提案：应用 / 丢弃都是**用户主权动作**（工具面刻意不提供，见 lib/proposals.js）
 			case 'proposal-view': await toggleProposalDetail(target.dataset.id); break;
 			case 'proposal-apply': await applyProposalAction(target.dataset.id); break;
 			case 'proposal-discard': await discardProposalAction(target.dataset.id); break;
 			case 'export': await exportProject(); break;
 			case 'delete':
+				if (state.deleteState === 'busy') break; // L17：删除进行中，重复点无效
 				if (state.deleteState === 'confirm') await deleteProject();
 				else { state.deleteState = 'confirm'; notify(); }
 				break;

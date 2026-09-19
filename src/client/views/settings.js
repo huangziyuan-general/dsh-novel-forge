@@ -57,8 +57,10 @@ export function SettingsView() {
 			h('div', { style: { marginTop: space.lg } },
 				Section({ icon: '💬', title: '只能回会话里做' },
 					h('div', { style: stackStyle(space.xs) },
-						cap(false, '写章（novel_write_chapter）—— 要拼上下文包并走落盘门禁，只能由工具做'),
-						cap(false, '结构诊断 / 去AI味评级 / 平台审稿 —— 需要模型判断'),
+						// M16 修复：本清单说「写章 / 结构诊断面板做不了」早就不成立——
+						// 面板有「写单章」（走批量端点，同一门禁链）和「结构诊断」按钮（纯词表打分，零 token）
+						cap(false, '写章（novel_write_chapter）—— 面板「写单章」可落盘单章；拼全书上下文包的完整写作流仍在会话'),
+						cap(false, '去AI味评级 / 平台审稿 / 润色分析 —— 重活仍在会话工具'),
 						cap(false, '生成大纲、角色卡、细纲、设定（novel_outline / novel_cast / novel_world）'),
 						cap(false, '导入既有文稿（novel_import）'),
 						cap(false, '书库「饲料」—— 喂外部小说、对比结构画像（novel_library：import / list / compare）'),
