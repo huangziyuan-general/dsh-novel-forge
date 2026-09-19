@@ -975,3 +975,117 @@ test('engine: 通道显式配置 maxTokens 时传给子代理，截断报错带�
     assert.equal(seen.maxTokens, 8192, '显式配置要生效');
     assert.match(r.error.message, /8192/);
 });
+
+// ── 0.13.3 补八：父锚定收敛——批量起草并发前只锚定一次 ──────────────────────
+// 复盘：并发>1 时每章各自走 anchorChain，多章并发 agents.resume 同一持久化
+// 会话有撞宿主持久化写锁的风险。收敛面：engine.anchor() 解析一次 →
+// run({ parent }) 把预解析的父 agent 传给每一章。
+
+test('engine: anchor() 独立可用——get 命中直接返回活父 agent，不碰 start', async () => {
+    const parent = fakeParent('sess-3');
+    const engine = createEngine({
+        ctx: {
+            subagents: { start: () => { throw new Error('anchor 不该 start'); } },
+            agents: { get: (id) => (id === 'sess-3' ? parent : undefined) },
+        },
+        config: {}, sleep: noSleep,
+    });
+    const a = await engine.anchor({ sessionId: 'sess-3' });
+    assert.equal(a.ok, true);
+    assert.equal(a.parent, parent);
+});
+
+test('engine: run({ parent }) 用预解析的父 agent，全程不再碰 agents 注册表', async () => {
+    let getCalls = 0;
+    const parent = fakeParent('sess-7');
+    let gotParent;
+    const engine = createEngine({
+        ctx: {
+            subagents: { start: (_p, opts) => { gotParent = opts.parent; return { result: Promise.resolve({ stopReason: 'completed', output: [{ type: 'text', text: 'ok' }] }) }; } },
+            agents: {
+                get: (id) => { getCalls += 1; return id === 'sess-7' ? parent : undefined; },
+                resume: async () => { throw new Error('预解析后不该再 resume'); },
+            },
+            agentDefaultModel: { provider: 'p1', model: 'm1' },
+        },
+        config: {}, sleep: noSleep,
+    });
+    const a = await engine.anchor({ sessionId: 'sess-7' });
+    assert.equal(a.ok, true);
+    const afterAnchor = getCalls;
+    const r = await engine.run('polish', { prompt: 'x', sessionId: 'sess-7', parent: a.parent });
+    assert.equal(r.ok, true);
+    assert.equal(getCalls, afterAnchor, '预解析 parent 后 run 不该再查注册表');
+    assert.equal(gotParent, parent, '预解析的 parent 原样传给宿主 start');
+});
+
+test('batch-draft: 并发>1 时父锚定只发生一次（防多章并发 resume 同一会话）', async () => {
+    const book = '锚定收敛书';
+    const files = {
+        [`${book}/novel.json`]: JSON.stringify({
+            title: book, stage: 'chapter', phases: {},
+            approvals: { outline: { 1: true, 2: true } },
+            chapters: {}, cast: [], proposals: [], gateFailures: {},
+        }),
+        // 契约给足两章，并发不被上下文预算刹车压回 1
+        [`${book}/设定/场景契约.json`]: JSON.stringify({
+            1: { scene: '码头', participants: [], hidden: [], settings: [], forbidden: [], notes: '' },
+            2: { scene: '义庄', participants: [], hidden: [], settings: [], forbidden: [], notes: '' },
+        }),
+        [`${book}/大纲/细纲/第1章.md`]: '# 第1章 雪夜\n\n- 码头相遇：她在雾里认出暗号。',
+        [`${book}/大纲/细纲/第2章.md`]: '# 第2章 斗笠\n\n- 摘斗笠：露出被火燎过的脸。',
+    };
+    const io = memIo(files);
+    const parent = fakeParent('sess-anchor');
+    let anchorCalls = 0;
+    const seenParents = [];
+    const engine = {
+        // 收敛面替身：anchor 一次；run 必须收到预解析的 parent
+        async anchor(_opts) { anchorCalls += 1; return { ok: true, parent }; },
+        async run(_channel, { prompt, parent: p }) {
+            seenParents.push(p);
+            const n = Number(prompt.match(/【第 (\d+) 章/)[1]);
+            return { ok: true, finishKind: 'stop', attempts: 1, route: { provider: 'p', model: 'm', source: 'default' }, text: CHAPTER_TEXTS[n] };
+        },
+    };
+    const result = await runDraftBatch({
+        engine, config: TEST_CFG, io, p: pathsFor(book), book,
+        novel: JSON.parse(files[`${book}/novel.json`]), from: 1, count: 2, concurrency: 2,
+        sessionId: 'sess-anchor',
+    });
+    assert.equal(result.concurrency, 2);
+    assert.equal(anchorCalls, 1, '锚定必须只发生一次');
+    assert.equal(seenParents.length, 2);
+    assert.ok(seenParents.every((p) => p === parent), '每一章都拿到同一个预解析 parent');
+    assert.ok(result.stats.committed === 2, '收敛不改变批量起草的功能结果');
+});
+
+test('batch-draft: 引擎无 anchor（旧替身/降级）时不炸——并发照跑，行为与旧版一致', async () => {
+    const book = '无锚面书';
+    const files = {
+        [`${book}/novel.json`]: JSON.stringify({
+            title: book, stage: 'chapter', phases: {},
+            approvals: { outline: { 1: true, 2: true } },
+            chapters: {}, cast: [], proposals: [], gateFailures: {},
+        }),
+        [`${book}/设定/场景契约.json`]: JSON.stringify({
+            1: { scene: '码头', participants: [], hidden: [], settings: [], forbidden: [], notes: '' },
+            2: { scene: '义庄', participants: [], hidden: [], settings: [], forbidden: [], notes: '' },
+        }),
+        [`${book}/大纲/细纲/第1章.md`]: '# 第1章 雪夜\n\n- 码头相遇。',
+        [`${book}/大纲/细纲/第2章.md`]: '# 第2章 斗笠\n\n- 摘斗笠。',
+    };
+    const io = memIo(files);
+    const engine = {
+        async run(_c, { prompt }) {
+            const n = Number(prompt.match(/【第 (\d+) 章/)[1]);
+            return { ok: true, finishKind: 'stop', attempts: 1, route: { provider: 'p', model: 'm', source: 'default' }, text: CHAPTER_TEXTS[n] };
+        },
+    };
+    const result = await runDraftBatch({
+        engine, config: TEST_CFG, io, p: pathsFor(book), book,
+        novel: JSON.parse(files[`${book}/novel.json`]), from: 1, count: 2, concurrency: 2,
+    });
+    assert.equal(result.concurrency, 2, '没有 anchor 面也不该把并发压回 1');
+    assert.ok(result.stats.committed === 2);
+});

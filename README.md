@@ -1,6 +1,6 @@
 # dsh-novel-forge · 小说锻炉
 
-![release](https://img.shields.io/github/v/release/huangziyuan-general/dsh-novel-forge) ![license](https://img.shields.io/github/license/huangziyuan-general/dsh-novel-forge) ![tests](https://img.shields.io/badge/tests-240%20passing-brightgreen)
+![release](https://img.shields.io/github/v/release/huangziyuan-general/dsh-novel-forge) ![license](https://img.shields.io/github/license/huangziyuan-general/dsh-novel-forge) [![tests](https://img.shields.io/github/actions/workflow/status/huangziyuan-general/dsh-novel-forge/ci.yml?branch=main&label=tests)](https://github.com/huangziyuan-general/dsh-novel-forge/actions/workflows/ci.yml)
 
 DeepSeek Harness（DSH）的小说创作插件。设计主线只有一条：
 
@@ -51,8 +51,8 @@ AI 长篇写作的通病不是玄学，每一个都有对应的工程解法。�
 # 从插件商店（GitHub 公开仓库，推荐）
 dsh plugin --profile web add github:huangziyuan-general/dsh-novel-forge
 
-# 从 npm
-dsh plugin --profile web add npm:dsh-novel-forge
+# 从 npm（发包后启用——当前未发布，此路暂不可用）
+# dsh plugin --profile web add npm:@huangziyuan-general/dsh-novel-forge
 
 # 本地开发（符号链接，改码即生效）
 dsh plugin --profile web add link:/path/to/dsh-novel-forge
@@ -223,7 +223,7 @@ npm run setup-dev   # 把 DSH checkout 的宿主 SDK 真包 symlink 进本地 no
 npm run build       # src/client/ → lib/client.js（改客户端源码后必须跑；npm test 会自动跑）
 npm run audit       # 静态自检：① 调用了但没导入/声明 ② 孤儿 dataset.X 读取（npm test 前置也跑）
 npm run preview     # 生成可交互 UI 预览 preview/forge-ui.html（内联真产物 + 宿主真 token，离线可开）
-npm test            # node --test：237 个用例（纯逻辑单测 + 假 fs 全链路冒烟 + headless 行为测试）
+npm test            # node --test：244 个用例（纯逻辑单测 + 假 fs 全链路冒烟 + headless 行为测试）
 node scripts/demo.mjs   # 端到端演示：init→细纲→写章→账本→扫描→提案 全流程
 ```
 

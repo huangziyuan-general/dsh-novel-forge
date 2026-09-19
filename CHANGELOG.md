@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.13.4 (2026-09-19)
+
+- **批量起草并发父锚定收敛**：并发>1 时原先每章独立走候选链，多章并发
+  `agents.resume` 同一持久化会话有撞宿主持久化写锁的风险。收敛为
+  `engine.anchor()` 起草前解析一次、经 `run({ parent })` 传给每一章；
+  锚定失败自动把并发降回 1（单章路径给出完整人话诊断）。
+- **GitHub Actions CI**：push/PR 自动跑 `npm test`（构建 + 双静态审计 +
+  全量单测）；README tests 徽章从静态文字换成动态 workflow 徽章。
+- **README npm 死链摘除**：`npm:dsh-novel-forge` 从未发布（registry 404），
+  安装指南里的 npm 路改为注释并标注 scoped 包名 `@huangziyuan-general/dsh-novel-forge`，
+  发包后启用。
+- 测试 244 项（新增 4 条：anchor 独立可用、预解析 parent 不碰注册表、
+  批量锚定只一次、无 anchor 面兼容旧替身）。
+
 ## 0.13.3 (2026-09-19)
 
 - **novel_scene 恒 invalid output 修复**：`normalizeContract` 产出 `updatedAt`，
