@@ -874,6 +874,39 @@ test('A3/A4 禁项分流：排除型算偏离度，需求型/条件型不算（�
     assert.ok(r.conditional.includes('密信'), '条件型只提示人工复核，不计偏离度');
 });
 
+test('★ 禁项解析：前置否定句式不得把否定词本身当禁词（墨骨录第1章误判「不得」命中的根因）', () => {
+    const r = parseBanRules('- 不得出现墨银\n- 不得点破主角身世');
+    assert.ok(!r.banned.includes('不得'), '★ 「不得出现X」禁的是X；正文含「不得」二字绝不能判命中');
+    assert.ok(r.banned.includes('墨银'), '前置否定的宾语才是禁词');
+    const subjFirst = parseBanRules('现代词汇不得出现');
+    assert.ok(subjFirst.banned.includes('现代词汇'), '主语前置句式（「X不得出现」）照旧收X');
+});
+
+test('★ 禁项解析：「不得让沈无咎说出…」禁的是那句话，不是人物（主角名当禁词=必误判）', () => {
+    const r = parseBanRules('- 不得让沈无咎说出「拓印有半枚」全句，只许一闪而过的心理\n- 不得让裴昭自陈来路');
+    assert.ok(!r.banned.includes('沈无咎') && !r.banned.includes('裴昭'), '★ 行为人名归条件型（人物必然出现在正文，进禁词表=必命中）');
+    assert.ok(r.conditional.includes('沈无咎') && r.conditional.includes('裴昭'), '人名提示人工复核');
+    assert.ok(r.banned.includes('拓印有半枚'), '真正想禁的引号宾语照收禁词');
+    const appear = parseBanRules('- 不得让陆寒出场');
+    assert.ok(appear.banned.includes('陆寒'), '「不得让X登场/出场」才是人名即禁词（不许在本章露面）');
+});
+
+test('★ 禁项解析：枚举与许可语境——「禁止现代词汇（法医、指纹…等）」逐项生效，「只许以X指称」不是禁词', () => {
+    const r = parseBanRules('- 禁止现代词汇（法医、指纹、解剖、窒息、证据链等），验尸用语用《洗冤集录》式古法');
+    assert.ok(r.banned.includes('法医') && r.banned.includes('指纹') && r.banned.includes('证据链'), '★ 顿号枚举逐项拆开（旧版整行漏解析，禁令静默失效）');
+    assert.ok(!r.banned.includes('洗冤集录'), '许可语境（用语用《X》）是应该出现的写法，不是禁词');
+    assert.ok(r.conditional.includes('洗冤集录'));
+    const permissive = parseBanRules('- 不得出现任何幕后主使姓名，幕后只许以「漕面上的人」模糊指称');
+    assert.ok(!permissive.banned.includes('漕面上的人') && permissive.conditional.includes('漕面上的人'), '「只许以X指称」＝X 必须出现');
+});
+
+test('★ 禁项解析：裸词表行逐项生效（禁项段最朴素写法；旧版解析为空=门禁被格式绕过）', () => {
+    const bare = parseBanRules('墨银、沈慎、法医、指纹、解剖、窒息、证据链');
+    assert.equal(bare.banned.length, 7, '★ 裸词表 = 7 个禁词全部生效（旧版返回空数组）');
+    const mixed = parseBanRules('验尸用语古法，禁现代词');
+    assert.equal(mixed.banned.length, 0, '含否定/许可词的非清单行不走裸词表路径，防误收');
+});
+
 test('A3/A4 契约指标：覆盖率/漏写/偏离度/场景豁免', () => {
     const outline = '## 本章必写场景\n1. 雨夜相遇：林晚在码头遇见赵擎\n2. 断刃现世：断刃从江底浮起\n\n## 本章禁止偏离项\n- 不得让陆寒出场\n';
     const full = computeGateMetrics({ content: '雨夜，林晚在码头遇见赵擎。断刃从江底浮起。', outline });
