@@ -271,7 +271,7 @@ after(() => {
 // 全部经 statSync 验证。
 
 test('W1 纯函数：projcache 解析——Windows cwd 原样取出，坏输入零崩溃', async () => {
-    const { parseProjcacheRoots, decodeSessionDirRoots } = await import('../lib/server-api.js');
+    const { parseProjcacheRoots, parseProjcacheSessionFile, decodeSessionDirRoots } = await import('../lib/server-api.js');
     const win = parseProjcacheRoots(JSON.stringify({
         tables: { sessions: { a: { identity: { cwd: 'D:\\新建文件夹 (4)' } }, b: { identity: {} } } },
     }));
@@ -279,6 +279,15 @@ test('W1 纯函数：projcache 解析——Windows cwd 原样取出，坏输入�
     assert.deepEqual(parseProjcacheRoots('不是 JSON'), []);
     assert.deepEqual(parseProjcacheRoots('{}'), []);
     assert.deepEqual(parseProjcacheRoots(null), []);
+    // 目录态分会话文件（dsh 0.1.5 起）：cwd 在 record.identity.cwd，Windows 真机只剩这一形态
+    assert.deepEqual(
+        parseProjcacheSessionFile(JSON.stringify({ version: 1, record: { identity: { cwd: 'D:\\新建文件夹 (4)' } } })),
+        ['D:\\新建文件夹 (4)'], '★ 目录态 record.identity.cwd 必须无损取出');
+    assert.deepEqual(parseProjcacheSessionFile(JSON.stringify({ identity: { cwd: '/Users/me/proj' } })),
+        ['/Users/me/proj'], '旧宿主顶层 identity.cwd 兼容');
+    assert.deepEqual(parseProjcacheSessionFile(JSON.stringify({ record: { identity: {} } })), [], '无 cwd → 空数组不抛');
+    assert.deepEqual(parseProjcacheSessionFile('不是 JSON'), []);
+    assert.deepEqual(parseProjcacheSessionFile(null), []);
     assert.deepEqual(decodeSessionDirRoots(['--Users-me-Doc-novel--']), ['/Users/me/Doc/novel'], 'POSIX 反推保持不变');
     const winKey = decodeSessionDirRoots(['--D-~65B0~5EFA~6587~4EF6~5939~0020~00284~0029--']);
     assert.deepEqual(winKey, ['D:\\新建文件夹 (4)', '/D/新建文件夹 (4)'], '★ Windows 真机 key（dsh 0.1.5-rc.2 实录：~XXXX escape 变体，:\\ 压成一个 -）必须反解出盘符形态——旧实现在这台机器上永远扫不到书');
@@ -353,6 +362,43 @@ test('W3 集成：projcache 的 Windows cwd 在 statSync 可达时进扫描根',
         handler = origHandler;
         fs.rmSync(ghostRoot, { recursive: true, force: true });
         fs.rmSync(path.join(fakeHome, '.dsh'), { recursive: true, force: true });   // 还原假 home，别的用例不受污染
+    }
+});
+
+test('W3b 集成：目录态 projcache（record.identity.cwd）进扫描根——真机 Windows 只剩这形态', async () => {
+    // Windows 真机（dsh 0.1.5-rc.2）实测：单文件 session_projcache.json 不存在，
+    // 数据在 session_projcache/sessions/*.json 的 record.identity.cwd 里。旧实现只读单文件
+    // → 源①静默归零 → 面板空。本用例只造目录态、绝不建单文件，锁死这条通路。
+    const { registerServerApi } = await import('../lib/server-api.js');
+    const dirRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-dirpc-'));
+    const sessDir = path.join(fakeHome, '.dsh', 'storages', 'session_projcache', 'sessions');
+    fs.mkdirSync(sessDir, { recursive: true });
+    fs.writeFileSync(path.join(sessDir, '8d36e786.json'), JSON.stringify({
+        version: 1, record: { identity: { cwd: dirRoot } },
+    }));
+    fs.writeFileSync(path.join(sessDir, 'junk.json'), '不是 JSON');   // 坏文件不得阻断其余会话
+    fs.mkdirSync(path.join(dirRoot, '目录书'));
+    fs.writeFileSync(path.join(dirRoot, '目录书', 'novel.json'), JSON.stringify({ title: '目录书', stage: 'writing', sessions: [], chapters: {} }));
+    const registrations = [];
+    const dctx = {
+        fs: makeFakeBackend({ allowWriteRoots: [root], allowReadRoots: [root, dirRoot] }),
+        emit() {},
+        logger: { info() {} },
+        inject: (_deps, fn) => { fn(dctx); },
+        effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
+        webServer: { register: (def) => { registrations.push(def); return () => {}; } },
+    };
+    registerServerApi(dctx, { workspaceRoot: root, scanTopK: 8 }, { homedir: fakeHome });
+    const origHandler = handler;
+    handler = registrations[0].handler;
+    try {
+        const res = await drive({ method: 'GET', url: `${PREFIX}/projects` });
+        assert.equal(res.statusCode, 200);
+        assert.ok(res.json.value.map((x) => x.name).includes('目录书'), '★ 目录态 projcache 的工作区必须进扫描根（单文件不存在时也不能空）');
+    } finally {
+        handler = origHandler;
+        fs.rmSync(dirRoot, { recursive: true, force: true });
+        fs.rmSync(path.join(fakeHome, '.dsh'), { recursive: true, force: true });
     }
 });
 
