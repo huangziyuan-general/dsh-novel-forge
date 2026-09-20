@@ -1216,6 +1216,92 @@ test('★ createServerFsio 乐观并发原语：读时带回版本，写时按**
     assert.deepEqual(writes[2].intent, { kind: 'replaceIfVersion', version: 7 }, 'writeJsonAtVersion 同构');
 });
 
+test('★ fsio 沙箱策略线程：写盘第 5 参携带会话 scoped policy（与内置 fs 工具同界，Windows 工作区≠进程 cwd 不再误伤）', async () => {
+    const { createFsio } = await import('../lib/fsio.js');
+    const seen = [];
+    const resolved = [];
+    const session = { header: { cwd: 'D:\\书桌', id: 'sess-1' } };
+    const exec = { agent: { session } };
+    const policySvc = {
+        resolve(request) {
+            resolved.push(request);
+            return { mode: 'workspace-write', workspaceRoot: request.session.header.cwd };
+        },
+    };
+    // 替身镜像真机：sandboxPolicy 经 ctx.get 双路探测取得（不在顶层注入）
+    const fakeCtx = {
+        emit() {},
+        get(prop) { return prop === 'sandboxPolicy' ? policySvc : undefined; },
+        fs: {
+            async resolve(p) { return `D:\\书桌\\${p}`; },
+            async stat() { return undefined; },
+            async writeText(target, text, intent, signal, policy) { seen.push({ target, policy }); return { version: 1 }; },
+        },
+    };
+    const fsio = createFsio(fakeCtx, exec, 'D:\\书桌');
+    await fsio.writeText('大嫂的账本/novel.json', '{}', 'replace');
+    assert.equal(resolved.length, 1, '策略服务必须被询价一次');
+    assert.equal(resolved[0].session, session, '★ exec 的 session 必须显式交给策略服务（宿主 checkedTarget 的无参兜底拿不到它）');
+    assert.equal(seen[0].policy.workspaceRoot, 'D:\\书桌', '★ 写界 = 会话 cwd（此前回落 web 进程 cwd，工作区内的写被判越界）');
+});
+
+test('★ fsio 沙箱策略线程：服务缺失时第 5 参缺省、宿主自兜底（旧宿主/裸后端零回归）', async () => {
+    const { createFsio } = await import('../lib/fsio.js');
+    const calls = [];
+    const fakeCtx = {
+        emit() {},
+        fs: {
+            async resolve(p) { return `/abs/${p}`; },
+            async stat() { return undefined; },
+            // 裸后端签名只有 4 参（沙箱后端才是 5 参）——多传会被无视，这里数参数钉形状
+            async writeText(...args) { calls.push(args); return { version: 1 }; },
+        },
+    };
+    const fsio = createFsio(fakeCtx, { agent: { session: { header: { cwd: '/w', id: 's' } } } }, '/w');
+    await fsio.writeText('书/novel.json', '{}', 'replace');
+    assert.equal(calls[0].length, 4, '无 sandboxPolicy 服务 = 与旧调用形状逐字节一致（target,text,intent,signal）');
+});
+
+test('★ fsio 沙箱拒绝改写：保留宿主原信息并补可行动指引（Windows 根因不再说谜语）', async () => {
+    const { createFsio } = await import('../lib/fsio.js');
+    const fakeCtx = {
+        get(prop) { return prop === 'sandboxPolicy' ? { resolve: () => ({ mode: 'workspace-write', workspaceRoot: '/other' }) } : undefined; },
+        fs: {
+            async resolve(p) { return `/abs/${p}`; },
+            async stat() { return undefined; },
+            async writeText() {
+                throw Object.assign(new Error('cannot write "D:\\书桌\\大嫂的账本\\novel.json": file access denied under workspace-write mode'), { code: 'FS_SANDBOX_DENIED' });
+            },
+        },
+    };
+    const fsio = createFsio(fakeCtx, { agent: { session: { header: { cwd: 'D:\\书桌', id: 's' } } } }, 'D:\\书桌');
+    await assert.rejects(
+        fsio.writeText('大嫂的账本/novel.json', '{}', 'replace'),
+        (e) => e.message.includes('file access denied under workspace-write mode')
+            && e.message.includes('danger-full-access')
+            && e.message.includes('dsh web 的启动目录'),
+        '原信息必须在，指引（切策略/换启动目录/更新插件）也必须在',
+    );
+});
+
+test('★ createServerFsio 同样线程策略：无 session → resolve({})，与宿主兜底同值不改变判定', async () => {
+    const { createServerFsio } = await import('../lib/fsio.js');
+    const resolved = [];
+    const seen = [];
+    const policySvc = { resolve(request) { resolved.push(request); return { mode: 'workspace-write', workspaceRoot: '/proc-cwd' }; } };
+    const fakeCtx = {
+        get(prop) { return prop === 'sandboxPolicy' ? policySvc : undefined; },
+        fs: {
+            async resolve(p) { return `/abs/${p}`; },
+            async stat() { return undefined; },
+            async writeText(target, text, intent, signal, policy) { seen.push({ policy }); return { version: 1 }; },
+        },
+    };
+    const fsio = createServerFsio(fakeCtx, '/root');
+    await fsio.writeText('书/novel.json', '{}');
+    assert.equal(seen[0].policy.workspaceRoot, '/proc-cwd', 'REST 平面无 session，回落值与宿主 checkedTarget 兜底一致（判定不变，仅补拒绝提示）');
+});
+
 test('★ cloneProject（lib/clone.js 共享核心）：章节资产全带走、阶段重置、会话归属、防呆三连', async () => {
     const { cloneProject } = await import('../lib/clone.js');
     // 内存 io：createFsio / createServerFsio 的公共接口子集
