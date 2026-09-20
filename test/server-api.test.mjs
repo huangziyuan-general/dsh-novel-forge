@@ -193,6 +193,7 @@ class FakeRes {
 // ── 装载载体 ───────────────────────────────────────────────────────────
 
 let root;               // 受控工作区根（= config.workspaceRoot）
+let fakeHome;           // 假 home（扫描根推导的 sessions/projcache 源指到这里，测试封闭）
 let backend;
 let ctx;
 let handler;
@@ -238,6 +239,7 @@ function walkFiles(dir, out = []) {
 
 before(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-rest-'));
+    fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-home-'));
     backend = makeFakeBackend({ allowWriteRoots: [root], allowReadRoots: [root] });
     const registrations = [];
     ctx = {
@@ -248,7 +250,7 @@ before(() => {
         effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
         webServer: { register: (def) => { registrations.push(def); return () => {}; } },
     };
-    registerServerApi(ctx, { workspaceRoot: root, scanTopK: 8 }, {});
+    registerServerApi(ctx, { workspaceRoot: root, scanTopK: 8 }, { homedir: fakeHome });
     assert.equal(registrations.length, 1, 'registerServerApi 必须恰好注册一条 prefix 路由');
     assert.equal(registrations[0].kind, 'prefix');
     assert.equal(registrations[0].path, PREFIX);
@@ -257,6 +259,94 @@ before(() => {
 
 after(() => {
     if (root !== undefined) fs.rmSync(root, { recursive: true, force: true });
+    if (fakeHome !== undefined) fs.rmSync(fakeHome, { recursive: true, force: true });
+});
+
+// ── W：扫描根推导（Windows 真机「书在盘上、面板空」的根因回归）──────────
+//
+// 旧实现只从 ~/.dsh/sessions 目录名反推（`--Users-me-Doc-novel--` → /Users/me/Doc/novel），
+// Windows 的 `D:\X` 反推成 `/D://X` 必然 statSync 失败被跳过 → 扫描根只剩进程 cwd →
+// 书生成在盘上、面板永远空。新实现三源合并：live sessions（ctx.sessions）> projcache
+// （session_projcache.json 的 identity.cwd，无损跨平台）> 目录名反推（POSIX 兜底），
+// 全部经 statSync 验证。
+
+test('W1 纯函数：projcache 解析——Windows cwd 原样取出，坏输入零崩溃', async () => {
+    const { parseProjcacheRoots, decodeSessionDirRoots } = await import('../lib/server-api.js');
+    const win = parseProjcacheRoots(JSON.stringify({
+        tables: { sessions: { a: { identity: { cwd: 'D:\\新建文件夹 (4)' } }, b: { identity: {} } } },
+    }));
+    assert.deepEqual(win, ['D:\\新建文件夹 (4)'], '★ Windows 盘符路径必须无损通过（旧目录名反推对它无能为力）');
+    assert.deepEqual(parseProjcacheRoots('不是 JSON'), []);
+    assert.deepEqual(parseProjcacheRoots('{}'), []);
+    assert.deepEqual(parseProjcacheRoots(null), []);
+    assert.deepEqual(decodeSessionDirRoots(['--Users-me-Doc-novel--']), ['/Users/me/Doc/novel'], 'POSIX 反推保持不变');
+    assert.deepEqual(decodeSessionDirRoots(['--D--X--']), ['/D//X'], 'Windows 反推如实产出（上层 statSync 会跳过）');
+    assert.deepEqual(decodeSessionDirRoots('不是数组'), []);
+});
+
+test('W2 集成：live sessions 的 header.cwd 进扫描根——面板所在会话的书必可见', async () => {
+    const { registerServerApi } = await import('../lib/server-api.js');
+    const liveRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-live-'));
+    fs.mkdirSync(path.join(liveRoot, '直播书'));
+    fs.writeFileSync(path.join(liveRoot, '直播书', 'novel.json'), JSON.stringify({ title: '直播书', stage: 'writing', sessions: [], chapters: {} }));
+    const registrations = [];
+    const liveCtx = {
+        fs: makeFakeBackend({ allowWriteRoots: [root], allowReadRoots: [root, liveRoot] }),
+        emit() {},
+        logger: { info() {} },
+        sessions: { list: () => [{ header: { cwd: liveRoot, id: 'sess-live' } }, { cwd: '不存在的路径' }] },
+        inject: (_deps, fn) => { fn(liveCtx); },
+        effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
+        webServer: { register: (def) => { registrations.push(def); return () => {}; } },
+    };
+    registerServerApi(liveCtx, { workspaceRoot: root, scanTopK: 8 }, { homedir: fakeHome });
+    const liveHandler = registrations[0].handler;
+    const origHandler = handler;   // drive() 用闭包里的 handler——临时换装
+    handler = liveHandler;
+    try {
+        const res = await drive({ method: 'GET', url: `${PREFIX}/projects` });
+        assert.equal(res.statusCode, 200);
+        const names = res.json.value.map((x) => x.name);
+        assert.ok(names.includes('直播书'), '★ live session 工作区里的书必须出现在列表（旧实现：永远空）');
+        assert.ok(!names.some((n) => n === '不存在的路径'), '坏 cwd 只是跳过，不进列表');
+    } finally {
+        handler = origHandler;
+        fs.rmSync(liveRoot, { recursive: true, force: true });
+    }
+});
+
+test('W3 集成：projcache 的 Windows cwd 在 statSync 可达时进扫描根', async () => {
+    // macOS 上造不出 D:\ 真目录——用 tmp 目录冒充「projcache 里的非活跃工作区」验证同一条通路
+    const { registerServerApi } = await import('../lib/server-api.js');
+    const ghostRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-ghost-'));
+    fs.mkdirSync(path.join(fakeHome, '.dsh', 'storages'), { recursive: true });
+    fs.writeFileSync(path.join(fakeHome, '.dsh', 'storages', 'session_projcache.json'), JSON.stringify({
+        tables: { sessions: { ghost: { identity: { cwd: ghostRoot } } } },
+    }));
+    fs.mkdirSync(path.join(ghostRoot, '幽灵书'));
+    fs.writeFileSync(path.join(ghostRoot, '幽灵书', 'novel.json'), JSON.stringify({ title: '幽灵书', stage: 'writing', sessions: [], chapters: {} }));
+    const registrations = [];
+    const ghostCtx = {
+        fs: makeFakeBackend({ allowWriteRoots: [root], allowReadRoots: [root, ghostRoot] }),
+        emit() {},
+        logger: { info() {} },
+        inject: (_deps, fn) => { fn(ghostCtx); },
+        effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
+        webServer: { register: (def) => { registrations.push(def); return () => {}; } },
+    };
+    registerServerApi(ghostCtx, { workspaceRoot: root, scanTopK: 8 }, { homedir: fakeHome });
+    const ghostHandler = registrations[0].handler;
+    const origHandler = handler;
+    handler = ghostHandler;
+    try {
+        const res = await drive({ method: 'GET', url: `${PREFIX}/projects` });
+        assert.equal(res.statusCode, 200);
+        assert.ok(res.json.value.map((x) => x.name).includes('幽灵书'), '★ projcache 里的工作区必须进扫描根');
+    } finally {
+        handler = origHandler;
+        fs.rmSync(ghostRoot, { recursive: true, force: true });
+        fs.rmSync(path.join(fakeHome, '.dsh'), { recursive: true, force: true });   // 还原假 home，别的用例不受污染
+    }
 });
 
 // ── H0：载体与替身自检（先证明替身会「真的拒绝」，后面所有断言才不作数于空转）──
