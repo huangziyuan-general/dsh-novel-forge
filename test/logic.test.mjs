@@ -2,6 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 
 import { sanitizeTitle, chapterFileName, parseChapterFileName, nextVersion, nextSuffixedId } from '../lib/versioning.js';
 import { gateChapterWrite, advanceStage, resetStage } from '../lib/gate.js';
@@ -1317,7 +1318,7 @@ test('★ fsio 沙箱拒绝改写：保留宿主原信息并补可行动指引�
     );
 });
 
-test('★ createServerFsio 同样线程策略：无 session → resolve({})，与宿主兜底同值不改变判定', async () => {
+test('★ createServerFsio 线程策略：REST 面 resolve({}) 的 workspaceRoot 被绑定书根覆写（不再回落进程 cwd）', async () => {
     const { createServerFsio } = await import('../lib/fsio.js');
     const resolved = [];
     const seen = [];
@@ -1332,7 +1333,63 @@ test('★ createServerFsio 同样线程策略：无 session → resolve({})，�
     };
     const fsio = createServerFsio(fakeCtx, '/root');
     await fsio.writeText('书/novel.json', '{}');
-    assert.equal(seen[0].policy.workspaceRoot, '/proc-cwd', 'REST 平面无 session，回落值与宿主 checkedTarget 兜底一致（判定不变，仅补拒绝提示）');
+    assert.deepEqual(resolved[0], {}, 'resolve 请求保持无 session 的旧形状——不伪造宿主会话（sessionProjections 对未知会话会抛）');
+    assert.equal(seen[0].policy.workspaceRoot, path.resolve('/root'), '★ REST 面写界 = 绑定的书工作区（旧行为回落 /proc-cwd = 宿主 checkedTarget 兜底，正是「书在非 cwd 工作区」误拒的机理）');
+    assert.equal(seen[0].policy.mode, 'workspace-write', 'mode 仍全权归 resolver，插件只动根');
+});
+
+test('★ createServerFsio REST 面：绑定书根覆写覆盖全部写通道（writeTextAtVersion / appendLine），不依赖 live 会话在册（CodeBuddy P2 真机终态）', async () => {
+    // 替身**刻意不带 ctx.sessions**——镜像面板空闲期时序：sessions 服务虽在宿主 base 层装载
+    // （dsh-base/cordis.patch.yml L34，SessionStore list() 可调），但 store 由创建 fiber 持有，
+    // 会话只在 agent 轮运行期在册 → 首修「匹配 live 会话线程其策略」空闲期命中≈0，且会话的
+    // model 侧 mode 覆盖不该进用户面板动作。终态 = 绑定根覆写 workspaceRoot，
+    // 每个 REST 写通道都吃到（appendLine 漏线程曾让存章成功的审计写最先撞非 cwd 工作区拒绝）。
+    const { createServerFsio } = await import('../lib/fsio.js');
+    const seen = [];
+    const policySvc = { resolve: () => ({ mode: 'workspace-write', workspaceRoot: '/proc-cwd' }) };
+    const fakeCtx = {
+        get(prop) { return prop === 'sandboxPolicy' ? policySvc : undefined; },
+        fs: {
+            async resolve(p) { return `/abs/${p}`; },
+            async stat() { return { version: 'v3', type: 'file' }; },   // 文件在场 → 走 replaceIfVersion 分支
+            async readText() { return '已有行\n'; },
+            async writeText(target, text, intent, signal, policy) { seen.push({ intent, policy }); return { version: 4 }; },
+        },
+    };
+    const fsio = createServerFsio(fakeCtx, '/books-root');
+    await fsio.writeTextAtVersion('大嫂的账本/novel.json', '{}', 'v3');
+    assert.equal(seen[0].policy.workspaceRoot, path.resolve('/books-root'), '★ writeTextAtVersion 通道也覆根');
+    await fsio.appendLine('大嫂的账本/.novel/audit.jsonl', '一行审计');
+    assert.equal(seen[1].policy.workspaceRoot, path.resolve('/books-root'), '★ appendLine 通道也覆根（首修漏线程的半边）');
+    assert.deepEqual(seen[1].intent, { kind: 'replaceIfVersion', version: 'v3' }, 'appendLine 读-改-写版本守卫语义不变');
+});
+
+test('★ fsio 沙箱拒绝识别优先匹配结构化 code（宿主文案改版不至于让可行动提示静默失效，CodeBuddy P3）', async () => {
+    const { createFsio } = await import('../lib/fsio.js');
+    const fakeCtx = {
+        get(prop) { return prop === 'sandboxPolicy' ? { resolve: () => ({ mode: 'workspace-write', workspaceRoot: '/other' }) } : undefined; },
+        fs: {
+            async resolve(p) { return `/abs/${p}`; },
+            async stat() { return undefined; },
+            async writeText() {
+                // 宿主改版后的假想文案（不含 'file access denied under'），但 code 不变
+                throw Object.assign(new Error('宿主新文案：write blocked by policy'), { code: 'FS_SANDBOX_DENIED' });
+            },
+        },
+    };
+    const fsio = createFsio(fakeCtx, { agent: { session: { header: { cwd: '/w', id: 's' } } } }, '/w');
+    await assert.rejects(
+        fsio.writeText('书/novel.json', '{}', 'replace'),
+        (e) => e.message.includes('write blocked by policy') && e.message.includes('dsh-novel-forge'),
+        'code 命中即改写提示（原信息保留）——文案漂移不再让诊断静默失效',
+    );
+    // 无 code 且文案不匹配 → 原样上抛，绝不误改写
+    const plainCtx = {
+        get(prop) { return prop === 'sandboxPolicy' ? { resolve: () => ({}) } : undefined; },
+        fs: { async resolve(p) { return `/abs/${p}`; }, async stat() { return undefined; }, async writeText() { throw new Error('磁盘满了'); } },
+    };
+    const plainFsio = createFsio(plainCtx, { agent: { session: { header: { cwd: '/w', id: 's' } } } }, '/w');
+    await assert.rejects(plainFsio.writeText('书/novel.json', '{}', 'replace'), (e) => e.message === '磁盘满了', '非沙箱错误零改动');
 });
 
 test('★ cloneProject（lib/clone.js 共享核心）：章节资产全带走、阶段重置、会话归属、防呆三连', async () => {
