@@ -280,8 +280,15 @@ test('W1 纯函数：projcache 解析——Windows cwd 原样取出，坏输入�
     assert.deepEqual(parseProjcacheRoots('{}'), []);
     assert.deepEqual(parseProjcacheRoots(null), []);
     assert.deepEqual(decodeSessionDirRoots(['--Users-me-Doc-novel--']), ['/Users/me/Doc/novel'], 'POSIX 反推保持不变');
-    assert.deepEqual(decodeSessionDirRoots(['--D--X--']), ['/D//X'], 'Windows 反推如实产出（上层 statSync 会跳过）');
+    const winKey = decodeSessionDirRoots(['--D-~65B0~5EFA~6587~4EF6~5939~0020~00284~0029--']);
+    assert.deepEqual(winKey, ['D:\\新建文件夹 (4)', '/D/新建文件夹 (4)'], '★ Windows 真机 key（dsh 0.1.5-rc.2 实录：~XXXX escape 变体，:\\ 压成一个 -）必须反解出盘符形态——旧实现在这台机器上永远扫不到书');
+    const winDrive = decodeSessionDirRoots(['--D-Users-zxc26-Desktop-tt-ai--']);
+    assert.deepEqual(winDrive, ['D:\\Users\\zxc26\\Desktop\\tt\\ai', '/D/Users/zxc26/Desktop/tt/ai'], '全 ASCII 盘符 key 双形态候选，statSync 决定哪个生效');
+    assert.ok(decodeSessionDirRoots(['--D--X--']).includes('/D//X'), 'Windows 反推 POSIX 形态如实产出（上层 statSync 会跳过）');
     assert.deepEqual(decodeSessionDirRoots('不是数组'), []);
+    const { unescapeTildeHex } = await import('../lib/server-api.js');
+    assert.equal(unescapeTildeHex('~65B0~5EFA~6587~4EF6~5939~0020~00284~0029'), '新建文件夹 (4)', 'escape 变体反解：~XXXX 四位十六进制，ASCII 字面字符原样保留');
+    assert.equal(unescapeTildeHex(null), '');
 });
 
 test('W2 集成：live sessions 的 header.cwd 进扫描根——面板所在会话的书必可见', async () => {
