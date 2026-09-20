@@ -2,6 +2,19 @@
 
 ## 未发布
 
+- **外部审查采纳：live 源脱离 60s TTL 缓存**。旧实现把 live sessions 的 cwd 和持久源
+  （projcache/目录名反推）一起整包缓存 60s——新开会话的工作区要等缓存过期才进扫描根，
+  「新会话建书 → 面板空 60s 才自愈」，恰好延长本批要消灭的症状。修法：持久源（盘上状态）
+  保留 TTL，live 每次现算；两处 readdirSync 排序（目录项顺序在进程间漂移 × 同名书
+  「先到者胜」会让面板显示的拷贝抖动）；诊断行改「live=N 持久源=N」。回归：W4 用例
+  在同一 TTL 窗口内先空后新会话上线，断言即时可见（旧实现必红）。
+- **目录名反推升级 Windows 感知（0.13.7 后落地）**：扫描根源②（`~/.dsh/sessions` 目录名反推）
+  旧实现是 POSIX 专属——`D:\X` 反推成 `/D/…` 形态，Windows 上 statSync 验证必然失败、整源跳过。
+  现按真机 key（dsh 0.1.5-rc.2 实录：escape 的 `%`→`~` 变体 `~XXXX`，`:\` 压成一个 `-`）反解，
+  解出盘符形态时额外给 `D:\…` 真路径候选、双形态交由 statSync 择定：中文工作区可无损反解回
+  `D:\新建文件夹 (4)`（真实目录名含 `-` 仍有歧义，维持验证层安全降级）。配套：扫描根诊断行带
+  三源命中计数与 live 零命中归因，候选验证失败的告警按候选去重（不再随 60s TTL 刷屏）。
+  真机 key 固化进 W1 回归。
 - **projcache 双落盘形态支持（Windows 真机日志复盘发现的真 bug）**：dsh 0.1.5 起宿主把
   projcache 从单文件 `storages/session_projcache.json`（`tables.sessions.*.identity.cwd`）改为
   目录态 `storages/session_projcache/sessions/*.json`（每份 `record.identity.cwd`）。旧实现只读
