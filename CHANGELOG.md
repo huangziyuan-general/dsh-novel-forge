@@ -21,6 +21,15 @@
   「等」尾去；许可/指称语境（只许以「X」模糊指称/用语用《X》）归条件型；裸词表行逐项生效。
   账本冲突文案补指引（同一键同章只落一行终态，过程变化写备注）。回归 4 例 + 真书细纲数据
   验证（墨骨录 step5 版与裸词表版双向过）。
+- **面板扫书根推导 Windows 修正：「小说生成在盘上、锻炉面板永远空」（真机实锤）**。旧实现只从
+  `~/.dsh/sessions` 目录名反推会话工作区（`--Users-me-Doc-novel--` → `/Users/me/Doc/novel`），
+  这条链路是 POSIX 专属：Windows 的 `D:\X` 反推成 `/D://X`，statSync 验证必然失败被整体跳过
+  → 扫描根只剩 web 进程 cwd → 非进程 cwd 目录里的书永远不进列表。修法 = 三源合并（全部
+  statSync 验证后采用）：① live sessions（新增 `sessions` inject 声明，`header.cwd` 是宿主
+  校验过的绝对路径，面板正开着的会话必在其中——最准一手来源）；② `session_projcache.json`
+  的 `identity.cwd`（持久层，实测 81/81 会话带 cwd，无损跨平台）；③ 目录名反推降级保留
+  （POSIX 兜底）。`deps.homedir` 注入缝让测试封闭（旧实现下真机 `~/.dsh` 的真实工作区会漏进
+  列表断言）。回归：纯函数 2 例 + live-sessions/projcache 集成 2 例。
 
 ## 0.13.6 (2026-09-19)
 
