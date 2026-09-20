@@ -144,4 +144,4 @@ try {
 } finally {
     fs.rmSync(root, { recursive: true, force: true });
 }
-console.log(`\n${g('演示完成（临时目录已清理）。npm test 看 237 个断言级用例。')}\n`);
+console.log(`\n${g('演示完成（临时目录已清理）。npm test 跑全部断言级用例。')}\n`);

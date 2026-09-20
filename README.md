@@ -223,7 +223,7 @@ npm run setup-dev   # 把 DSH checkout 的宿主 SDK 真包 symlink 进本地 no
 npm run build       # src/client/ → lib/client.js（改客户端源码后必须跑；npm test 会自动跑）
 npm run audit       # 静态自检：① 调用了但没导入/声明 ② 孤儿 dataset.X 读取（npm test 前置也跑）
 npm run preview     # 生成可交互 UI 预览 preview/forge-ui.html（内联真产物 + 宿主真 token，离线可开）
-npm test            # node --test：244 个用例（纯逻辑单测 + 假 fs 全链路冒烟 + headless 行为测试）
+npm test            # node --test 全量用例（纯逻辑单测 + 假 fs 全链路冒烟 + REST 行为测试 + 真校验器输出契约 + headless 行为测试；条数见顶部 tests 徽章）
 node scripts/demo.mjs   # 端到端演示：init→细纲→写章→账本→扫描→提案 全流程
 ```
 
