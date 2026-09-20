@@ -266,9 +266,13 @@ after(() => {
 //
 // 旧实现只从 ~/.dsh/sessions 目录名反推（`--Users-me-Doc-novel--` → /Users/me/Doc/novel），
 // Windows 的 `D:\X` 反推成 `/D://X` 必然 statSync 失败被跳过 → 扫描根只剩进程 cwd →
-// 书生成在盘上、面板永远空。新实现三源合并：live sessions（ctx.sessions）> projcache
-// （session_projcache.json 的 identity.cwd，无损跨平台）> 目录名反推（POSIX 兜底），
-// 全部经 statSync 验证。
+// 书生成在盘上、面板永远空。新实现三源合并（全部经 statSync 验证）：
+//   live sessions——dsh 0.1.5-rc.2 源码核过：服务在 base 层装载（dsh-base/cordis.patch.yml L34，
+//     SessionStore list() 可调），但 store 由创建 fiber 持有 → 会话只在 agent 轮运行期间在册，
+//     面板空闲期≈空（W2 锁代码分支、W4b 锁「服务存在即现算」；浏览器半的 ctx.sessions 是另一套网关服务）
+//   projcache——持久主源，两代落盘形态都读（单文件 + 目录态 record.identity.cwd，无损跨平台），
+//     缓存带内容签名失效（W4：新会话落盘即时进场）；
+//   目录名反推——POSIX + Windows 盘符双候选兜底（W1/W3）。
 
 test('W1 纯函数：projcache 解析——Windows cwd 原样取出，坏输入零崩溃', async () => {
     const { parseProjcacheRoots, parseProjcacheSessionFile, decodeSessionDirRoots } = await import('../lib/server-api.js');
@@ -323,7 +327,7 @@ test('W2 集成：live sessions 的 header.cwd 进扫描根——面板所在会
         const res = await drive({ method: 'GET', url: `${PREFIX}/projects` });
         assert.equal(res.statusCode, 200);
         const names = res.json.value.map((x) => x.name);
-        assert.ok(names.includes('直播书'), '★ live session 工作区里的书必须出现在列表（旧实现：永远空）');
+        assert.ok(names.includes('直播书'), '★ live 会话工作区里的书必须进列表（命中窗口 = 会话 agent 轮运行中，正与本用例同构）');
         assert.ok(!names.some((n) => n === '不存在的路径'), '坏 cwd 只是跳过，不进列表');
     } finally {
         handler = origHandler;
@@ -402,20 +406,67 @@ test('W3b 集成：目录态 projcache（record.identity.cwd）进扫描根—�
     }
 });
 
-test('W4 集成：live 源不被 60s 缓存锁住——新会话工作区即时进扫描根', async () => {
-    // 审查揪出的真 bug：整包 60s 缓存曾把 live 会话 cwd 一起锁住——新会话建书后面板空 60s
-    // 才自愈。本用例第一次请求时 live 为空（缓存被旧实现落袋），随后 live 出现新工作区，
-    // 同一 TTL 窗口内第二次请求必须立即看到该书。旧实现（live 进缓存）此用例必红。
+test('W4 集成：新会话落盘 projcache 目录态即时进扫描根——内容签名失效，不等 60s TTL', async () => {
+    // 真机时序：新建会话 → 宿主写 session_projcache/sessions/<id>.json（per-record 布局，dsh
+    // 0.1.5-rc.2 源码核过）→ 该会话建书。旧实现持久源纯 TTL 缓存，新工作区要等 ≤60s 才进场
+    // ——「新会话建书面板空」的真机路径由这条签名修消灭（2cbb6fc 曾以为靠 live 脱离 TTL 即可，
+    // 但 store 由 fiber 持有、面板空闲期会话不在册，见 W4b 与 server-api 头部注释⓪）。
+    // 本用例**刻意不给 sessions 服务**——镜像「面板空闲期发起请求」的真实时序；旧实现（纯 TTL、无签名）此用例必红。
     const { registerServerApi } = await import('../lib/server-api.js');
     const lateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-late-'));
     fs.mkdirSync(path.join(lateRoot, '迟到书'));
     fs.writeFileSync(path.join(lateRoot, '迟到书', 'novel.json'), JSON.stringify({
         title: '迟到书', stage: 'writing', sessions: ['sess-2'], chapters: {},
     }));
-    const liveSessions = [];   // 可变数组：测试中途「新会话上线」
     const registrations = [];
     const lctx = {
         fs: makeFakeBackend({ allowWriteRoots: [root], allowReadRoots: [root, lateRoot] }),
+        emit() {},
+        logger: { info() {} },
+        inject: (_deps, fn) => { fn(lctx); },
+        effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
+        webServer: { register: (def) => { registrations.push(def); return () => {}; } },
+    };
+    registerServerApi(lctx, { workspaceRoot: root, scanTopK: 8 }, { homedir: fakeHome });
+    const origHandler = handler;
+    handler = registrations[0].handler;
+    const sessDir = path.join(fakeHome, '.dsh', 'storages', 'session_projcache', 'sessions');
+    try {
+        const first = await drive({ method: 'GET', url: `${PREFIX}/projects?session=sess-2` });
+        assert.equal(first.statusCode, 200);
+        assert.equal(first.json.value.length, 0, '前置：projcache 还没有该会话时书不可见（缓存刚落定，仍在 TTL 窗口内）');
+        // 新会话落盘（同一 TTL 窗口内）：目录 mtime + entry 数双变 → 持久缓存必须立即作废
+        fs.mkdirSync(sessDir, { recursive: true });
+        fs.writeFileSync(path.join(sessDir, 'c1c34790.json'), JSON.stringify({
+            version: 1, record: { identity: { cwd: lateRoot }, rows: {} },
+        }));
+        const second = await drive({ method: 'GET', url: `${PREFIX}/projects?session=sess-2` });
+        assert.equal(second.statusCode, 200);
+        assert.ok(second.json.value.map((x) => x.name).includes('迟到书'),
+            '★ 目录态文件出现 → 该工作区必须不等 TTL 立即进扫描根（旧实现：纯 TTL，此处必红）');
+    } finally {
+        handler = origHandler;
+        fs.rmSync(lateRoot, { recursive: true, force: true });
+        fs.rmSync(path.join(fakeHome, '.dsh'), { recursive: true, force: true });
+    }
+});
+
+test('W4b live 分支（代码路径）：live 不参与任何缓存——服务在册的窗口内新工作区即时进根', async () => {
+    // 真机语义（dsh 0.1.5-rc.2 源码核过）：sessions 服务在 base 层装载（dsh-base/cordis.patch.yml
+    // L34，SessionStore list() 可调），但 store 由创建 fiber 持有 → 命中窗口 = 拥有该工作区的
+    // 会话 agent 轮正在运行（恰是「agent 刚把书建进新工作区、运行中面板刷新」的场景）。本用例用
+    // 替身注入 live 数组，锁的是代码分支「live 每次现算、不进持久层缓存」。
+    // （2cbb6fc 的老 W4 拿 live 锁空闲期即时性，前提不成立；空闲期真机收益由上面的签名修兑现。）
+    const { registerServerApi } = await import('../lib/server-api.js');
+    const liveRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-liveb-'));
+    fs.mkdirSync(path.join(liveRoot, '直播迟到书'));
+    fs.writeFileSync(path.join(liveRoot, '直播迟到书', 'novel.json'), JSON.stringify({
+        title: '直播迟到书', stage: 'writing', sessions: ['sess-3'], chapters: {},
+    }));
+    const liveSessions = [];   // 可变数组：测试中途「新会话上线」
+    const registrations = [];
+    const lctx = {
+        fs: makeFakeBackend({ allowWriteRoots: [root], allowReadRoots: [root, liveRoot] }),
         emit() {},
         logger: { info() {} },
         sessions: { list: () => liveSessions },
@@ -427,16 +478,17 @@ test('W4 集成：live 源不被 60s 缓存锁住——新会话工作区即时�
     const origHandler = handler;
     handler = registrations[0].handler;
     try {
-        const first = await drive({ method: 'GET', url: `${PREFIX}/projects?session=sess-2` });
+        const first = await drive({ method: 'GET', url: `${PREFIX}/projects?session=sess-3` });
         assert.equal(first.statusCode, 200);
         assert.equal(first.json.value.length, 0, '前置：live 为空时该书不可见');
-        liveSessions.push({ header: { cwd: lateRoot, id: 'sess-2' } });   // 新会话上线（仍在任何 60s TTL 窗口内）
-        const second = await drive({ method: 'GET', url: `${PREFIX}/projects?session=sess-2` });
+        liveSessions.push({ header: { cwd: liveRoot, id: 'sess-3' } });   // 新会话上线（同一 TTL 窗口内）
+        const second = await drive({ method: 'GET', url: `${PREFIX}/projects?session=sess-3` });
         assert.equal(second.statusCode, 200);
-        assert.ok(second.json.value.map((x) => x.name).includes('迟到书'), '★ live 会话的新工作区必须立即进扫描根（不参与 60s 缓存）');
+        assert.ok(second.json.value.map((x) => x.name).includes('直播迟到书'),
+            '★ live 会话的新工作区必须立即进扫描根（live 不进缓存——代码分支锁定）');
     } finally {
         handler = origHandler;
-        fs.rmSync(lateRoot, { recursive: true, force: true });
+        fs.rmSync(liveRoot, { recursive: true, force: true });
         fs.rmSync(path.join(fakeHome, '.dsh'), { recursive: true, force: true });
     }
 });
