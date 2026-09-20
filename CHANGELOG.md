@@ -1,6 +1,8 @@
 # Changelog
 
-## 未发布
+## 0.13.7 (2026-09-20)
+
+Windows 真机三连修：这一版把「同一台 Windows、同一次创作流程里连环撞上的三个环境相关问题」一次收口——写盘被沙箱误拒、细纲禁项解析假命中、面板永远空书。三条都带真机实录做回归，测试 278 → 285。
 
 - **Windows 真机修复：插件写盘被沙箱误拒（`file access denied under workspace-write mode`）**。根因在宿主与插件的接缝：内置 fs 工具把按 exec 解析的 sandboxPolicy 作为第 5 参传给
   `ctx.fs.writeText`，而 fsio 只传 4 参——宿主 `checkedTarget` 兜底 `sandboxPolicy.resolve()`
