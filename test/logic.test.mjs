@@ -283,6 +283,10 @@ test('store: 章节记录版本追踪与路径表', () => {
     assert.equal(p.meta, '星海拾骨/novel.json');
     assert.equal(p.chapterOutline(3), '星海拾骨/大纲/细纲/第3章.md');
     assert.equal(p.chapterFile(3, '雨夜来客', 2), '星海拾骨/正文/第3章-雨夜来客-v2.md');
+    // 正文目录单点定义：写入走 chapterFile，repair 的孤儿扫描走 chaptersDir。
+    // 两处各自拼字面量的失效方式是"目录改名后扫描静默扫不到 → 报零孤儿"，那是假清白。
+    assert.equal(p.chaptersDir, '星海拾骨/正文');
+    assert.ok(p.chapterFile(1, '题', 1).startsWith(`${p.chaptersDir}/`), 'chapterFile 必须由 chaptersDir 派生');
 
     let rec = chapterRecord(undefined, { title: '雨夜来客', version: 1, file: 'x/第3章-雨夜来客-v1.md', chars: 100, summary: 's' });
     rec = chapterRecord(rec, { title: '雨夜来客', version: 2, file: 'x/第3章-雨夜来客-v2.md', chars: 120, summary: 's2' });
@@ -1265,6 +1269,38 @@ test('★ cloneProject（lib/clone.js 共享核心）：章节资产全带走、
     await assert.rejects(cloneProject(io, { fromBook: '新书', newBook: '新书' }), /源与目标/);
     await assert.rejects(cloneProject(io, { fromBook: '源书', newBook: '新书' }), /目标书目已存在/);
     await assert.rejects(cloneProject(io, { fromBook: '没有的书', newBook: '另一本' }), /源书目不存在/);
+});
+
+test('★ cloneProject 传染链：源书章节缺 summary（REST 面板存过章的形态）→ 克隆书 summary 补空串', async () => {
+    // 0.13.7 真机 bug 的 clone 分支：面板 POST /chapters/:no 不传 summary → 键消失。
+    // clone.js 直接手写章节对象、绕开 chapterRecord，若原样透传 rec.summary，克隆出的
+    // 新书同样缺 summary，下一本 status/repair 输出 summary:undefined → 宿主 lossless
+    // JSON 拒收整次调用。修复：clone 处缺省补 ''。此测试锁死这条传染链。
+    const { cloneProject } = await import('../lib/clone.js');
+    const files = new Map();
+    const io = {
+        async readJson(p) { const t = files.get(p); return t === undefined ? null : JSON.parse(t); },
+        async readText(p) { return files.get(p) ?? null; },
+        async writeText(p, text) { files.set(p, text); return { version: 1 }; },
+        async writeJson(p, v) { files.set(p, JSON.stringify(v, null, 2) + '\n'); return { version: 1 }; },
+        async listNames(p) { return [...files.keys()].filter((k) => k.startsWith(p + '/')).map((k) => k.slice(p.length + 1)); },
+        async appendLine(p, line) { files.set(p, (files.get(p) ?? '') + line + '\n'); },
+    };
+    // 源书章节照「REST 存过的盘面形态」：summary 键整个缺失
+    files.set('源书/novel.json', JSON.stringify({
+        title: '源书', genre: '玄幻',
+        chapters: {
+            1: { title: '一章', versions: [1], files: [{ version: 1, file: '源书/正文/第1章.md' }], latest: 1, path: '源书/正文/第1章.md', chars: 20 },
+        },
+        cast: [],
+    }, null, 2));
+    files.set('源书/正文/第1章.md', '正文');
+
+    const v = await cloneProject(io, { fromBook: '源书', newBook: '新书' });
+    assert.equal(v.action, 'clone');
+    const meta = JSON.parse(files.get('新书/novel.json'));
+    assert.ok('summary' in meta.chapters[1], '克隆书章节必须带 summary 键');
+    assert.equal(meta.chapters[1].summary, '', '源书缺 summary 时克隆补空串，不得透传 undefined');
 });
 
 test('★ chapterRelPath：章节记录只认 path / files[].file（0.13.1 阅读器恒空事故回归）', async () => {
