@@ -45,10 +45,16 @@
   参数描述同步收紧。
 - **杂项**：openForgeTab 的 disposer 接进 ctx.effect 清理（卸载后最多 30s 的重试链
   不再照跑）；session-watch / index 头注释订正为「常驻独立 tab」的现实。
-- **repair 孤儿正文扫描**：列出`正文/`下盘上有、`novel.json.chapters[*].files`
-  没引用的 `.md` 进 orphanFiles——提案重放中途失败留下的孤儿版本文件有了
-  确定的发现通道。仅报告不删除，next 提示手动处理；schema 同步声明，
-  audit 带 orphan 计数。兜底清理钩子不做：事后自愈、纯防线、不碰热路径。
+- **repair 孤儿正文扫描**：列出盘上有、索引没引用的 `正文/*.md` 进 orphanFiles——
+  提案重放中途失败留下的孤儿版本文件有了确定的发现通道。四处收口一并做完：
+  扫描**挪到对账之后**（被整条移除的记录留下的正文此刻才成孤儿，扫在前面必漏报）；
+  「在用」判据除 `files[]` 外再收 `chapterRelPath(rec)`（path 优先是读取语义，
+  手工把 path 指到 files 之外时那文件仍在被读写）；正文目录收进
+  `pathsFor().chaptersDir` 单点定义（另拼字面量的失效方式是目录改名后扫描静默扫不到
+  → 报「零孤儿」的假清白）；`orphanFiles` 数组给全量而 `next` 只列前 20 个 +
+  「另有 N 个」，措辞去掉 `rm`（本工具对用户文件只报告不删，确认可弃交给回收站）。
+  仅报告不删除；schema 同步声明，audit 带 orphan 计数。兜底清理钩子不做：
+  事后自愈、纯防线、不碰热路径。
 - **真机复验炸出的旧病：面板存过章的书调 novel_project status/repair 必报
   value is not lossless JSON**：REST 面板存章走 chapterRecord 不传 summary，
   undefined 原样进记录、落盘后 summary 键整个消失，status/repair 的输出装配
@@ -74,6 +80,10 @@
   `test/logic.test.mjs` 改测新原语的 intent 逐字段正确性（原 writeTextIfVersion 用例退役）。
 - 面板新增 7 例（gate 进 state、门禁干净不吵、删除态跨书、goBack 清理、列表删除在途、
   Btn 两种写法、目录图标按钮端到端 aria-label）；工具面补 2 例（saved 审计写失败、REST 形状章记录的 status/repair + 孤儿通道）。
+- 孤儿扫描收口的回归 3 例：path-only 记录被对账移除后其正文**必须**出现在 orphanFiles
+  （钉住"扫描在对账之后"这个顺序）、25 个残留时数组全量而 `next` 折成「另有 5 个」且
+  不得出现 `rm`、`chapterFile` 必须由 `chaptersDir` 派生。README / demo 尾帧里写死的
+  用例数一并去掉（加三条用例 272 就成了假话，顶部 tests 徽章才是真相）。
 
 ## 0.13.6 (2026-09-19)
 

@@ -1507,3 +1507,36 @@ test('★ 面板 REST 存章不带 summary：novel_project status/repair 不得�
     assert.equal(rec.summary, '工具写的梗概', '★ REST 路径不得把旧 summary 冲掉');
     assert.equal(chapterRecord(null, { title: 'x', version: 1, file: 'f', chars: 1 }).summary, '', '全新记录缺省补空串');
 });
+
+test('★ repair 的孤儿扫描必须在对账之后：被整条移除的记录留下的正文要报出来', async () => {
+    const B = 'path-only 书';
+    await tool('novel_project').execute({ action: 'init', book: B, title: B, genre: '悬疑' }, exec);
+    fs.mkdirSync(path.join(root, B, '正文'), { recursive: true });
+    // 手工把索引改坏成「只有 path、没有 files」——repair 存在的整个前提就是盘被人工动过
+    const file = `${B}/正文/第2章-断章-v1.md`;
+    fs.writeFileSync(path.join(root, B, '正文', '第2章-断章-v1.md'), '这一章只剩 path 指着它。\n');
+    const metaPath = path.join(root, B, 'novel.json');
+    const novel = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    novel.chapters = { 2: { title: '断章', latest: 1, path: file, chars: 8, summary: '' } };
+    fs.writeFileSync(metaPath, `${JSON.stringify(novel, null, 2)}\n`);
+
+    const repair = await tool('novel_project').execute({ action: 'repair', book: B }, exec);
+    assert.equal(repair.chapters.length, 0, 'files 全空的记录按对账规则被移除');
+    assert.deepEqual(repair.orphanFiles, ['第2章-断章-v1.md'],
+        '★ 扫描跑在对账前面时，这条记录当时还"引用"着该文件 → 漏报；顺序反过来才报得出来');
+});
+
+test('★ 孤儿清单：数组给全量，next 只列前 20 且不教用户 rm', async () => {
+    const B = '孤儿成灾书';
+    await tool('novel_project').execute({ action: 'init', book: B, title: B, genre: '悬疑' }, exec);
+    fs.mkdirSync(path.join(root, B, '正文'), { recursive: true });
+    for (let i = 1; i <= 25; i += 1) {
+        fs.writeFileSync(path.join(root, B, '正文', `第${i}章-残留-v1.md`), '重放失败留下的版本稿。\n');
+    }
+    const repair = await tool('novel_project').execute({ action: 'repair', book: B }, exec);
+    assert.equal(repair.orphanFiles.length, 25, 'orphanFiles 必须给全量（面板/调用方要能数得清）');
+    assert.match(repair.next, /发现 25 个/, '文案先给总数');
+    assert.match(repair.next, /另有 5 个/, '★ 只列前 20 个，其余折成计数——长书残留上百个时整份塞进返回值既烧 token 也没法读');
+    assert.ok(!/\brm\b/.test(repair.next), '★ 本插件对用户文件只报告不删除，文案不得出现 rm 这种删除命令');
+    assert.match(repair.next, /回收站|不删除/, '给的是"确认可弃后交给回收站"这类指引');
+});
