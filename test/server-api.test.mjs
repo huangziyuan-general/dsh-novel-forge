@@ -402,6 +402,45 @@ test('W3b 集成：目录态 projcache（record.identity.cwd）进扫描根—�
     }
 });
 
+test('W4 集成：live 源不被 60s 缓存锁住——新会话工作区即时进扫描根', async () => {
+    // 审查揪出的真 bug：整包 60s 缓存曾把 live 会话 cwd 一起锁住——新会话建书后面板空 60s
+    // 才自愈。本用例第一次请求时 live 为空（缓存被旧实现落袋），随后 live 出现新工作区，
+    // 同一 TTL 窗口内第二次请求必须立即看到该书。旧实现（live 进缓存）此用例必红。
+    const { registerServerApi } = await import('../lib/server-api.js');
+    const lateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-late-'));
+    fs.mkdirSync(path.join(lateRoot, '迟到书'));
+    fs.writeFileSync(path.join(lateRoot, '迟到书', 'novel.json'), JSON.stringify({
+        title: '迟到书', stage: 'writing', sessions: ['sess-2'], chapters: {},
+    }));
+    const liveSessions = [];   // 可变数组：测试中途「新会话上线」
+    const registrations = [];
+    const lctx = {
+        fs: makeFakeBackend({ allowWriteRoots: [root], allowReadRoots: [root, lateRoot] }),
+        emit() {},
+        logger: { info() {} },
+        sessions: { list: () => liveSessions },
+        inject: (_deps, fn) => { fn(lctx); },
+        effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
+        webServer: { register: (def) => { registrations.push(def); return () => {}; } },
+    };
+    registerServerApi(lctx, { workspaceRoot: root, scanTopK: 8 }, { homedir: fakeHome });
+    const origHandler = handler;
+    handler = registrations[0].handler;
+    try {
+        const first = await drive({ method: 'GET', url: `${PREFIX}/projects?session=sess-2` });
+        assert.equal(first.statusCode, 200);
+        assert.equal(first.json.value.length, 0, '前置：live 为空时该书不可见');
+        liveSessions.push({ header: { cwd: lateRoot, id: 'sess-2' } });   // 新会话上线（仍在任何 60s TTL 窗口内）
+        const second = await drive({ method: 'GET', url: `${PREFIX}/projects?session=sess-2` });
+        assert.equal(second.statusCode, 200);
+        assert.ok(second.json.value.map((x) => x.name).includes('迟到书'), '★ live 会话的新工作区必须立即进扫描根（不参与 60s 缓存）');
+    } finally {
+        handler = origHandler;
+        fs.rmSync(lateRoot, { recursive: true, force: true });
+        fs.rmSync(path.join(fakeHome, '.dsh'), { recursive: true, force: true });
+    }
+});
+
 // ── H0：载体与替身自检（先证明替身会「真的拒绝」，后面所有断言才不作数于空转）──
 
 test('H0 载体自检：假 fs 按宿主语义拒绝；列表端点可跑通', async () => {
