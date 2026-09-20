@@ -1,5 +1,17 @@
 # Changelog
 
+## 未发布
+
+- **Windows 真机修复：插件写盘被沙箱误拒（`file access denied under workspace-write mode`）**。根因在宿主与插件的接缝：内置 fs 工具把按 exec 解析的 sandboxPolicy 作为第 5 参传给
+  `ctx.fs.writeText`，而 fsio 只传 4 参——宿主 `checkedTarget` 兜底 `sandboxPolicy.resolve()`
+  无 session，workspaceRoot 回落 **web 进程 cwd**；会话工作区 ≠ 进程 cwd 的部署
+  （Windows 上 dsh web 从别处启动、会话开在 `D:\某目录`）把工作区内的正常写判成越界。
+  修法 = fsio 两个工厂（会话面 / REST 面）全部 6 处写盘统一走 `writeGuarded`：
+  把 exec 的 session 显式交给策略服务（`sandboxPolicy.resolve({ session })`）再作第 5 参
+  传出，写界与内置工具对齐；服务缺失时第 5 参缺省逐字节复刻旧调用形状（旧宿主/裸后端
+  零回归）；`FS_SANDBOX_DENIED` 改写为可行动提示（保留宿主原文）。回归 4 例：
+  会话策略线程 / 服务缺失形状 / 拒绝文案改写 / REST 平面同值回落。
+
 ## 0.13.6 (2026-09-19)
 
 审查报告第二、三批（高 / 中 / 轻微级）全部落地；随后复核审查修复本身，补上**四处「修到数据层就停手」或「名义修复」**的账——本轮把它们真正落到用户可见的行为上，
