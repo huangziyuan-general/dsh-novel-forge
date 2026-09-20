@@ -1,15 +1,15 @@
 # Changelog
 
-## 0.13.7 (2026-09-19)
+## 0.13.6 (2026-09-19)
 
-复核 0.13.5/0.13.6 后补的账：**上一版有四处「修到数据层就停手」或「名义修复」**，
-本轮把它们真正落到用户可见的行为上，并把 REST 半边天的测试护栏从零建起来。
+审查报告第二、三批（高 / 中 / 轻微级）全部落地；随后复核审查修复本身，补上**四处「修到数据层就停手」或「名义修复」**的账——本轮把它们真正落到用户可见的行为上，
+并把 REST 半边天的测试护栏从零建起来。
 
-- **aria-label 真正生效**（0.13.6 声称已修，实际无效）：Btn 只认 camelCase
+- **aria-label 真正生效**（上一轮声称已修，实际无效）：Btn 只认 camelCase
   `ariaLabel`，而三个图标按钮的调用点写的是 kebab-case `'aria-label'` —— 键名对不上
   不报错，无障碍名照旧被静默丢弃（与 0.13.0 的 `dataset.no` 事故同族）。Btn 改为两种
   写法都收，调用点统一 camelCase，并补「渲染结果里必须有 aria-label」的断言。
-- **门禁提示进面板**：0.13.6 让 applyProposal 返回 gate（死人复活 / 隐藏人物泄底），
+- **门禁提示进面板**：applyProposal 此前已返回 gate（死人复活 / 隐藏人物泄底），
   但 panel 只读 chapter/version，gate 被丢弃 = 用户端仍然静默。现在 gateNotice 进
   state、在详情页渲染（阻断红字、警告琥珀），notice 里也留一条计数。
 - **删除确认态不跨书存活**：openProject / goBack 漏清 `deleteState`，在 A 书点过
@@ -30,7 +30,7 @@
   `readJsonWithVersion` / `writeJsonAtVersion` / `updateJson`（读时捕获基线版本 →
   守卫写 → 冲突则**重读最新内容重放**，默认 3 次），提案的登记/应用/丢弃/清理、
   REST 的认领/改名/章节保存/世界书 CRUD 全部改走它。
-  0.13.6 那句「writeJson 缺省 'auto' 已是版本守卫」是**看着有、实际拦不住**的东西：
+  上一轮那句「writeJson 缺省 'auto' 已是版本守卫」是**看着有、实际拦不住**的东西：
   'auto' 在写前一刻才 stat，版本永远匹配，陈旧对象照样把别人的更新整体覆盖掉
   （幽灵提案、自增 id 撞车都源于此）。据此**删除** `writeTextIfVersion`——
   守卫基线必须由调用方从读取那一刻带进来。附带修掉世界书删除的假成功：条目不存在
@@ -62,32 +62,6 @@
   novel_style 同族）。修三层：chapterRecord 缺省补 `''` 且保留 prev.summary
   （工具写的梗概不被面板再存抹掉）；status/repair 出口 `c.summary ?? ''`
   （治愈已在盘上的旧记录）；smoke 补「REST 形状章记录 + 孤儿文件」端到端回归。
-
-测试面（这次的重点是「护栏别只修半边」）：
-
-- **REST 数据面首批行为测试** `test/server-api.test.mjs`（13 例）：路由清单驱动的
-  fence 全覆盖（将来加端点漏 trusted() 必红）、workspace 白名单、非法书名 400、
-  重复建书 409、章节号守卫、章节保存写审计、createServerFsio 的 create/replace/auto
-  intent 语义。**假 fs 按宿主 dsh-fs 真语义实现 createIfAbsent / replaceIfVersion
-  拒绝**（沿用「替身必须镜像真机」的纪律）。
-- **H2 的回归钉法**（关键是让替身真能造出冲突，否则测了个寂寞）：
-  `test/batch5.test.mjs` 的内存 io 补上与生产同名同义的 `readJsonWithVersion` /
-  `writeJsonAtVersion`（版本按内容长度变化，版本不符抛 `FS_STALE_VERSION`），
-  `test/server-api.test.mjs` 的 R6b 从「记录现状·待修」翻转成**断言不丢更新**
-  （并发新增世界书 → 两条都在且 id 不撞；并发保存同一章 → 两个版本各占一号、
-  正文文件互不覆盖），并新增 `updateJson` 重放用例（读写之间被插一刀 →
-  `attempts >= 2` 且两边更新都留得下来）与 `submitRevisionProposal` 幽灵提案用例。
-  `test/logic.test.mjs` 改测新原语的 intent 逐字段正确性（原 writeTextIfVersion 用例退役）。
-- 面板新增 7 例（gate 进 state、门禁干净不吵、删除态跨书、goBack 清理、列表删除在途、
-  Btn 两种写法、目录图标按钮端到端 aria-label）；工具面补 2 例（saved 审计写失败、REST 形状章记录的 status/repair + 孤儿通道）。
-- 孤儿扫描收口的回归 3 例：path-only 记录被对账移除后其正文**必须**出现在 orphanFiles
-  （钉住"扫描在对账之后"这个顺序）、25 个残留时数组全量而 `next` 折成「另有 5 个」且
-  不得出现 `rm`、`chapterFile` 必须由 `chaptersDir` 派生。README / demo 尾帧里写死的
-  用例数一并去掉（加三条用例 272 就成了假话，顶部 tests 徽章才是真相）。
-
-## 0.13.6 (2026-09-19)
-
-审查报告第二、三批（高 / 中 / 轻微级）全部落地。
 
 - **REST 写语义与工具面同构**：createServerFsio 的 writeText/writeJson 补
   create/replace/auto 三种 mode（此前 mode 参数被静默丢弃，'create' 的
@@ -126,7 +100,30 @@
   硬切（整段塞给 TTS 引擎被拒）。
 - **文案与无障碍**：设置页能力清单更新（写单章 / 结构诊断面板已能做）；
   Btn 透传 aria-label（图标按钮对读屏器可名）；熔断文案说清计数清零条件。
-- 测试 245 项。
+
+测试面（这次的重点是「护栏别只修半边」）：
+
+- **REST 数据面首批行为测试** `test/server-api.test.mjs`（13 例）：路由清单驱动的
+  fence 全覆盖（将来加端点漏 trusted() 必红）、workspace 白名单、非法书名 400、
+  重复建书 409、章节号守卫、章节保存写审计、createServerFsio 的 create/replace/auto
+  intent 语义。**假 fs 按宿主 dsh-fs 真语义实现 createIfAbsent / replaceIfVersion
+  拒绝**（沿用「替身必须镜像真机」的纪律）。
+- **H2 的回归钉法**（关键是让替身真能造出冲突，否则测了个寂寞）：
+  `test/batch5.test.mjs` 的内存 io 补上与生产同名同义的 `readJsonWithVersion` /
+  `writeJsonAtVersion`（版本按内容长度变化，版本不符抛 `FS_STALE_VERSION`），
+  `test/server-api.test.mjs` 的 R6b 从「记录现状·待修」翻转成**断言不丢更新**
+  （并发新增世界书 → 两条都在且 id 不撞；并发保存同一章 → 两个版本各占一号、
+  正文文件互不覆盖），并新增 `updateJson` 重放用例（读写之间被插一刀 →
+  `attempts >= 2` 且两边更新都留得下来）与 `submitRevisionProposal` 幽灵提案用例。
+  `test/logic.test.mjs` 改测新原语的 intent 逐字段正确性（原 writeTextIfVersion 用例退役）。
+- 面板新增 7 例（gate 进 state、门禁干净不吵、删除态跨书、goBack 清理、列表删除在途、
+  Btn 两种写法、目录图标按钮端到端 aria-label）；工具面补 2 例（saved 审计写失败、REST 形状章记录的 status/repair + 孤儿通道）。
+- 孤儿扫描收口的回归 3 例：path-only 记录被对账移除后其正文**必须**出现在 orphanFiles
+  （钉住"扫描在对账之后"这个顺序）、25 个残留时数组全量而 `next` 折成「另有 5 个」且
+  不得出现 `rm`、`chapterFile` 必须由 `chaptersDir` 派生。README / demo 尾帧里写死的
+  用例数一并去掉（加三条用例 272 就成了假话，顶部 tests 徽章才是真相）。
+
+- 测试 274 项。
 
 ## 0.13.5 (2026-09-19)
 
