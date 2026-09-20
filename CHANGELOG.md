@@ -1,5 +1,16 @@
 # Changelog
 
+## 未发布
+
+- **projcache 双落盘形态支持（Windows 真机日志复盘发现的真 bug）**：dsh 0.1.5 起宿主把
+  projcache 从单文件 `storages/session_projcache.json`（`tables.sessions.*.identity.cwd`）改为
+  目录态 `storages/session_projcache/sessions/*.json`（每份 `record.identity.cwd`）。旧实现只读
+  单文件 → 新宿主上源①静默归零（readFileSync 抛错被 catch 吞掉，连日志都没有）。现在两代形态
+  都读、命中去重，单会话文件坏 JSON 不阻断其余；真机形状（record.identity.cwd）固化为回归，
+  另加「只造目录态、绝不建单文件」的集成用例锁死通路（286 测试）。同批：Windows 侧 agent 按
+  0→5 诊断步骤实锤——该机面板空 = projcache 形态失配 × 目录名反推 ~XXXX/盘符歧义 ×
+  书缺 novel.json（旧沙箱时代 init 被拒写，内容走 pwsh 手工维护）三重叠加。
+
 ## 0.13.7 (2026-09-20)
 
 Windows 真机三连修：这一版把「同一台 Windows、同一次创作流程里连环撞上的三个环境相关问题」一次收口——写盘被沙箱误拒、细纲禁项解析假命中、面板永远空书。三条都带真机实录做回归，测试 278 → 285。
