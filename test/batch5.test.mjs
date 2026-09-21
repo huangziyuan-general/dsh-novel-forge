@@ -322,6 +322,21 @@ test('engine-tasks: extractChapterText 只做保守清理（围栏 + 短前言�
     assert.equal(extractChapterText('```\n短\n```\n```\n长得多的正文内容在这里\n```'), '长得多的正文内容在这里');
 });
 
+test('engine-tasks: extractChapterText 健全性闸——无围栏的原始模型输出（英文推理链+正文）绝不当正文入库（真机 2026-09-21 P1 实锤）', () => {
+    const original = '雨是酉时下起来的。先细，后密。沈十六挑着油担走西三街。'.repeat(60); // ~2000 中文字
+    // 真机事故形状：英文推理开头 + 中文正文混在 59KB 原始输出里，无围栏
+    const blob = 'Let me analyze this task carefully. I am asked to rewrite Chapter 1 of a Chinese novel. '
+        + 'The task is a revision/editing task with a specific list of issues to address.\n\n'
+        + (original + '\n\n').repeat(8); // 8 倍长度、中文占比被英文稀释
+    assert.equal(extractChapterText(blob, original), '', '长度超 3 倍 + 中文占比 <50% 必须判抽取失败，返回空串走 EMPTY_AFTER_EXTRACT');
+    // 单独命中任一条也拦
+    const mostlyEnglish = 'x'.repeat(6000) + '一点中文。';
+    assert.equal(extractChapterText(mostlyEnglish, original), '', '中文占比过低的原始输出不得入库');
+    // 合法形态不受影响：无围栏的纯中文整章输出（≤3 倍长度）照旧放行
+    const plain = '这是没有围栏的纯中文润色结果，模型直接给了正文。' + original;
+    assert.equal(extractChapterText(plain, original), plain, '合法无围栏输出必须原样放行（fallback 是给干净输出用的）');
+});
+
 test('engine-tasks: parseTags 清洗编号与标点、去重、限量', () => {
     assert.deepEqual(parseTags('飞刀 雪夜 码头'), ['飞刀', '雪夜', '码头']);
     assert.deepEqual(parseTags('1. 飞刀，2. 雪夜、3. 码头'), ['飞刀', '雪夜', '码头']);
