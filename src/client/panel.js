@@ -102,7 +102,7 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 	// synth 可能为 null（无语音引擎的环境）：playFrom 会抛可读错误，面板转成提示。
 	const player = createTtsPlayer({
 		synth: resolveSynth(),
-		loadChapter: (no) => apiFetch(`/projects/${encodeURIComponent(state.selected)}/chapters/${no}`),
+		loadChapter: (no) => apiFetch(withSession(`/projects/${encodeURIComponent(state.selected)}/chapters/${no}`)),
 		hasChapter: (no) => state.chapterList.some((c) => c.no === no),
 		// 连播/空章跳过都要"下一个存在的章"，不是 currentNo+1 —— 章号有缺口不能早停
 		//（chapterList 服务端已按 no 升序排）
