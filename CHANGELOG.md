@@ -1,181 +1,58 @@
 # Changelog
 
-## 未发布
+## 0.13.8 (2026-09-21)
 
-- **REST 面写界对齐 + 沙箱拒绝提示分场合（CodeBuddy P2/P3）**：面板写盘（无 exec）此前恒
-  `resolve({})`，写界回落 web 进程 cwd——「书在非 cwd 工作区」部署下面板存章/审计写误拒。
-  现 fsio 以绑定书根覆写 `workspaceRoot`（mode 仍归 resolver，全写通道覆盖）。拒绝识别优先
-  匹配结构化 `FsError.code`（宿主文案漂移不再让提示失效）；提示按「策略是否线程成功 ×
-  有无会话 × 宿主 mode」定向——REST 面 mode 取部署默认（不读会话级覆盖），提示不再误导
-  用户去切会话策略（294 测试）。
-- **扫描根：持久源内容签名失效**：会话 store 由创建 fiber 持有、空闲期≈空（live 仅 agent 轮
-  运行期命中），新会话工作区空闲期进场走 projcache 目录态落盘——持久缓存改「两目录
-  mtime+entry 数」签名 + TTL 双条件，签名变即时作废（修正 2cbb6fc 把即时性寄在 live 上的
-  落点）；单文件 mtime 不计入签名（老宿主整文件 checkpoint 全量重写，计入会把重 parse
-  放大到每请求）。诊断行恢复 projcache/反推候选分计数。
-- **目录名反推升级 Windows 感知**：真机 key 实录（`%`→`~` 的 ~XXXX escape、`:\` 压成一个
-  `-`），盘符形态反解出 `D:\…` 真路径候选、与 POSIX 形态交 statSync 择定；告警按候选去重，
-  真机 key 固化进 W1 回归。
-- **projcache 双落盘形态**：dsh 0.1.5 起目录态 `sessions/*.json`（`record.identity.cwd`）与
-  老单文件都读、命中去重，坏 JSON 不阻断——修「只读单文件在新宿主上源①静默归零」。
+真机 E2E 全流程测试（《长夜灯》3 章）抓出并修复三个 bug + 面板写界收口，测试 285 → 296。
+
+- **fsio 策略探测修复（真机 novel_outline / novel_write_chapter 写盘全线抛错）**：cordis 对未
+  inject 声明的服务，`ctx.sandboxPolicy` 的 getter 直接 throw（可选链防不住 getter 内部 throw）——
+  补 try 视为缺失，降级走 `ctx.get` 双路探测；双路全缺失回 4 参旧形状。
+- **面板世界书「启用/停用/删除」按钮全坏**：REST PUT/DELETE 把条目 id `Number` 强转
+  （`W1`→NaN 永不匹配→404），改为字符串匹配；PUT 合并保留存储原 id（防数字 id 被腐蚀成字符串）。
+- **旁路引擎抽文件健全性闸**：推理模型无围栏输出时，整段原始响应（真机实测 59KB、中文占比
+  0.24）被兜底当成润色正文入库成提案——超原文 3 倍或中文占比 <50% 即判抽取失败，走
+  `EMPTY_AFTER_EXTRACT` 干净报错，绝不入库。
+- **REST 面写界对齐**：面板写盘（无 exec）以绑定书根覆写 `workspaceRoot`（mode 仍归
+  resolver），writeText / writeTextAtVersion / appendLine 全写通道覆盖；沙箱拒绝识别走结构化
+  `FsError.code`；拒绝提示按「策略是否线程成功 × 有无会话 × 宿主 mode」三段定向（REST 面
+  明说切会话策略无效）。
+- **扫描根新鲜度**：持久源内容签名失效（projcache 目录态落盘即时进场，TTL 降兜底）；
+  projcache 双落盘形态（目录态 + 老单文件都读）；目录名反推 Windows 感知（~XXXX / 盘符形态）。
+- 测试伴改：假后端真实施放 workspaceRoot 边界、cordis getter-throw 语义替身、W1 形态 id
+  开关+删除闭环回归。
 
 ## 0.13.7 (2026-09-20)
 
-Windows 真机三连修：这一版把「同一台 Windows、同一次创作流程里连环撞上的三个环境相关问题」一次收口——写盘被沙箱误拒、细纲禁项解析假命中、面板永远空书。三条都带真机实录做回归，测试 278 → 285。
+Windows 真机三连修，测试 278 → 285。
 
-- **Windows 真机修复：插件写盘被沙箱误拒（`file access denied under workspace-write mode`）**。根因在宿主与插件的接缝：内置 fs 工具把按 exec 解析的 sandboxPolicy 作为第 5 参传给
-  `ctx.fs.writeText`，而 fsio 只传 4 参——宿主 `checkedTarget` 兜底 `sandboxPolicy.resolve()`
-  无 session，workspaceRoot 回落 **web 进程 cwd**；会话工作区 ≠ 进程 cwd 的部署
-  （Windows 上 dsh web 从别处启动、会话开在 `D:\某目录`）把工作区内的正常写判成越界。
-  修法 = fsio 两个工厂（会话面 / REST 面）全部 6 处写盘统一走 `writeGuarded`：
-  把 exec 的 session 显式交给策略服务（`sandboxPolicy.resolve({ session })`）再作第 5 参
-  传出，写界与内置工具对齐；服务缺失时第 5 参缺省逐字节复刻旧调用形状（旧宿主/裸后端
-  零回归）；`FS_SANDBOX_DENIED` 改写为可行动提示（保留宿主原文）。回归 4 例：
-  会话策略线程 / 服务缺失形状 / 拒绝文案改写 / REST 平面同值回落。
-- **细纲禁项解析器纠偏：假禁词两连拒 + 禁令静默失效（墨骨录会话实录双缺陷）**。①前置否定句式
-  （「不得出现X」）里主语正则（`{1,8}?` 下限=1，引擎回溯到最短可行）把**否定词本身**捕获成禁词
-  → 正文含「不得」二字即误判命中；②「不得让沈无咎说出…」按**人名**收禁词 → 主角名在正文无处
-  不在，必命中——真正想禁的是引号里那句话。同发现三处静默失效：「禁止现代词汇（法医、指纹…）」
-  整行漏解析（枚举禁词全灭）、「不得点破X」漏解析、**裸词表行**（`墨银、沈慎、法医…`，写手被
-  迫改格式绕门禁后的产物）解析为空=门禁失效。修法：否定词永不入禁词表；「不得让X登场/出场」
-  人名即禁词、「不得让X说/做…」人名归条件型+引号宾语收禁词；前置否定收宾语；顿号枚举逐项拆、
-  「等」尾去；许可/指称语境（只许以「X」模糊指称/用语用《X》）归条件型；裸词表行逐项生效。
-  账本冲突文案补指引（同一键同章只落一行终态，过程变化写备注）。回归 4 例 + 真书细纲数据
-  验证（墨骨录 step5 版与裸词表版双向过）。
-- **面板扫书根推导 Windows 修正：「小说生成在盘上、锻炉面板永远空」（真机实锤）**。旧实现只从
-  `~/.dsh/sessions` 目录名反推会话工作区（`--Users-me-Doc-novel--` → `/Users/me/Doc/novel`），
-  这条链路是 POSIX 专属：Windows 的 `D:\X` 反推成 `/D://X`，statSync 验证必然失败被整体跳过
-  → 扫描根只剩 web 进程 cwd → 非进程 cwd 目录里的书永远不进列表。修法 = 三源合并（全部
-  statSync 验证后采用）：① live sessions（新增 `sessions` inject 声明，`header.cwd` 是宿主
-  校验过的绝对路径，面板正开着的会话必在其中——最准一手来源）；② `session_projcache.json`
-  的 `identity.cwd`（持久层，实测 81/81 会话带 cwd，无损跨平台）；③ 目录名反推降级保留
-  （POSIX 兜底）。`deps.homedir` 注入缝让测试封闭（旧实现下真机 `~/.dsh` 的真实工作区会漏进
-  列表断言）。回归：纯函数 2 例 + live-sessions/projcache 集成 2 例。
+- **插件写盘被沙箱误拒**（`file access denied under workspace-write mode`）：fsio 全部写盘统一
+  `writeGuarded`，session 线程沙箱策略作第 5 参（与内置 fs 工具同参位）；服务缺失复刻旧 4 参
+  形状零回归；拒绝文案补可行动指引。
+- **细纲禁项解析器纠偏**：否定词/人名被误收成禁词、枚举行与裸词表行漏解析——按句式规约收
+  禁词（「不得让X说…」收引号宾语），真书细纲数据双向回归。
+- **面板扫书根 Windows 修正**（面板永远空书）：POSIX 专属目录名反推改为三源合并——live
+  sessions、projcache `identity.cwd`（持久层）、目录名反推兜底，全部 statSync 验证后采用。
 
 ## 0.13.6 (2026-09-19)
 
-审查报告第二、三批（高 / 中 / 轻微级）全部落地；随后复核审查修复本身，补上**四处「修到数据层就停手」或「名义修复」**的账——本轮把它们真正落到用户可见的行为上，
-并把 REST 半边天的测试护栏从零建起来。
+审查修复收口 + REST 面护栏从零建立，测试 274 项。
 
-- **aria-label 真正生效**（上一轮声称已修，实际无效）：Btn 只认 camelCase
-  `ariaLabel`，而三个图标按钮的调用点写的是 kebab-case `'aria-label'` —— 键名对不上
-  不报错，无障碍名照旧被静默丢弃（与 0.13.0 的 `dataset.no` 事故同族）。Btn 改为两种
-  写法都收，调用点统一 camelCase，并补「渲染结果里必须有 aria-label」的断言。
-- **门禁提示进面板**：applyProposal 此前已返回 gate（死人复活 / 隐藏人物泄底），
-  但 panel 只读 chapter/version，gate 被丢弃 = 用户端仍然静默。现在 gateNotice 进
-  state、在详情页渲染（阻断红字、警告琥珀），notice 里也留一条计数。
-- **删除确认态不跨书存活**：openProject / goBack 漏清 `deleteState`，在 A 书点过
-  「删除」→ 打开 B 书后**单击即删**（两步确认失效）。同族修掉列表删除的 `'busy'` 哨兵
-  （确认行整行卸载、视图「删除中…」分支永不可达）→ 改独立 `listDeleting`；
-  详情页 busy 态补视觉反馈。
-- **REST 面加固**：POST /projects 建书从 `auto` 改 `'create'`（同名书过去会被
-  defaultNovel 整体覆盖，章节索引/会话归属丢失、正文成孤儿）→ 409 BOOK_EXISTS；
-  非法书名从 500 IO_FAILURE 改 400 BAD_BOOK；GET chapters/:no 补与 POST 同款的
-  正整数守卫（过去 NaN 当键查恒返回空串，看着像「这章是空的」）；删掉白名单之后的
-  死分支 `..` 判断。
-- **落盘后的审计失败不再拖垂整章**：saved 审计行写失败（并发版本冲突）会让
-  commitChapter 整体抛错，调用方（含批量起草）把已保存的章报成失败 → 重试造重复版本。
-  改 console.warn 降级（静默降级不等于静默）。
-- **检索幽灵块出口过滤**：索引清理只发生在全量 build，删章后未重建前 query 仍会命中
-  指向不存在章节的块 → 按现有章号过滤并给重建提示；sqlite 句柄补 try/finally。
-- **提案链与 REST 写路径的丢更新（H2 根因修复）**：新增乐观并发通道
-  `readJsonWithVersion` / `writeJsonAtVersion` / `updateJson`（读时捕获基线版本 →
-  守卫写 → 冲突则**重读最新内容重放**，默认 3 次），提案的登记/应用/丢弃/清理、
-  REST 的认领/改名/章节保存/世界书 CRUD 全部改走它。
-  上一轮那句「writeJson 缺省 'auto' 已是版本守卫」是**看着有、实际拦不住**的东西：
-  'auto' 在写前一刻才 stat，版本永远匹配，陈旧对象照样把别人的更新整体覆盖掉
-  （幽灵提案、自增 id 撞车都源于此）。据此**删除** `writeTextIfVersion`——
-  守卫基线必须由调用方从读取那一刻带进来。附带修掉世界书删除的假成功：条目不存在
-  时不再无条件写回（原先连 `世界书.json` 都能凭空建出来）。
-  同一条链上最后那个旧快照回写也补了：`rememberSession`（每个工具入口都走，含
-  `isConcurrencySafe` 的读工具）原先把调用方手上的整本 novel 写回盘 —— 与面板并发时
-  正是幽灵提案的另一条成因；现在只重放「补一条会话归属」这个增量（并把归属同步回
-  手上的对象，免得随后 saveBook 又把它写丢）。
-- **导出不是自毁通道**：`novel_export` 的 `file` 过去只要落在本书目录内就行，于是可以
-  指到自己的 `novel.json` / `账本/facts.json` / `.novel/audit.jsonl`，`replace` 一次
-  就把索引与账本抹掉。现在只允许落在 `书/导出/` 内（白名单目录比黑名单文件稳），
-  参数描述同步收紧。
-- **杂项**：openForgeTab 的 disposer 接进 ctx.effect 清理（卸载后最多 30s 的重试链
-  不再照跑）；session-watch / index 头注释订正为「常驻独立 tab」的现实。
-- **repair 孤儿正文扫描**：列出盘上有、索引没引用的 `正文/*.md` 进 orphanFiles——
-  提案重放中途失败留下的孤儿版本文件有了确定的发现通道。四处收口一并做完：
-  扫描**挪到对账之后**（被整条移除的记录留下的正文此刻才成孤儿，扫在前面必漏报）；
-  「在用」判据除 `files[]` 外再收 `chapterRelPath(rec)`（path 优先是读取语义，
-  手工把 path 指到 files 之外时那文件仍在被读写）；正文目录收进
-  `pathsFor().chaptersDir` 单点定义（另拼字面量的失效方式是目录改名后扫描静默扫不到
-  → 报「零孤儿」的假清白）；`orphanFiles` 数组给全量而 `next` 只列前 20 个 +
-  「另有 N 个」，措辞去掉 `rm`（本工具对用户文件只报告不删，确认可弃交给回收站）。
-  仅报告不删除；schema 同步声明，audit 带 orphan 计数。兜底清理钩子不做：
-  事后自愈、纯防线、不碰热路径。
-- **真机复验炸出的旧病：面板存过章的书调 novel_project status/repair 必报
-  value is not lossless JSON**：REST 面板存章走 chapterRecord 不传 summary，
-  undefined 原样进记录、落盘后 summary 键整个消失，status/repair 的输出装配
-  `summary: c.summary` 把 undefined 带进宿主 → 整次调用被拒（与 0.13.3
-  novel_style 同族）。修三层：chapterRecord 缺省补 `''` 且保留 prev.summary
-  （工具写的梗概不被面板再存抹掉）；status/repair 出口 `c.summary ?? ''`
-  （治愈已在盘上的旧记录）；smoke 补「REST 形状章记录 + 孤儿文件」端到端回归。
-
-- **REST 写语义与工具面同构**：createServerFsio 的 writeText/writeJson 补
-  create/replace/auto 三种 mode（此前 mode 参数被静默丢弃，'create' 的
-  「存在即失败」在 REST 路径变成无条件覆盖）；缺省 auto = stat→replaceIfVersion
-  版本守卫写。
-- **提案全链路版本守卫**：登记 / 应用 / 丢弃 / 清理写 novel.json 全部走守卫写，
-  面板连点两次「应用」不再可能互相覆盖；提案 id 加随机后缀，同毫秒提交不撞。
-- **提案应用附内容门禁 notice**：应用后返回 gate（ok/blocking/warnings），
-  死人复活、泄底当场有话可说（不拦——应用是用户主权动作）。
-- **REST 创建书加固**：workspace 只收扫描根集合内的路径（越界 403）；
-  slug 与工具侧同规校验；请求体 4MB 上限；会话工作区解码失败留 warn 日志
-  （书「静默消失」可查）。claim / rename / delete 补审计行。
-- **账本语义修正**：queryFacts「最新值」按章号取最大（同章取后写入）——补录
-  早章不再冒充当前值；applyFactUpdates 冲突条件从 `>=` 改 `===`，补录更早
-  章节放行（与报错文案一致）；账本冲突计入熔断计数；`now` 改为必填参数
-  （纯函数不取钟）。
-- **简报供给对称**：factsDigest cast 实体优先、其余实体（门派/地点/信物）跟上，
-  与一致性检测的口径一致。
-- **子代理传输接重试**：engine.retries 此前只对直连路径生效（web 主路径恒
-  attempts=1）——接上与 run() 同款重试循环，只重试 SUBAGENT_FAILED /
-  EMPTY_RESPONSE，超时/截断/取消不重试。
-- **检索修正**：全量 build 清掉书里已不存在章节的索引残留；索引路径 cwd 拼接
-  前先确认本地后端（否则退化关键词匹配）；annotate 用 try/finally 关 sqlite
-  句柄。
-- **工具面小修**：novel_ledger query 实体支持「、」多值（与 status_at 对齐）；
-  glossary remove 不存在的术语报错（不再静默）；人物卡 save 拒空白名与路径
-  分隔符；novel_outline save_book/save_chapter 先验书存在（不再写幽灵目录）；
-  novel_export 的 file 覆盖路径限本书目录内；场景序号剥离必须带分隔符
-  （「12岁少女」不再被吃掉序号）；人称检测句边界补 ASCII `!?`。
-- **批量起草**：取消信号留下的空洞不再产出没有章号的幽灵结果行，改为明确
-  计数提示。
-- **面板竞态与交互**：体检/诊断加切书序号守卫；保存章后核对「同书同章同快照」
-  再标干净；刷新按钮走未保存确认；批量起草落盘后重载编辑器中的受影响章
-  （防旧稿盖新版本）；删书确认态不再闪烁、进行中忽略重复点击。
-- **听书**：暂停落在取文窗口时恢复可续播（不再假暂停）；无句读超长段按字数
-  硬切（整段塞给 TTS 引擎被拒）。
-- **文案与无障碍**：设置页能力清单更新（写单章 / 结构诊断面板已能做）；
-  Btn 透传 aria-label（图标按钮对读屏器可名）；熔断文案说清计数清零条件。
-
-测试面（这次的重点是「护栏别只修半边」）：
-
-- **REST 数据面首批行为测试** `test/server-api.test.mjs`（13 例）：路由清单驱动的
-  fence 全覆盖（将来加端点漏 trusted() 必红）、workspace 白名单、非法书名 400、
-  重复建书 409、章节号守卫、章节保存写审计、createServerFsio 的 create/replace/auto
-  intent 语义。**假 fs 按宿主 dsh-fs 真语义实现 createIfAbsent / replaceIfVersion
-  拒绝**（沿用「替身必须镜像真机」的纪律）。
-- **H2 的回归钉法**（关键是让替身真能造出冲突，否则测了个寂寞）：
-  `test/batch5.test.mjs` 的内存 io 补上与生产同名同义的 `readJsonWithVersion` /
-  `writeJsonAtVersion`（版本按内容长度变化，版本不符抛 `FS_STALE_VERSION`），
-  `test/server-api.test.mjs` 的 R6b 从「记录现状·待修」翻转成**断言不丢更新**
-  （并发新增世界书 → 两条都在且 id 不撞；并发保存同一章 → 两个版本各占一号、
-  正文文件互不覆盖），并新增 `updateJson` 重放用例（读写之间被插一刀 →
-  `attempts >= 2` 且两边更新都留得下来）与 `submitRevisionProposal` 幽灵提案用例。
-  `test/logic.test.mjs` 改测新原语的 intent 逐字段正确性（原 writeTextIfVersion 用例退役）。
-- 面板新增 7 例（gate 进 state、门禁干净不吵、删除态跨书、goBack 清理、列表删除在途、
-  Btn 两种写法、目录图标按钮端到端 aria-label）；工具面补 2 例（saved 审计写失败、REST 形状章记录的 status/repair + 孤儿通道）。
-- 孤儿扫描收口的回归 3 例：path-only 记录被对账移除后其正文**必须**出现在 orphanFiles
-  （钉住"扫描在对账之后"这个顺序）、25 个残留时数组全量而 `next` 折成「另有 5 个」且
-  不得出现 `rm`、`chapterFile` 必须由 `chaptersDir` 派生。README / demo 尾帧里写死的
-  用例数一并去掉（加三条用例 272 就成了假话，顶部 tests 徽章才是真相）。
-
-- 测试 274 项。
+- **乐观并发通道**（H2 根因修复）：`updateJson` 读时捕获基线 → 守卫写 → 冲突重读重放；
+  提案链与 REST 写路径全部改走它；删除假守卫 `writeTextIfVersion`；`rememberSession` 只重放
+  会话归属增量。
+- **REST 加固**：同名建书 409、非法书名 400、章号守卫、workspace 白名单 403、请求体 4MB
+  上限、claim/rename/delete 补审计；createServerFsio 补 create/replace/auto 写语义（与工具面同构）。
+- **提案链**：全链路版本守卫（连点「应用」不互覆）、id 加随机后缀、应用返回内容门禁 notice。
+- **导出自毁通道封死**：`novel_export` 的 `file` 只允许落在 `书/导出/` 内。
+- **面板**：aria-label 真正生效（键名对不上曾静默丢弃）；内容门禁 notice 进详情页；删除确认态
+  不跨书存活；体检/诊断切书守卫；未保存确认；批量起草落盘后重载受影响章。
+- **工具/数据**：REST 存章 undefined summary 炸 status/repair 三层修复；账本最新值按章号取大、
+  冲突条件改 `===`、`now` 必填；审计写失败降级不拖垂整章；检索幽灵块出口过滤 + sqlite 句柄
+  try/finally；repair 孤儿正文扫描（对账后扫、只报告不删）；子代理传输接重试；工具面小修一批
+  （ledger 多实体、glossary remove 报错、outline 先验书存在、场景序号边界等）。
+- **听书**：暂停落在取文窗口可恢复续播；无句读超长段按字数硬切。
+- **测试面**：REST 数据面首批行为测试 13 例（fence 全覆盖、假 fs 按宿主真语义）；并发回归翻转
+  为断言不丢更新；面板 7 例；孤儿扫描回归 3 例。
 
 ## 0.13.5 (2026-09-19)
 

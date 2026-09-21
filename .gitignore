@@ -11,3 +11,4 @@ preview/
 
 # 内部文档不入库（竞品分析/POC/计划）
 docs/
+.realboot-probe/
