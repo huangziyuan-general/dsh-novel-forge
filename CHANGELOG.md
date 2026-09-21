@@ -2,53 +2,22 @@
 
 ## 未发布
 
-- **REST 面写界对齐终态（CodeBuddy P2/P3 + 真机形状二次修正）**：0.13.7 的策略线程只管到会话面，
-  REST 半边恒 `resolve({})` → workspaceRoot 回落 web 进程 cwd，「书在非 cwd 工作区」部署下面板
-  存章/审计写照撞 FS_SANDBOX_DENIED。首修想用 `ctx.sessions.list()` 按绑定 cwd 匹配 live 会话
-  线程其策略——复核 base 层清单与 dsh-session 源码：服务**在**宿主装载（`dsh-base/cordis.patch.yml`
-  L34，SessionStore `list()` 在 L1562 可调），但 store 是内存态、**由创建 fiber 持有**（create()
-  doc L1327），会话只在 fiber 驻留窗口在册 → store 空置期命中≈0；且把会话的 model 侧 mode 覆盖带进
-  用户面板动作本就是错误语义，伪造会话壳还会撞 sessionProjections 对未知会话的抛错。
-  终态 = REST 面保持
-  `resolve({})` 请求形状、fsio **以绑定书根覆写 workspaceRoot**（mode 全权归 resolver），
-  writeText / writeTextAtVersion / appendLine 全写通道覆盖（首修正漏了审计追加那条）；
-  COMPATIBILITY 两行按核过的真机形状重写；沙箱拒绝识别优先匹配结构化 `FsError.code`，
-  文案包含只作旧宿主兜底（P3）。**拒绝提示按场合分三段**（评审 2026-09-20：同一文案两场合
-  用，REST 场景「切会话策略」治标不治本——`resolve({})` 判定链 session 缺席时连 overrideOf
-  都不问，mode 落部署默认）：策略未线程成功（服务缺席）→ 连工具面切会话也无效，指向部署
-  默认 mode / 启动目录；线程成功+有会话 → 切该会话策略有效；线程成功+无会话（REST）→
-  指向部署默认 mode，明说切会话无效。回归：logic 镜像真机（替身不带 sessions + 假后端
-  真实施放 workspaceRoot 边界，越根必拒），断言覆根覆盖全部写通道、mode 透传不动、
-  三段提示各按其场（294 测试）。
-- **扫描根新鲜度：持久源加内容签名失效（二次审查修正 2cbb6fc 的落点）**。一手修把「新会话建书面板空 ≤60s」
-  归给 live 源被 TTL 锁，但真机形状源码复核：`sessions` 服务**在**宿主 base 层装载
-  （`dsh-base/cordis.patch.yml` L34，SessionStore `list()` 可调；浏览器半的 `ctx.sessions` 是
-  `dsh-api-session-controller` 网关的另一套服务，别混谈），可 store 是内存态、**由创建 fiber
-  持有**（dsh-session L1305-1315 注释：owned by the calling fiber, disposing removes）→ 会话只在
-  agent 轮运行期间在册，面板空闲期 REST 读到≈空，脱离 TTL 也救不了空闲窗口。
-  真机上新会话工作区的空闲期进场路径 = 宿主落 `session_projcache/sessions/<id>.json` + 建
-  `~/.dsh/sessions/` 目录——都属持久源。终态修法：持久缓存 = **内容签名（两目录 mtime + entry 数，
-  每请求约 4 syscall）+ TTL 双条件**，签名变即时作废（新会话下一个请求就可见）；TTL 降级为
-  「既有记录改 cwd 不动目录签名」的兜底周期；**单文件 mtime 刻意不计入签名**（老宿主整文件每次
-  checkpoint 全量重写、本机实测 109MB，计入等于把重 parse 放大到每请求）。live 保持每次现算
-  （agent 轮运行期的即时源 + 前瞻通道）；两处 readdirSync 排序消同名书拷贝漂移；诊断行恢复
-  projcache/反推候选分计数。回归：W4 镜像空闲期时序（替身**不带** sessions 服务）锁目录态落盘
-  即时进场，旧实现（纯 TTL）实测必红；W4b 单独锁 live 代码分支；W2/W 段叙事按真机形状纠偏。
-- **目录名反推升级 Windows 感知（0.13.7 后落地）**：扫描根源②（`~/.dsh/sessions` 目录名反推）
-  旧实现是 POSIX 专属——`D:\X` 反推成 `/D/…` 形态，Windows 上 statSync 验证必然失败、整源跳过。
-  现按真机 key（dsh 0.1.5-rc.2 实录：escape 的 `%`→`~` 变体 `~XXXX`，`:\` 压成一个 `-`）反解，
-  解出盘符形态时额外给 `D:\…` 真路径候选、双形态交由 statSync 择定：中文工作区可无损反解回
-  `D:\新建文件夹 (4)`（真实目录名含 `-` 仍有歧义，维持验证层安全降级）。配套：扫描根诊断行带
-  三源命中计数与 live 零命中归因，候选验证失败的告警按候选去重（不再随 60s TTL 刷屏）。
+- **REST 面写界对齐 + 沙箱拒绝提示分场合（CodeBuddy P2/P3）**：面板写盘（无 exec）此前恒
+  `resolve({})`，写界回落 web 进程 cwd——「书在非 cwd 工作区」部署下面板存章/审计写误拒。
+  现 fsio 以绑定书根覆写 `workspaceRoot`（mode 仍归 resolver，全写通道覆盖）。拒绝识别优先
+  匹配结构化 `FsError.code`（宿主文案漂移不再让提示失效）；提示按「策略是否线程成功 ×
+  有无会话 × 宿主 mode」定向——REST 面 mode 取部署默认（不读会话级覆盖），提示不再误导
+  用户去切会话策略（294 测试）。
+- **扫描根：持久源内容签名失效**：会话 store 由创建 fiber 持有、空闲期≈空（live 仅 agent 轮
+  运行期命中），新会话工作区空闲期进场走 projcache 目录态落盘——持久缓存改「两目录
+  mtime+entry 数」签名 + TTL 双条件，签名变即时作废（修正 2cbb6fc 把即时性寄在 live 上的
+  落点）；单文件 mtime 不计入签名（老宿主整文件 checkpoint 全量重写，计入会把重 parse
+  放大到每请求）。诊断行恢复 projcache/反推候选分计数。
+- **目录名反推升级 Windows 感知**：真机 key 实录（`%`→`~` 的 ~XXXX escape、`:\` 压成一个
+  `-`），盘符形态反解出 `D:\…` 真路径候选、与 POSIX 形态交 statSync 择定；告警按候选去重，
   真机 key 固化进 W1 回归。
-- **projcache 双落盘形态支持（Windows 真机日志复盘发现的真 bug）**：dsh 0.1.5 起宿主把
-  projcache 从单文件 `storages/session_projcache.json`（`tables.sessions.*.identity.cwd`）改为
-  目录态 `storages/session_projcache/sessions/*.json`（每份 `record.identity.cwd`）。旧实现只读
-  单文件 → 新宿主上源①静默归零（readFileSync 抛错被 catch 吞掉，连日志都没有）。现在两代形态
-  都读、命中去重，单会话文件坏 JSON 不阻断其余；真机形状（record.identity.cwd）固化为回归，
-  另加「只造目录态、绝不建单文件」的集成用例锁死通路。同批：Windows 侧 agent 按
-  0→5 诊断步骤实锤——该机面板空 = projcache 形态失配 × 目录名反推 ~XXXX/盘符歧义 ×
-  书缺 novel.json（旧沙箱时代 init 被拒写，内容走 pwsh 手工维护）三重叠加。
+- **projcache 双落盘形态**：dsh 0.1.5 起目录态 `sessions/*.json`（`record.identity.cwd`）与
+  老单文件都读、命中去重，坏 JSON 不阻断——修「只读单文件在新宿主上源①静默归零」。
 
 ## 0.13.7 (2026-09-20)
 
