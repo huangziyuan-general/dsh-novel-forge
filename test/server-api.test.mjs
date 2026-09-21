@@ -113,9 +113,18 @@ function makeFakeBackend({ allowWriteRoots, allowReadRoots }) {
                 type: d.isDirectory() ? 'directory' : (d.isFile() ? 'file' : 'other'),
             }));
         },
-        async writeText(target, content, intent) {
+        async writeText(target, content, intent, _signal, sandboxPolicy) {
             const abs = target.targetKey.slice(4);
             writes.push({ abs, intentKind: intent?.kind ?? 'unconditional', intent });
+            // 镜像真机 checkedTarget/writableRoots：policy 若带覆写的 workspaceRoot
+            // （P2 REST 面 resolve({}) 覆根），写目标必须落在该根内，否则宿主要是会被拒。
+            // 之前假后端只有 3 参会静默忽略第 5 参 → "workspaceRoot 覆错"永远不会被测试抓到。
+            if (sandboxPolicy && typeof sandboxPolicy.workspaceRoot === 'string'
+                && !insideAny(abs, [sandboxPolicy.workspaceRoot])) {
+                const error = new Error(`file access denied under sandbox policy: ${abs}`);
+                error.code = 'FS_SANDBOX_DENIED';
+                throw error;
+            }
             if (!insideAny(abs, allowWriteRoots)) {
                 const error = new Error(`FS_OUTSIDE_WORKSPACE: ${abs}`);
                 error.code = 'FS_OUTSIDE_WORKSPACE';
@@ -788,4 +797,44 @@ test('R6b 并发经端点提交不再丢更新：两边的写入都留得下来�
     assert.equal(meta.chapters['1'].versions.length, 2, '两个版本都要进索引');
     const bodies = walkFiles(path.join(root, '并发提交书', '正文')).map((f) => path.basename(f)).sort();
     assert.deepEqual(bodies, ['第1章-一章-v1.md', '第1章-一章-v2.md'], '正文文件不得互相覆盖');
+});
+
+// ── R6：REST 面覆 workspaceRoot 的沙箱边界（CodeBuddy P2 的测试钉子）──────
+//
+// 假后端此前只声明 3 参、静默忽略第 5 参 sandboxPolicy → "fsio 把 workspaceRoot 覆错/
+// 漏覆"永远不会被测试抓到。这里分两层钉住：
+//  · R6a（单元，钉假后端本身确实会施放边界）：把 policy.workspaceRoot 指向一个不含
+//    写目标的根 → writeText 必须抛 FS_SANDBOX_DENIED。这证明"不如实施放的假后端"假如
+//    存在，测试必红；反过来 3 参假后端的那种宽容性再也骗不过去。
+//  · R6b（集成，钉 fsio 覆写不被破坏）：给全局 ctx 注入 resolver 返回**错误根**（模拟
+//    REST 无 session 时默认 workspaceRoot = web 进程 cwd，绝非书根），但建书时 fsio 凭
+//    rootOverride(cwd=config.workspaceRoot) 覆写成书根 → 必须仍放行落盘。这是 P2 修复的
+//    核心承诺（非 cwd 工作区面板写不再误拒）。若未来 fsio 把覆写 key 拼错/删掉，此断言变红。
+
+test('P2A 假后端真正施放 workspaceRoot 边界（3 参宽容假后端骗不过去）', async () => {
+    // 不走 server：直接调假后端 writeText，看它是否按 policy.workspaceRoot 施放边界。
+    const ghostRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-wrk-ghost-'));
+    const okTarget = { targetKey: `WSL:${path.join(ghostRoot, '书', 'novel.json')}` };
+
+    // policy.workspaceRoot 不含写目标根 → 必须拒（否则「覆错」无从体现）
+    const deniedPolicy = { mode: 'workspace-write', workspaceRoot: root };   // root ≠ ghostRoot
+    await assert.rejects(
+        backend.writeText(okTarget, '{}', { kind: 'createIfAbsent' }, undefined, deniedPolicy),
+        /FS_SANDBOX_DENIED|file access denied/,
+        '假后端必须按 policy.workspaceRoot 拒绝对根外目标的写——宽松假后端会静默放行，测不出 fsio 覆根',
+    );
+    fs.rmSync(ghostRoot, { recursive: true, force: true });
+});
+
+test('P2B 集成：resolver 给错根，但 fsio 凭 rootOverride 覆写成书根 → 面板写仍放行', async () => {
+    const ghostRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nf-wrk-ghost-'));
+    const orig = ctx.sandboxPolicy;
+    // resolver 返回错误根（模拟 REST 无 session → 默认 workspaceRoot = web 进程 cwd）
+    ctx.sandboxPolicy = { resolve: () => ({ mode: 'workspace-write', workspaceRoot: ghostRoot }) };
+    const ok = await drive({ method: 'POST', url: `${PREFIX}/projects`, body: { title: '覆根放行书', workspace: root } });
+    assert.equal(ok.statusCode, 200, `fsio 必须用 rootOverride 覆掉 resolver 的错误根，实际 ${ok.statusCode} ${ok.body}`);
+    assert.ok(fs.existsSync(path.join(root, '覆根放行书', 'novel.json')), 'R6b 覆写成书根必须落盘——P2 修复的核心承诺');
+
+    ctx.sandboxPolicy = orig;
+    fs.rmSync(ghostRoot, { recursive: true, force: true });
 });

@@ -1313,8 +1313,54 @@ test('★ fsio 沙箱拒绝改写：保留宿主原信息并补可行动指引�
         fsio.writeText('大嫂的账本/novel.json', '{}', 'replace'),
         (e) => e.message.includes('file access denied under workspace-write mode')
             && e.message.includes('danger-full-access')
-            && e.message.includes('dsh web 的启动目录'),
-        '原信息必须在，指引（切策略/换启动目录/更新插件）也必须在',
+            && e.message.includes('该会话的文件策略'),
+        '原信息必须在，会话面指引（切该会话策略/更新插件）也必须在',
+    );
+});
+
+test('★ fsio 沙箱拒绝提示分场合：REST 面切会话策略无效——read-only 拒绝指向部署默认 mode（评审 2026-09-20）', async () => {
+    const { createServerFsio } = await import('../lib/fsio.js');
+    // 策略线程成功（服务在）+ 无 exec：mode 取部署默认（宿主判定链 session 缺席连 overrideOf 都不问）
+    const fakeCtx = {
+        get(prop) { return prop === 'sandboxPolicy' ? { resolve: () => ({ mode: 'read-only', workspaceRoot: '/books-root' }) } : undefined; },
+        fs: {
+            async resolve(p) { return `/abs/${p}`; },
+            async stat() { return undefined; },
+            async writeText() {
+                throw Object.assign(new Error('cannot write "x": file access denied under read-only mode'), { code: 'FS_SANDBOX_DENIED' });
+            },
+        },
+    };
+    const fsio = createServerFsio(fakeCtx, '/books-root');
+    await assert.rejects(
+        fsio.writeText('大嫂的账本/novel.json', '{}'),
+        (e) => e.message.includes('部署默认')
+            && e.message.includes('danger-full-access 无效')
+            && !e.message.includes('该会话的文件策略切到'),
+        '★ REST 面提示必须指向部署默认 mode，且明说「切会话策略无效」（旧行为：两场合共用一套会话面指引）',
+    );
+});
+
+test('★ fsio 沙箱拒绝提示分场合：服务缺席时策略没线程成功——连工具面也不该建议切会话，指向启动目录/部署默认', async () => {
+    const { createFsio } = await import('../lib/fsio.js');
+    // 无 sandboxPolicy 服务 → writeGuarded 4 参调用 → 宿主兜底 resolve() 无 session：
+    // mode=部署默认、根=web 启动目录——此时会话级覆盖根本不参与判定
+    const fakeCtx = {
+        fs: {
+            async resolve(p) { return `/abs/${p}`; },
+            async stat() { return undefined; },
+            async writeText() {
+                throw Object.assign(new Error('cannot write "x": file access denied under workspace-write mode'), { code: 'FS_SANDBOX_DENIED' });
+            },
+        },
+    };
+    const fsio = createFsio(fakeCtx, { agent: { session: { header: { cwd: 'D:\\书桌', id: 's' } } } }, 'D:\\书桌');
+    await assert.rejects(
+        fsio.writeText('大嫂的账本/novel.json', '{}', 'replace'),
+        (e) => e.message.includes('启动目录')
+            && e.message.includes('宿主策略服务未命中')
+            && !e.message.includes('该会话的文件策略切到'),
+        '★ 服务缺席 = 宿主兜底无 session，切会话策略无效——提示必须改指启动目录（旧行为误导）',
     );
 });
 

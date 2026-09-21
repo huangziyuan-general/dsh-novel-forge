@@ -6,15 +6,20 @@
   REST 半边恒 `resolve({})` → workspaceRoot 回落 web 进程 cwd，「书在非 cwd 工作区」部署下面板
   存章/审计写照撞 FS_SANDBOX_DENIED。首修想用 `ctx.sessions.list()` 按绑定 cwd 匹配 live 会话
   线程其策略——复核 base 层清单与 dsh-session 源码：服务**在**宿主装载（`dsh-base/cordis.patch.yml`
-  L34，SessionStore `list()` 可调），但 store 是内存态、**由创建 fiber 持有**（L1305-1315 注释），
-  会话只在 agent 轮运行期间在册 → 面板空闲期命中≈0；且把会话的 model 侧 mode 覆盖带进
+  L34，SessionStore `list()` 在 L1562 可调），但 store 是内存态、**由创建 fiber 持有**（create()
+  doc L1327），会话只在 fiber 驻留窗口在册 → store 空置期命中≈0；且把会话的 model 侧 mode 覆盖带进
   用户面板动作本就是错误语义，伪造会话壳还会撞 sessionProjections 对未知会话的抛错。
   终态 = REST 面保持
   `resolve({})` 请求形状、fsio **以绑定书根覆写 workspaceRoot**（mode 全权归 resolver），
   writeText / writeTextAtVersion / appendLine 全写通道覆盖（首修正漏了审计追加那条）；
   COMPATIBILITY 两行按核过的真机形状重写；沙箱拒绝识别优先匹配结构化 `FsError.code`，
-  文案包含只作旧宿主兜底（P3）。回归：logic 两例镜像真机（替身不带 sessions），断言覆根
-  覆盖全部写通道且 mode 透传不动（290 测试）。
+  文案包含只作旧宿主兜底（P3）。**拒绝提示按场合分三段**（评审 2026-09-20：同一文案两场合
+  用，REST 场景「切会话策略」治标不治本——`resolve({})` 判定链 session 缺席时连 overrideOf
+  都不问，mode 落部署默认）：策略未线程成功（服务缺席）→ 连工具面切会话也无效，指向部署
+  默认 mode / 启动目录；线程成功+有会话 → 切该会话策略有效；线程成功+无会话（REST）→
+  指向部署默认 mode，明说切会话无效。回归：logic 镜像真机（替身不带 sessions + 假后端
+  真实施放 workspaceRoot 边界，越根必拒），断言覆根覆盖全部写通道、mode 透传不动、
+  三段提示各按其场（294 测试）。
 - **扫描根新鲜度：持久源加内容签名失效（二次审查修正 2cbb6fc 的落点）**。一手修把「新会话建书面板空 ≤60s」
   归给 live 源被 TTL 锁，但真机形状源码复核：`sessions` 服务**在**宿主 base 层装载
   （`dsh-base/cordis.patch.yml` L34，SessionStore `list()` 可调；浏览器半的 `ctx.sessions` 是
