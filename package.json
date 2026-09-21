@@ -33,7 +33,8 @@
     "README.md",
     "cordis.patch.yml",
     "lib",
-    "mcp"
+    "mcp",
+    "skills"
   ],
   "peerDependencies": {
     "@deepseek-ai/dsh-fs": "*",
