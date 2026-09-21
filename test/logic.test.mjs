@@ -1410,6 +1410,46 @@ test('★ createServerFsio REST 面：绑定书根覆写覆盖全部写通道（
     assert.deepEqual(seen[1].intent, { kind: 'replaceIfVersion', version: 'v3' }, 'appendLine 读-改-写版本守卫语义不变');
 });
 
+test('★ fsio 策略探测镜像真机 cordis：未声明服务的属性访问 getter 会 throw——可选链防不住，必须视为缺失而非炸写盘（真机 novel_outline 全线抛错回归）', async () => {
+    const { createFsio } = await import('../lib/fsio.js');
+    // 替身镜像真机：cordis 对未在顶层 inject 声明的服务，ctx.sandboxPolicy 的 getter 直接 throw
+    // 「cannot get property sandboxPolicy without inject」——ctx?.sandboxPolicy 只防容器为空，
+    // 防不住 getter 内部 throw（假对象上属性访问永不抛，所以这条此前 294 绿灯全瞎）。
+    const cordisLikeCtx = {};
+    Object.defineProperty(cordisLikeCtx, 'sandboxPolicy', {
+        get() { throw new Error('cannot get property sandboxPolicy without inject'); },
+    });
+    const seen = [];
+    const policySvc = { resolve: () => ({ mode: 'workspace-write', workspaceRoot: '/w' }) };
+    cordisLikeCtx.get = (prop) => (prop === 'sandboxPolicy' ? policySvc : undefined);
+    cordisLikeCtx.emit = () => {};
+    cordisLikeCtx.fs = {
+        async resolve(p) { return `/abs/${p}`; },
+        async stat() { return undefined; },
+        async writeText(target, text, intent, signal, policy) { seen.push({ policy }); return { version: 1 }; },
+    };
+    const fsio = createFsio(cordisLikeCtx, { agent: { session: { header: { cwd: '/w', id: 's' } } } }, '/w');
+    await fsio.writeText('书/novel.json', '{}', 'replace');
+    assert.equal(seen[0].policy.workspaceRoot, '/w', '★ 属性访问 throw 必须降级走 ctx.get 双路探测，而不是把整次写盘炸掉');
+
+    // 双路全缺失（属性 getter 与 ctx.get 都抛）→ policy undefined → 4 参旧形状，宿主自兜底
+    const bothMissingCtx = {};
+    Object.defineProperty(bothMissingCtx, 'sandboxPolicy', {
+        get() { throw new Error('cannot get property sandboxPolicy without inject'); },
+    });
+    bothMissingCtx.get = () => { throw new Error('cannot get property sandboxPolicy without inject'); };
+    bothMissingCtx.emit = () => {};
+    const calls = [];
+    bothMissingCtx.fs = {
+        async resolve(p) { return `/abs/${p}`; },
+        async stat() { return undefined; },
+        async writeText(...args) { calls.push(args); return { version: 1 }; },
+    };
+    const fsio2 = createFsio(bothMissingCtx, { agent: { session: { header: { cwd: '/w', id: 's' } } } }, '/w');
+    await fsio2.writeText('书/novel.json', '{}', 'replace');
+    assert.equal(calls[0].length, 4, '双路探测全缺失 = 与旧 4 参调用逐字节一致，绝不放大故障');
+});
+
 test('★ fsio 沙箱拒绝识别优先匹配结构化 code（宿主文案改版不至于让可行动提示静默失效，CodeBuddy P3）', async () => {
     const { createFsio } = await import('../lib/fsio.js');
     const fakeCtx = {
