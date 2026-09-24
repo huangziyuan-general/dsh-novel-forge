@@ -62,6 +62,7 @@ export function initialState() {
 		// 提案队列（0.7.0）：模型提的修订稿，pending 时等用户点「应用」才生成新版本。
 		// 工具面没有 apply（见 lib/proposals.js）——「批准钥匙」在面板这一侧。
 		proposals: [], proposalsLoading: false,
+		proposalsError: null, // 提案队列加载失败——必须可见，不得伪装成「没有待批」（2026-09-23 真机教训）
 		// 提案全文展开（👁 查看）：{ id, loading, data, error } | null
 		proposalDetail: null,
 		// 正在处理的提案 id（应用/丢弃中，按钮禁用以防重复点）；null = 空闲

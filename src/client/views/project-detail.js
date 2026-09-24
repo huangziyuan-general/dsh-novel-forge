@@ -207,7 +207,12 @@ export function ProjectDetailView({ state: s }) {
 		),
 		s.proposalsLoading
 			? h('div', { style: { ...hintStyle, fontSize: font.caption, marginTop: space.sm } }, '加载中…')
-			: pendingProposals.length === 0
+			: s.proposalsError
+				? h('div', { style: { display: 'flex', flexDirection: 'column', gap: space.xs, marginTop: space.sm } },
+					h('div', { style: { ...hintStyle, fontSize: font.caption, color: color.danger, lineHeight: 1.7 } },
+						`⚠️ 提案队列加载失败：${s.proposalsError}——这**不是**「没有待批」，点重试再拉一次。`),
+					Btn({ variant: 'secondary', action: 'reload-proposals' }, '重试'))
+				: pendingProposals.length === 0
 				? h('div', { style: { ...hintStyle, fontSize: font.caption, marginTop: space.sm, lineHeight: 1.7 } },
 					'没有待批的修订。模型改稿（含面板上的润色/校对）都先落到这里，由你点「应用」才生成新版本。')
 				: h('div', { style: stackStyle(space.xs) },
