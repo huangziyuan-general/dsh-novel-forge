@@ -371,6 +371,12 @@ test('提案制（融合 A1）：工具面只有 propose/list；apply 是用户�
     assert.equal(meta.chapters['1'].latest, 2);
     assert.equal(meta.proposals[0].status, 'applied');
 
+    // 状态回写回归（2026-09-23 真机排障）：提案文件里的 status 不得停留在创建时的 pending——
+    // apply 只更新索引会让「文件说 pending、索引说 applied」双源分裂，读文件的诊断全被带偏
+    const pfAfterApply = JSON.parse(fs.readFileSync(path.join(root, '星海拾骨', '.novel', 'proposals', `${p.id}.json`), 'utf8'));
+    assert.equal(pfAfterApply.status, 'applied', '提案文件 status 必须随 apply 回写');
+    assert.ok(typeof pfAfterApply.appliedAt === 'string' && pfAfterApply.appliedAt !== '', 'appliedAt 必须回写');
+
     // ④ 审计留痕：能分辨「这条是谁做的」——apply 是 user，propose 是 agent
     const auditLog = fs.readFileSync(path.join(root, '星海拾骨', '.novel', 'audit.jsonl'), 'utf8');
     for (const action of ['init', 'outline/save_chapter', 'outline/approve', 'write_chapter/saved', 'write_chapter/rejected', 'propose/create', 'propose/apply']) {
@@ -395,6 +401,8 @@ test('提案丢弃（融合 A1）：discard 只改状态不动正文，且同样
     const afterMeta = JSON.parse(fs.readFileSync(path.join(root, '星海拾骨', 'novel.json'), 'utf8'));
     assert.equal(afterMeta.chapters['1'].latest, beforeMeta.chapters['1'].latest, 'discard 不该动正文版本');
     assert.equal(afterMeta.proposals.find((x) => x.id === p.id).status, 'discarded');
+    const pfAfterDiscard = JSON.parse(fs.readFileSync(path.join(root, '星海拾骨', '.novel', 'proposals', `${p.id}.json`), 'utf8'));
+    assert.equal(pfAfterDiscard.status, 'discarded', '提案文件 status 必须随 discard 回写');
     // 已丢弃的提案不可再 apply
     await assert.rejects(
         () => proposals.applyProposal(serverIo(), '星海拾骨', p.id, CFG, 'user'),
