@@ -246,6 +246,32 @@ test('★ 面板列表请求带会话：GET /projects?session=<id>', async () =>
     assert.equal(controller.state.projects.length, 1, '响应要落到 state.projects');
 });
 
+test('★ 提案队列加载失败必须可见：proposalsError 置位（不得伪装成「没有待批」），重试动作可恢复（2026-09-23 真机教训）', async () => {
+    let proposalsOk = false;
+    const fetch = (url) => {
+        if (String(url).includes('/proposals')) {
+            return proposalsOk
+                ? Promise.resolve({ json: async () => ({ ok: true, value: { book: '书', action: 'list', proposals: [{ id: 'P1-x', chapter: 1, status: 'pending' }] } }) })
+                : Promise.reject(new Error('网络断了'));
+        }
+        return Promise.resolve({ json: async () => ({ ok: true, value: [] }) });
+    };
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+
+    await controller.loadProposals('书');
+    assert.equal(controller.state.proposals.length, 0, '失败时列表为空（渲染层由 proposalsError 区分）');
+    assert.ok(String(controller.state.proposalsError ?? '').includes('网络断了'),
+        '★ 失败必须落 proposalsError——静默空态会让用户误以为提案被吞');
+
+    proposalsOk = true;
+    controller.state.selected = '书'; // 真实面板里由 openProject 置位；直测控制器需手动对齐
+    await controller.handleAction('reload-proposals', { dataset: {} });
+    assert.equal(controller.state.proposalsError, null, '重试成功后错误清空');
+    assert.equal(controller.state.proposals.length, 1, '重试后提案落地');
+});
+
 test('★ 创建项目带会话戳：POST /projects body 里有 session', async () => {
     const seq = scriptedFetch([{ value: [] }, { value: [] }, { value: [] }, { value: [] }]);
     const dom = createDom();

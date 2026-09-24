@@ -251,7 +251,7 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 		// deleteState 属于「上一本书的删除确认」：漏清会让 B 书的「删除」单击直接生效
 		//（两步确认跨书泄漏）。gateNotice/listDeleting 同理，都是上一本书的残留。
 		state.deleteState = null; state.gateNotice = null; state.listDeleting = false;
-		state.proposals = []; state.proposalBusy = null; state.proposalDetail = null; // 展开的全文也属于上一本书
+		state.proposals = []; state.proposalsError = null; state.proposalBusy = null; state.proposalDetail = null; // 展开的全文也属于上一本书
 		// 换书：体检结果与批量结果都属于「上一本书」，必须清掉（否则会把 A 书的红字
 		// 挂在 B 书头上——这类串台比不显示更糟）
 		state.continuity = null; state.continuityError = ''; state.batchResult = null; state.revising = null;
@@ -308,12 +308,16 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 		const bookId = id || state.selected;
 		if (!bookId) return;
 		const seq = openSeq;
-		state.proposalsLoading = true; notify();
+		state.proposalsLoading = true; state.proposalsError = null; notify();
 		try {
 			const value = await apiFetch(`/projects/${encodeURIComponent(bookId)}/proposals`);
 			if (seq !== openSeq) return; // 期间已切书：丢弃陈旧提案队列
 			state.proposals = Array.isArray(value?.proposals) ? value.proposals : [];
-		} catch { if (seq === openSeq) state.proposals = []; }
+		} catch (error) {
+			// 加载失败 ≠ 没有待批：必须留痕可辨（2026-09-23 真机教训——失败曾被静默
+			// 渲染成「没有待批的修订」，用户盯着空列表误以为提案被吞了几天）
+			if (seq === openSeq) { state.proposals = []; state.proposalsError = String(error?.message ?? error); }
+		}
 		finally { if (seq === openSeq) { state.proposalsLoading = false; notify(); } }
 	};
 
@@ -636,6 +640,7 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 		syncSession();   // 所有带会话戳的动作（润色/校对/写章/认领/创建）先对齐真会话 id
 		state.error = ''; state.notice = '';
 		switch (action) {
+			case 'reload-proposals': state.proposalsError = null; await loadProposals(state.selected); break;
 			case 'refresh-projects': await refreshProjects(); break;
 			case 'create': await createProject(); break;
 			case 'open': await openProject(target.dataset.id); break;
