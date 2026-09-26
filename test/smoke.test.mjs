@@ -1548,3 +1548,38 @@ test('★ 孤儿清单：数组给全量，next 只列前 20 且不教用户 rm'
     assert.ok(!/\brm\b/.test(repair.next), '★ 本插件对用户文件只报告不删除，文案不得出现 rm 这种删除命令');
     assert.match(repair.next, /回收站|不删除/, '给的是"确认可弃后交给回收站"这类指引');
 });
+
+// ── novel skill 运行时注册（0.1.7 宿主无「插件 skills/ 目录自动发现」——文件惯例不存在）──
+
+test('★ parseSkillFrontmatter：取 name/description，正文原样保留', async () => {
+    const { parseSkillFrontmatter } = await import('../lib/skill-registration.js');
+    const { attrs, body } = parseSkillFrontmatter('---\nname: novel\ndescription: 工作流指令包\n---\n\n# 正文\n第一段');
+    assert.equal(attrs.name, 'novel');
+    assert.equal(attrs.description, '工作流指令包');
+    assert.ok(body.startsWith('# 正文'), 'frontmatter 之后是正文原文');
+    const noFm = parseSkillFrontmatter('直接正文');
+    assert.deepEqual(noFm.attrs, {});
+    assert.equal(noFm.body, '直接正文');
+});
+
+test('★ novelSkillDefinition：从插件包内 SKILL.md 组装宿主可校验的完整定义', async () => {
+    const { novelSkillDefinition } = await import('../lib/skill-registration.js');
+    const d = novelSkillDefinition();
+    assert.equal(d.name, 'novel');
+    assert.ok(d.description.length > 0 && d.description.length <= 300, 'description 非空且不超 300');
+    assert.ok(d.content.includes('小说锻炉'), '正文来自插件包内 SKILL.md');
+    assert.match(d.source, /^plugin:/);
+    assert.ok(d.path.endsWith('skills/novel/SKILL.md'));
+});
+
+test('★ registerNovelSkill：有 skills.register 就注册；服务缺席/抛错都优雅降级不抛', async () => {
+    const { registerNovelSkill } = await import('../lib/skill-registration.js');
+    const captured = [];
+    assert.equal(registerNovelSkill({ skills: { register: (d) => captured.push(d) } }), true, '注册成功');
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0].name, 'novel');
+    assert.equal(registerNovelSkill({}), false, 'skills 服务缺席 → false 不抛');
+    const warns = [];
+    assert.equal(registerNovelSkill({ skills: { register: () => { throw new Error('boom'); } }, logger: { warn: (m, d) => warns.push(`${m} ${d ?? ''}`) } }), false, '注册抛错 → false 不抛');
+    assert.ok(warns.join('').includes('boom'), '失败要 warn 留痕');
+});
