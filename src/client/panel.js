@@ -148,7 +148,9 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 		// 探针日志：用户卡「加载中」时，console 里有没有这行 + 后面有没有收尾，直接分诊
 		console.info('[novel-forge] GET /projects' + (state.sessionId ? `?session=${state.sessionId}` : '（无会话）'));
 		try {
-			state.projects = await apiFetch(withSession('/projects'));
+			// scope='all' 时不带 session 参数——多会话工作流里别的会话建的书也要能看（头部 chip 可切换）
+			const scopedUrl = state.sessionId && state.sessionScope !== 'all' ? withSession('/projects') : '/projects';
+			state.projects = await apiFetch(scopedUrl);
 			// 回落：会话过滤为空但全量有书 → 显示全部。宿主 slot inject 给的会话
 			// 标识与工具写入 novel.json 的 session id 可能不同源（0.13.2 真机实锤：
 			// session-watch 用 sessions 服务的 id 能探到书、slot 的 id 过滤却是空），
@@ -642,6 +644,11 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 		switch (action) {
 			case 'reload-proposals': state.proposalsError = null; await loadProposals(state.selected); break;
 			case 'refresh-projects': await refreshProjects(); break;
+			case 'toggle-scope':
+				if (!state.sessionId) break; // 无会话标识时本来就是全量，无可切换
+				state.sessionScope = state.sessionScope === 'all' ? 'session' : 'all';
+				await refreshProjects();
+				break;
 			case 'create': await createProject(); break;
 			case 'open': await openProject(target.dataset.id); break;
 			case 'rename-open': {
@@ -871,6 +878,7 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 		player.stop();
 		state.selected = null; state.detail = null; state.view = 'projects'; state.chapterList = [];
 		state.rename = null; state.listDeleteId = null; state.clone = null;
+		state.sessionScope = 'session';
 		state.loreDeleteId = null; state.filter = '';
 		started = true;
 		notify();
@@ -971,9 +979,15 @@ export function ForgePanel(props) {
 				),
 				h('div', { style: subtitleStyle }, panelSubtitle(s)),
 			),
-			h('span', {
-				style: { ...chip({ tone: s.sessionId ? 'accent' : 'neutral' }), alignSelf: 'flex-start' },
-			}, s.sessionId ? '本会话' : '全部项目'),
+			s.sessionId
+				? h('button', {
+					'data-action': 'toggle-scope',
+					title: '书单范围：本会话 ⇄ 全部项目（多会话各写各的书，只看本会话会漏掉别的会话建的书）',
+					style: { ...chip({ tone: s.sessionScope === 'all' ? 'neutral' : 'accent' }), alignSelf: 'flex-start', cursor: 'pointer' },
+				}, s.sessionScope === 'all' ? '全部项目' : '本会话')
+				: h('span', {
+					style: { ...chip({ tone: 'neutral' }), alignSelf: 'flex-start' },
+				}, '全部项目'),
 			// 设置入口常驻在头部：详情页/世界书页都够不到列表页那个按钮，
 			// 用户想看一眼「面板到底能做什么」时不该先退回列表
 			h('button', {

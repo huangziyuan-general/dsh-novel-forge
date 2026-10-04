@@ -246,6 +246,38 @@ test('★ 面板列表请求带会话：GET /projects?session=<id>', async () =>
     assert.equal(controller.state.projects.length, 1, '响应要落到 state.projects');
 });
 
+test('★ 书单范围切换：toggle-scope 在带 session 与全量 URL 间翻转，无会话时不可切', async () => {
+    const seq = scriptedFetch([{ value: [] }, { value: [{ id: '书B' }] }, { value: [{ id: '书B' }] }, { value: [{ id: '书B' }] }]);
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch: seq.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+    await controller.refreshProjects();
+    assert.ok(seq.requests[0].url.includes('session='), '默认本会话：带 session 参数');
+
+    // 空回落仍生效（本会话空 → 全量补位）——现有行为不得被 scope 破坏
+    await Promise.resolve(); await new Promise((r) => setTimeout(r, 0));
+    assert.equal(controller.state.projects.length, 1, '空回落补进全量书');
+
+    // 切到全部：URL 不带 session
+    await controller.handleAction('toggle-scope', { dataset: {} });
+    assert.equal(controller.state.sessionScope, 'all');
+    // refreshProjects 还会补发 ?scope=unclaimed 探针——断言只认主列表请求
+    const mainReqs = () => seq.requests.filter((r) => /\/projects(\?session=|$)/.test(r.url));
+    const allReq = mainReqs().at(-1);
+    assert.ok(!allReq.url.includes('session='), '全部项目：URL 不带 session');
+    assert.equal(controller.state.projects.length, 1, '全部模式直接用全量结果');
+
+    // 切回本会话：URL 恢复带 session
+    await controller.handleAction('toggle-scope', { dataset: {} });
+    const backReq = mainReqs().at(-1);
+    assert.ok(backReq.url.includes('session='), '切回本会话：恢复带 session（实际 URL: ' + backReq.url + '，scope=' + controller.state.sessionScope + '）');
+
+    // 无会话标识：toggle 是 no-op
+    const c2 = mod.exports.__internals.createForgeController({ sessionId: null });
+    await c2.handleAction('toggle-scope', { dataset: {} });
+    assert.equal(c2.state.sessionScope, 'session', '无会话不翻转');
+});
+
 test('★ refreshProposalsIfIdle：详情态且空闲才重拉，其他态一律不动（焦点/可见性触发）', async () => {
     const scripted = scriptedFetch([{ value: { book: '书', action: 'list', proposals: [{ id: 'P9-y', chapter: 9, status: 'pending' }] } }]);
     const dom = createDom();
