@@ -877,7 +877,18 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 		void refreshProjects();
 	};
 
-	return { state, notify, attach, detach, start, setSession, refreshProjects, handleAction, syncSession, loadProposals,
+	/** 页面重新可见/聚焦时的提案重拉：写作会话随时可能提交新提案，而队列只在
+	 *  开书/应用动作时加载——挂着面板的用户看到的永远是打开那一刻的快照
+	 *  （真机 10-04 实锤：写作会话新建 P45/P48/P49，用户面板停在旧空态）。
+	 *  只在详情态且无在途动作时执行；loadProposals 同步置 proposalsLoading，
+	 *  visibilitychange+focus 连发也不会双拉。 */
+	const refreshProposalsIfIdle = () => {
+		if (state.view !== 'detail' || !state.selected) return;
+		if (state.proposalsLoading || state.proposalBusy) return;
+		loadProposals(state.selected);
+	};
+
+	return { state, notify, attach, detach, start, setSession, refreshProjects, handleAction, syncSession, loadProposals, refreshProposalsIfIdle,
 		stopPlayback: () => player.stop() };
 }
 
@@ -933,7 +944,15 @@ export function ForgePanel(props) {
 		const node = nodeRef.current;
 		if (node) controller.attach(node);
 		controller.start();
-		return () => { controller.stopPlayback(); controller.detach(); };
+		// 页面重新可见/窗口聚焦 → 重拉提案队列（写作会话可能刚提交了新提案）
+		const reloadIfIdle = () => controller.refreshProposalsIfIdle();
+		document.addEventListener('visibilitychange', reloadIfIdle);
+		window.addEventListener('focus', reloadIfIdle);
+		return () => {
+			controller.stopPlayback(); controller.detach();
+			document.removeEventListener('visibilitychange', reloadIfIdle);
+			window.removeEventListener('focus', reloadIfIdle);
+		};
 	}, []);
 
 	const s = controller.state;

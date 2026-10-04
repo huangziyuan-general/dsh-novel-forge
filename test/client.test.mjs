@@ -246,6 +246,31 @@ test('★ 面板列表请求带会话：GET /projects?session=<id>', async () =>
     assert.equal(controller.state.projects.length, 1, '响应要落到 state.projects');
 });
 
+test('★ refreshProposalsIfIdle：详情态且空闲才重拉，其他态一律不动（焦点/可见性触发）', async () => {
+    const scripted = scriptedFetch([{ value: { book: '书', action: 'list', proposals: [{ id: 'P9-y', chapter: 9, status: 'pending' }] } }]);
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch: scripted.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+
+    // 列表态：不拉
+    controller.state.view = 'projects'; controller.state.selected = null;
+    controller.refreshProposalsIfIdle();
+    assert.equal(scripted.requests.length, 0, '列表态不触发提案请求');
+
+    // 详情态：拉一次
+    controller.state.view = 'detail'; controller.state.selected = '书';
+    controller.refreshProposalsIfIdle();
+    assert.equal(scripted.requests.length, 1, '详情态触发一次提案请求');
+
+    // 加载中：不重复拉（loadProposals 同步置 loading）
+    controller.refreshProposalsIfIdle();
+    assert.equal(scripted.requests.length, 1, 'proposalsLoading 期间不双拉');
+
+    await new Promise((r) => setTimeout(r, 0)); // fire-and-forget 取数链需要完整宏任务落地
+    assert.equal(controller.state.proposals.length, 1, '重拉结果落地');
+    assert.equal(controller.state.proposals[0].id, 'P9-y');
+});
+
 test('★ 提案队列加载失败必须可见：proposalsError 置位（不得伪装成「没有待批」），重试动作可恢复（2026-09-23 真机教训）', async () => {
     let proposalsOk = false;
     const fetch = (url) => {

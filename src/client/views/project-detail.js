@@ -202,7 +202,12 @@ export function ProjectDetailView({ state: s }) {
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm } },
 			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small } }, '📝 待批准提案'),
 			pendingProposals.length > 0 ? Chip({ tone: 'warn' }, String(pendingProposals.length)) : null,
-			h('span', { style: { flex: '1 1 auto' } }),
+h('span', { style: { flex: '1 1 auto' } }),
+			// 常驻刷新：队列只在开书/应用动作时加载——写作会话新建提案后，挂着面板的
+			// 用户需要明示入口（焦点自动重拉是兜底）；加载中/动作中不显示避免歧义
+			!s.proposalsLoading && !s.proposalBusy
+				? Btn({ variant: 'secondary', size: 'sm', action: 'reload-proposals', title: '重拉提案队列' }, '刷新')
+				: null,
 			s.proposalBusy ? h('span', { style: { ...hintStyle, fontSize: font.caption } }, '处理中…') : null,
 		),
 		s.proposalsLoading
