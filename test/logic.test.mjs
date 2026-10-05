@@ -26,6 +26,7 @@ import { bigrams } from '../lib/retrieval.js';
 import { validateContinuity, isDeathRecord, deathTimeline } from '../lib/continuity.js';
 import { contentGate, setupKeywords, factStatesAt } from '../lib/content-gate.js';
 import { validatePolishEdits } from '../lib/polish.js';
+import { hasControlChars, stripControlChars, controlCharPaths, numericNullFields, ghostProposals, healthIssues } from '../lib/health.js';
 
 // ── versioning ──────────────────────────────────────────────────────────────
 
@@ -1754,4 +1755,78 @@ test('judgeAgainstBaseline: 旧基线条目缺 sigma/tolerance → 输出补齐�
     assert.equal(judged.dims.syntax.tolerance, 35, '缺 tolerance 兜底 35');
     assert.equal(judged.dims.syntax.sigma, null, '缺 sigma 兜底 null');
     assert.equal(judged.dims.modifier.tolerance, 30, '给了 tolerance 照用');
+});
+
+// ── 存储健康度体检（lib/health.js，repair 与 /continuity 共用）──────────────
+
+test('health: 控制字符检测/归一化——\\r\\n 等被识别并剥掉，纯字符串不受影响', () => {
+    assert.equal(hasControlChars('正常/路径.md'), false);
+    assert.equal(hasControlChars('开局觉醒加特林\r\r/正文/第1章.md'), true);
+    assert.equal(hasControlChars(undefined), false, '非字符串一律 false，不抛');
+    assert.equal(hasControlChars(7), false);
+    assert.equal(stripControlChars('a\r\nb\tc'), 'abc');
+    assert.equal(stripControlChars(42), 42, '非字符串原样返回');
+});
+
+test('health: controlCharPaths 同时收 files[].file 与 rec.path，且不修改入参', () => {
+    const novel = {
+        chapters: {
+            1: { path: '书/正文/第1章.md', files: [{ file: '书/正文/第1章\r.md', version: 1 }] },
+            2: { path: '书/正文/第2章\n.md', files: [{ file: '书/正文/第2章.md', version: 1 }] },
+            3: { path: '书/正文/第3章.md', files: [{ file: '书/正文/第3章.md', version: 1 }] },
+        },
+    };
+    const hits = controlCharPaths(novel);
+    assert.deepEqual(hits, ['书/正文/第1章\r.md', '书/正文/第2章\n.md']);
+    assert.equal(novel.chapters['1'].files[0].file, '书/正文/第1章\r.md', '只报告不改（归一化是 repair 的职责）');
+});
+
+test('health: numericNullFields 只报本应为数值的 null——payoffChapter 等合法 null 不误报', () => {
+    const novel = {
+        chapters: {
+            1: { chars: null, latest: 1, files: [{ version: null }] },
+            2: { chars: 100, latest: null, files: [{ version: 2 }] },
+        },
+        foreshadows: [{ id: 'F1', payoffChapter: null }],   // 合法 null，不在检查范围
+    };
+    const baseline = { baseline: { dims: { syntax: { mu: null, sigma: 3 }, modifier: { mu: 5, sigma: null } } } };
+    assert.deepEqual(numericNullFields(novel, baseline), [
+        '第1章 chars=null（数值被写成 null）',
+        '第1章 files[].version=null',
+        '第2章 latest=null',
+        '文风基线 syntax.mu=null',
+        '文风基线 modifier.sigma=null',
+    ]);
+    assert.deepEqual(numericNullFields({ chapters: {} }, null), [], '无基线无章节 → 空清单');
+});
+
+test('health: ghostProposals 拆出「索引有文件无」与「文件有索引无」，missing 保索引序、orphan 排序', () => {
+    const { missing, orphan } = ghostProposals(['P3', 'P1', 'P2'], ['P2', 'P9', 'P0']);
+    assert.deepEqual(missing, ['P3', 'P1'], 'missing 按索引出现顺序（P3 在 P1 前）');
+    assert.deepEqual(orphan, ['P0', 'P9'], 'orphan 排序输出');
+    // 去重 + 非字符串过滤：坏数据不得让比较崩（避免 '[object Object]' 之类伪 id）
+    assert.deepEqual(ghostProposals(['P1', 'P1', null, 5], ['P1']), { missing: [], orphan: [] });
+    assert.deepEqual(ghostProposals(null, null), { missing: [], orphan: [] }, '缺参不抛');
+});
+
+test('health: healthIssues 产出 continuity 同款 issue（severity/code/where/message），可并入全书体检', () => {
+    const issues = healthIssues({
+        novel: { chapters: { 1: { path: '书/正文/第1章\r.md', files: [], chars: null } } },
+        styleBaseline: null,
+        proposalIds: ['P1', 'P2'],
+        proposalFilesOnDisk: ['P1', 'P9'],
+    });
+    const byCode = Object.fromEntries(issues.map((i) => [i.code, i]));
+    assert.equal(issues.length, 4, `应有 4 条（路径/数值/幽灵/冷归档），实际 ${issues.length}：${JSON.stringify(issues)}`);
+    for (const it of issues) {
+        assert.ok(['error', 'warning'].includes(it.severity), 'severity 必须是 error|warning（面板只认这两种）');
+        assert.equal(typeof it.where, 'string');
+        assert.equal(typeof it.message, 'string');
+    }
+    assert.equal(byCode['path-control-char'].severity, 'error');
+    assert.equal(byCode['state-numeric-null'].severity, 'warning');
+    assert.equal(byCode['proposal-file-missing'].severity, 'error');
+    assert.match(byCode['proposal-file-missing'].message, /P2/);
+    assert.equal(byCode['proposal-orphan-file'].severity, 'warning');
+    assert.match(byCode['proposal-orphan-file'].message, /P9/);
 });

@@ -379,6 +379,46 @@ test('W3 集成：projcache 的 Windows cwd 在 statSync 可达时进扫描根',
     }
 });
 
+test('★ 方向4 同名书冲突：多根下同名书只出一卡，且显式标注 duplicates（不再静默先到者胜）', async () => {
+    const { registerServerApi } = await import('../lib/server-api.js');
+    const dupRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-dup-'));
+    const name = '同名双份书';
+    // 根①（workspaceRoot=root）与根②（projcache 工作区）各放一份同名书，id 不同
+    fs.mkdirSync(path.join(root, name), { recursive: true });
+    fs.writeFileSync(path.join(root, name, 'novel.json'), JSON.stringify({ id: 'nb_cwd', title: name, stage: 'writing', sessions: [], chapters: {} }));
+    fs.mkdirSync(path.join(dupRoot, name), { recursive: true });
+    fs.writeFileSync(path.join(dupRoot, name, 'novel.json'), JSON.stringify({ id: 'nb_other', title: name, stage: 'writing', sessions: [], chapters: {} }));
+    fs.mkdirSync(path.join(fakeHome, '.dsh', 'storages'), { recursive: true });
+    fs.writeFileSync(path.join(fakeHome, '.dsh', 'storages', 'session_projcache.json'), JSON.stringify({
+        tables: { sessions: { dup: { identity: { cwd: dupRoot } } } },
+    }));
+    const registrations = [];
+    const dupCtx = {
+        fs: makeFakeBackend({ allowWriteRoots: [root], allowReadRoots: [root, dupRoot] }),
+        emit() {},
+        logger: { info() {} },
+        inject: (_deps, fn) => { fn(dupCtx); },
+        effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
+        webServer: { register: (def) => { registrations.push(def); return () => {}; } },
+    };
+    registerServerApi(dupCtx, { workspaceRoot: root, scanTopK: 8 }, { homedir: fakeHome });
+    const origHandler = handler;
+    handler = registrations[0].handler;
+    try {
+        const res = await drive({ method: 'GET', url: `${PREFIX}/projects` });
+        assert.equal(res.statusCode, 200);
+        const entries = res.json.value.filter((x) => x.name === name);
+        assert.equal(entries.length, 1, '同名书只出一张卡，不是两份');
+        assert.equal(entries[0].duplicates, 1, '★ 另一根下还有 1 份同名书，必须标注出来让用户知道看的是哪份');
+        assert.equal(entries[0].id, 'nb_cwd', '显示的是 cwd 根那份（cwd 优先，确定不再抖动）');
+    } finally {
+        handler = origHandler;
+        fs.rmSync(dupRoot, { recursive: true, force: true });
+        fs.rmSync(path.join(root, name), { recursive: true, force: true });
+        fs.rmSync(path.join(fakeHome, '.dsh'), { recursive: true, force: true });
+    }
+});
+
 test('W3b 集成：目录态 projcache（record.identity.cwd）进扫描根——真机 Windows 只剩这形态', async () => {
     // Windows 真机（dsh 0.1.5-rc.2）实测：单文件 session_projcache.json 不存在，
     // 数据在 session_projcache/sessions/*.json 的 record.identity.cwd 里。旧实现只读单文件
@@ -878,4 +918,52 @@ test('P2B 集成：resolver 给错根，但 fsio 凭 rootOverride 覆写成书�
 
     ctx.sandboxPolicy = orig;
     fs.rmSync(ghostRoot, { recursive: true, force: true });
+});
+
+// ── R7：/continuity 合并「存储健康度」体检（方向2 面板可见）──────────────
+//
+// repair 的体检项（控制字符路径 / NaN→null 残留 / 幽灵提案）此前只在工具输出里，
+// 面板看不见。现在 /continuity 端点用同一个 lib/health.js 归并进 issues —— 面板
+// 「🩺 全书体检」块零改动即展示。本用例锁「工具面与面板面同源、不漂移」。
+
+test('R7 /continuity 归并 health 体检：控制字符路径 / NaN→null 残留 / 幽灵提案 都在体检里', async () => {
+    const created = await createBook('体检书');
+    assert.equal(created.statusCode, 200);
+    const bookDir = path.join(root, '体检书');
+    // 正文真文件用干净名，索引里却塞了控制字符 —— 正是「Cannot present …\r…: file not found」的盘面
+    fs.mkdirSync(path.join(bookDir, '正文'), { recursive: true });
+    fs.writeFileSync(path.join(bookDir, '正文', '第1章-体检-v1.md'), '正文内容。');
+    fs.mkdirSync(path.join(bookDir, '.novel', 'proposals'), { recursive: true });
+    fs.writeFileSync(path.join(bookDir, '.novel', 'proposals', 'P1.json'), JSON.stringify({ id: 'P1', status: 'pending' }));
+    fs.writeFileSync(path.join(bookDir, '.novel', 'proposals', 'P9.json'), JSON.stringify({ id: 'P9', status: 'applied' }));
+    fs.writeFileSync(path.join(bookDir, 'novel.json'), JSON.stringify({
+        id: 'nb_r7', title: '体检书', stage: 'writing', sessions: [], cast: [],
+        chapters: {
+            1: {
+                title: '体检', latest: 1, versions: [1], chars: null, summary: '摘要',
+                path: '体检书/正文/第1章-体检\r-v1.md',
+                files: [{ file: '体检书/正文/第1章-体检\r-v1.md', version: 1 }],
+            },
+        },
+        // P1 有文件、P2 无文件（幽灵）；P9 有文件无索引（冷归档）
+        proposals: [{ id: 'P1', status: 'pending' }, { id: 'P2', status: 'pending' }],
+    }, null, 2));
+
+    const res = await drive({ method: 'GET', url: `${PREFIX}/projects/体检书/continuity` });
+    assert.equal(res.statusCode, 200, res.body);
+    const codes = res.json.value.issues.map((i) => i.code);
+    assert.ok(codes.includes('path-control-char'), `控制字符路径必须进体检，实际 codes=${codes.join(',')}`);
+    assert.ok(codes.includes('state-numeric-null'), `chars=null 必须进体检，实际 codes=${codes.join(',')}`);
+    assert.ok(codes.includes('proposal-file-missing'), '幽灵提案（P2 索引有文件无）必须进体检');
+    assert.ok(codes.includes('proposal-orphan-file'), '冷归档（P9 文件有索引无）必须进体检');
+    // 硬伤计数同步：ok=false，面板据 stats.errors 显示「N 处硬伤」
+    assert.equal(res.json.value.ok, false);
+    assert.ok(res.json.value.stats.errors >= 2, `路径/幽灵提案是硬伤，errors 应 ≥2，实际 ${res.json.value.stats.errors}`);
+    const rank = { error: 0, warning: 1, info: 2 };
+    for (let i = 1; i < res.json.value.issues.length; i += 1) {
+        assert.ok(rank[res.json.value.issues[i - 1].severity] <= rank[res.json.value.issues[i].severity],
+            '硬伤必须排在前（面板只列前 12 条，排序错会让硬伤被警告挤掉）');
+    }
+    assert.match(res.json.value.issues.find((i) => i.code === 'proposal-file-missing').message, /P2/);
+    assert.match(res.json.value.issues.find((i) => i.code === 'proposal-orphan-file').message, /P9/);
 });

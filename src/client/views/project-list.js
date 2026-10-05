@@ -133,6 +133,11 @@ export function ProjectListView({ state: s }) {
 											},
 										}, p.title || p.name),
 										p.style?.built ? Chip({ tone: 'ok' }, '有基线') : null,
+										// 方向4：同名书在多工作区根下有多份——面板显示的是 cwd 那份，别让用户
+										// 以为「只有一本」。点开/改名/删除都只作用于当前显示的这一份。
+										p.duplicates > 0
+											? Chip({ tone: 'warn' }, `同名书另有 ${p.duplicates} 份`)
+											: null,
 									),
 								),
 								h('div', { style: { display: 'flex', gap: space.xs, marginTop: space.xs } },

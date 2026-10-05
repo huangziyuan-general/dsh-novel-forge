@@ -1549,6 +1549,79 @@ test('★ 孤儿清单：数组给全量，next 只列前 20 且不教用户 rm'
     assert.match(repair.next, /回收站|不删除/, '给的是"确认可弃后交给回收站"这类指引');
 });
 
+// ── 演进四方向（0.14.0）：汇报硬约束 / 反复故障体检 / 提案寿命 / 同名书身份 ──
+
+test('★ 方向1 进度卡：novel_write_chapter 现算章数/账本/伏笔/待批提案（汇报走代码强制）', async () => {
+    const B = '进度卡书';
+    await tool('novel_project').execute({ action: 'init', book: B, title: B, genre: '悬疑' }, exec);
+    await tool('novel_outline').execute({ action: 'save_chapter', book: B, chapter: 1, outline: '第1章：义庄盘点。出场：林晚。' }, exec);
+    await tool('novel_outline').execute({ action: 'approve', book: B, chapter: 1 }, exec);
+    const w = await tool('novel_write_chapter').execute({
+        book: B, chapter: 1, title: '盘点', content: GOOD_CHAPTER, summary: '盘点义庄。', cast: '林晚',
+        facts_updates: '林晚|位置|城南义庄',
+    }, exec);
+    assert.equal(w.progress.chapters, 1, '总章数由工具现算');
+    assert.equal(w.progress.facts, 1, '账本条数现算');
+    assert.equal(w.progress.openForeshadows, 0);
+    assert.equal(w.progress.pendingProposals, 0, '无待批提案必须报 0（不得自抄历史里的旧数）');
+    assert.equal(w.progress.nextChapter, 2);
+    assert.equal(w.progress.nextOutlineReady, false, '第2章细纲未批准 → 未就绪');
+    const text = JSON.stringify(tool('novel_write_chapter').output.render({}, w));
+    assert.match(text, /进度卡/, '渲染必须把进度卡交给模型（据实转述）');
+    assert.match(text, /待批提案 0 条/);
+
+    // 提一条修订提案后，下一章的进度卡必须如实报 1（唯一真相来自 novel.json，不是历史消息）
+    await tool('novel_outline').execute({ action: 'save_chapter', book: B, chapter: 2, outline: '第2章：来客。出场：林晚。' }, exec);
+    await tool('novel_outline').execute({ action: 'approve', book: B, chapter: 2 }, exec);
+    await tool('novel_propose').execute({
+        action: 'propose', book: B, chapter: 1, content: `${GOOD_CHAPTER}\n\n她把那只鞋收进了棺材底下。`, reason: '试',
+    }, exec);
+    const w2 = await tool('novel_write_chapter').execute({
+        book: B, chapter: 2, title: '来客', content: CH2_CONTENT, summary: '来客。', cast: '林晚',
+    }, exec);
+    assert.equal(w2.progress.chapters, 2);
+    assert.equal(w2.progress.pendingProposals, 1, '★ 待批提案数必须现算（面板未应用前为 1）');
+});
+
+test('★ 方向2/3 repair 体检：控制字符路径归一化 + 幽灵提案 + 数值 null 残留', async () => {
+    const B = '体检书';
+    await tool('novel_project').execute({ action: 'init', book: B, title: B, genre: '悬疑' }, exec);
+    fs.mkdirSync(path.join(root, B, '正文'), { recursive: true });
+    const good = `${B}/正文/第1章-体检-v1.md`;
+    const body = '夜色压城，巡夜人把灯笼拧亮了一格。';
+    fs.writeFileSync(path.join(root, B, '正文', '第1章-体检-v1.md'), `${body}\n`);
+    const metaPath = path.join(root, B, 'novel.json');
+    const novel = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    // (a) 路径混入 \r —— 真机「Cannot present …\r\r…/正文/…: file not found」的根因
+    novel.chapters = { '1': {
+        title: '体检', versions: [1], files: [{ version: 1, file: `${good}\r` }],
+        latest: 1, path: `${good}\r`, chars: null, summary: '',
+    } };
+    // (b) 幽灵提案：索引有、文件无
+    novel.proposals = [{ id: 'P9-ghost', chapter: 9, status: 'pending', createdAt: 't' }];
+    fs.writeFileSync(metaPath, `${JSON.stringify(novel, null, 2)}\n`);
+    // (c) 冷归档提案：文件有、索引无
+    fs.mkdirSync(path.join(root, B, '.novel', 'proposals'), { recursive: true });
+    fs.writeFileSync(path.join(root, B, '.novel', 'proposals', 'P1-coldfile.json'), JSON.stringify({ id: 'P1-coldfile', chapter: 1, status: 'applied' }));
+    // (d) 数值错位残留（NaN→null）：文风基线数值为 null（repair 不自愈，必须报出来）
+    fs.writeFileSync(path.join(root, B, '.novel', 'style-baseline.json'), JSON.stringify({
+        book: B, chapters: 3, baseline: { dims: { dialogue: { mu: null, sigma: 1.2 } } }, builtAt: 't',
+    }));
+
+    const rep = await tool('novel_project').execute({ action: 'repair', book: B }, exec);
+    assert.equal(rep.missing.length, 0, '★ 含 \\r 的路径必须先归一化，好章不能被判「整章丢失」误删');
+    assert.equal(rep.pathIssues.length, 2, 'path 与 files[].file 两处都归一化并上报');
+    const fixed = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    assert.equal(fixed.chapters['1'].path, good, '落盘路径不得再含控制字符');
+    assert.equal(fixed.chapters['1'].chars, body.length, '对账按真实正文重算 chars');
+    assert.equal(typeof fixed.id, 'string', '★ 方向4：repair 给老书补稳定 id');
+    assert.ok(fixed.id.startsWith('nb_'));
+    assert.deepEqual(rep.missingProposals, ['P9-ghost'], '★ 索引有文件无的幽灵提案必须报出来');
+    assert.deepEqual(rep.orphanProposals, ['P1-coldfile'], '文件有索引无的冷归档提案也要报');
+    assert.ok(rep.stateIssues.some((x) => x.includes('文风基线') && x.includes('mu=null')),
+        '★ 数值字段落成 null 的残留必须报（value is not lossless JSON 那类事故的盘面痕迹）');
+});
+
 // ── novel skill 运行时注册（0.1.7 宿主无「插件 skills/ 目录自动发现」——文件惯例不存在）──
 
 test('★ parseSkillFrontmatter：取 name/description，正文原样保留', async () => {
