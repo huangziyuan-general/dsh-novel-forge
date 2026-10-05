@@ -14,7 +14,7 @@ import { scanSensitive, CENSOR_KEYS } from '../lib/censor.js';
 import { applyFactUpdates, queryFacts, factsDigest, assertLedgerChapter, factsAt, statusTimeline, foreshadowSetup, foreshadowPayoff, openForeshadows, foreshadowDigest, overdueForeshadows } from '../lib/ledger.js';
 import { computeAudit, auditVerdict } from '../lib/audit.js';
 import { matchWorldEntries, buildContextPack, renderPack } from '../lib/contextpack.js';
-import { pathsFor, defaultNovel, chapterRecord, normalizeWorldEntry, bookInSession, isUnclaimed, addBookSession } from '../lib/store.js';
+import { pathsFor, defaultNovel, chapterRecord, normalizeWorldEntry, bookInSession, isUnclaimed, addBookSession, nextWorldEntryId, sameEntryId } from '../lib/store.js';
 import { scanAiFlavor } from '../lib/noai.js';
 import { roughOutline, splitIntoChapters, isChapterHeading } from '../lib/import.js';
 import { diagnoseIntro, computeChapterDiagnosis } from '../lib/diagnose.js';
@@ -439,6 +439,27 @@ test('id: nextSuffixedId 取已用最大编号+1，删低 id 不复用后缀', (
     assert.equal(nextSuffixedId(['F1', 'F3', 'custom'], 'F'), 'F4', '手工 id 不干扰数字续号');
     assert.equal(nextSuffixedId([], 'W'), 'W1');
     assert.equal(nextSuffixedId(['W2'], 'W'), 'W3');
+});
+
+test('世界书 id 单一入口：nextWorldEntryId 对字符串 id 自增（不产生 NaN），sameEntryId 一律字符串比较', () => {
+    // 生成入口：工具生成的字符串 id（'W1'）在自增时不得退化成 NaN（旧 REST 用 Math.max 求值即 NaN → "id": null）
+    assert.equal(nextWorldEntryId([]), 'W1');
+    assert.equal(nextWorldEntryId([{ id: 'W1' }]), 'W2');
+    assert.equal(nextWorldEntryId([{ id: 'W1' }, { id: 'W3' }]), 'W4', '取已用最大编号 +1，不复用缺口');
+    assert.equal(nextWorldEntryId([{ id: 1 }, { id: 2 }]), 'W1', '历史数字 id 不参与 W 编号，仍给出 W1（不 NaN）');
+    assert.equal(nextWorldEntryId([{ id: 'W1' }, null, { id: 7 }]), 'W2', '混入 null/数字也不炸');
+
+    // 比较入口：字符串化比较，null/undefined 不匹配任何条目
+    assert.equal(sameEntryId('W1', 'W1'), true);
+    assert.equal(sameEntryId('W1', 'W2'), false);
+    assert.equal(sameEntryId(7, '7'), true, '数字与数字字符串视为同一条（历史数据兼容）');
+    assert.equal(sameEntryId(null, 'W1'), false);
+    assert.equal(sameEntryId(undefined, undefined), false, '空 id 不得互相匹配（find 语义）');
+
+    // normalizeWorldEntry 走同一入口：字符串 id 重复要报错（不能因类型差异漏判）
+    const list = [{ id: 'W1' }, { id: 'W2' }];
+    assert.throws(() => normalizeWorldEntry({ id: 'W1', keywords: ['x'], content: 'y' }, list), /重复/);
+    assert.equal(normalizeWorldEntry({ keywords: ['x'], content: 'y' }, list).id, 'W3');
 });
 
 test('ledger: 自动伏笔 id gap 安全——删低 id 后新增不复用、不覆盖现存', () => {
@@ -1212,6 +1233,37 @@ test('★ 字数标准：写前简报带「本章字数目标」段（会话写�
     // totalChars 统计在目标段加入之后 → 必须把它算进去
     const own = sec.content.length + sec.name.length + 4;
     assert.ok(b.totalChars >= own, 'totalChars 要计入字数目标段');
+});
+
+test('★ 提案队列实况：写前简报带「待批提案（唯一真相）」段，防交付里复述过期的「N 枚待审」', async () => {
+    const { buildBriefing } = await import('../lib/briefing.js');
+    const io = { readText: async () => '', readJson: async () => null, listDir: async () => [] };
+    const base = { minChapterChars: 2000, maxChapterChars: 4000, contextBudgetChars: 6000 };
+    const mk = (proposals) => buildBriefing({
+        config: base, io, book: '测试书',
+        novel: { title: '测试书', cast: [], proposals }, n: 1,
+    });
+
+    // 全部已应用（真机形态：P45/P48/P49 applied）→ 必须明说 0 条并禁止声称有待审
+    const done = await mk([
+        { id: 'P45-x', chapter: 45, status: 'applied' },
+        { id: 'P48-x', chapter: 48, status: 'applied' },
+        { id: 'P49-x', chapter: 49, status: 'applied' },
+    ]);
+    const sec0 = done.sections.find((s) => s.name === '待批提案（唯一真相）');
+    assert.ok(sec0, '简报必须有「待批提案」段');
+    assert.ok(sec0.content.includes('0 条'), '已应用干净时待批数必须是 0');
+    assert.ok(sec0.content.includes('不要'), '0 条时要带「不要声称有待审」的护栏');
+    assert.ok(!sec0.content.includes('P49-x'), '已应用的提案不该出现在待批清单里');
+
+    // 有 pending → 逐条列出 id 与章号，且数量一致
+    const pend = await mk([
+        { id: 'P60-a', chapter: 60, status: 'pending' },
+        { id: 'P61-b', chapter: 61, status: 'pending' },
+    ]);
+    const sec1 = pend.sections.find((s) => s.name === '待批提案（唯一真相）');
+    assert.ok(sec1.content.includes('2 条'), '待批数要与 pending 条数一致');
+    assert.ok(sec1.content.includes('P60-a') && sec1.content.includes('第60章'), '要列出待批提案 id 与章号');
 });
 
 test('★ createServerFsio 乐观并发原语：读时带回版本，写时按**读取那一刻**的版本下守卫 intent', async () => {

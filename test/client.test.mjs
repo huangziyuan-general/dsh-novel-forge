@@ -1261,6 +1261,22 @@ test('★ 世界书「编辑/启用停用」对工具生成的字符串 id（W1�
     const puts = dfr.requests.filter((r) => (r.init?.method ?? '') === 'PUT');
     assert.equal(puts.length, 1, '★ 字符串 id 条目必须真的发 PUT，不许静默 return');
     assert.ok(puts[0].url.includes('/W1'), '目标是该条目');
+
+    // 删除（两步确认）：三步都用视图真实渲染出的 data-id，别手编
+    const delBtn = collect(view, (e) => e.props?.['data-action'] === 'lore-delete')[0];
+    assert.equal(delBtn?.props?.['data-id'], 'W1');
+    await controller.handleAction('lore-delete', { dataset: { id: delBtn.props['data-id'] } });
+    assert.equal(controller.state.loreDeleteId, 'W1', '第一步只点亮确认行，不发 DELETE');
+    assert.equal(dfr.requests.filter((r) => (r.init?.method ?? '') === 'DELETE').length, 0);
+    // 确认态二次渲染：确认钮仍带同一条目 id（真机属性）
+    const confirmView = LorebookView({ state: { ...controller.state, loreForm: { mode: 'none' } } });
+    const confirmBtn = collect(confirmView, (e) => e.props?.['data-action'] === 'lore-delete')[0];
+    assert.equal(confirmBtn?.props?.['data-id'], 'W1', '确认态按钮 data-id 不漂移');
+    await controller.handleAction('lore-delete', { dataset: { id: confirmBtn.props['data-id'] } });
+    const dels = dfr.requests.filter((r) => (r.init?.method ?? '') === 'DELETE');
+    assert.equal(dels.length, 1, '★ 二次点击必须真的发 DELETE（字符串 id 也要能删）');
+    assert.ok(dels[0].url.includes('/W1'));
+    assert.equal(controller.state.loreDeleteId, null, '删除后清掉确认态');
 });
 
 test('★ 提案卡富化：👁 查看拉全文展开（再点收起）；提案号缺失必须报错——提案不再只有「第 N 章」', async () => {
