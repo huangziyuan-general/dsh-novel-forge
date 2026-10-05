@@ -1232,6 +1232,37 @@ test('★ 世界书删除必须两步确认：第一击只点亮确认行，确�
     assert.equal(controller.state.loreDeleteId, null, '删除后清掉确认态');
 });
 
+test('★ 世界书「编辑/启用停用」对工具生成的字符串 id（W1）必须生效——曾 Number 强转静默失效', async () => {
+    // 用视图真实渲染出的属性驱动控制器（不照实现手编 dataset）：条目 id 是字符串 'W1'
+    const { LorebookView } = boot().mod.exports.__internals;
+    const entries = [{ id: 'W1', name: '灯律', keywords: ['灯律'], content: '禁借火。', priority: 50, enabled: true, always_active: false, book_id: '书' }];
+    const view = LorebookView({ state: { selected: '书', loreEntries: entries, loreForm: { mode: 'none' }, loreDeleteId: null, loreBusy: false } });
+    const toggleBtn = collect(view, (e) => e.props?.['data-action'] === 'lore-toggle')[0];
+    const editBtn = collect(view, (e) => e.props?.['data-action'] === 'lore-edit')[0];
+    assert.equal(toggleBtn?.props?.['data-id'], 'W1', '视图把条目 id 原样写进 data-id');
+    assert.equal(editBtn?.props?.['data-id'], 'W1');
+
+    const dfr = gatedFetch([
+        { match: /\/worldbook\/[^/]+$/, value: entries },
+        { match: /\/worldbook\/[^/]+\/W1$/, value: { ...entries[0], enabled: false } },
+    ]);
+    const mod = loadClient(createDom(), BUNDLE, { fetch: dfr.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+    await controller.handleAction('goto-lorebook', { dataset: { id: '书' } });
+    assert.equal(controller.state.loreEntries.length, 1);
+
+    // 编辑：必须打开编辑表单（曾是 Number('W1')=NaN → find 落空 → 静默无反应）
+    await controller.handleAction('lore-edit', { dataset: { id: editBtn.props['data-id'] } });
+    assert.equal(controller.state.loreForm?.mode, 'edit', '★ 字符串 id 条目必须能打开编辑表单');
+    assert.equal(controller.state.loreForm?.id, 'W1');
+
+    // 启用/停用：必须真的发 PUT（曾静默 return，界面毫无变化）
+    await controller.handleAction('lore-toggle', { dataset: { id: toggleBtn.props['data-id'] } });
+    const puts = dfr.requests.filter((r) => (r.init?.method ?? '') === 'PUT');
+    assert.equal(puts.length, 1, '★ 字符串 id 条目必须真的发 PUT，不许静默 return');
+    assert.ok(puts[0].url.includes('/W1'), '目标是该条目');
+});
+
 test('★ 提案卡富化：👁 查看拉全文展开（再点收起）；提案号缺失必须报错——提案不再只有「第 N 章」', async () => {
     const { requests, controller } = bootBook();
     await controller.handleAction('open', { dataset: { id: '星海拾骨' } });

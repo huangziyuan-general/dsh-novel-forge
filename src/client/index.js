@@ -24,6 +24,7 @@ import { buildCss, ensureStyles, PANEL_ATTR, STYLE_ID } from './css.js';
 import { Feedback, Btn } from './ui.js';
 import { ProjectListView, projectMatches } from './views/project-list.js';
 import { ChapterListView } from './views/chapters.js';
+import { LorebookView } from './views/lorebook.js';
 
 // 版本号：必须与 package.json 的 version 一致。
 // build-client.mjs 会把它与 package.json 对账，不一致直接构建失败（防发行漂移）。
@@ -108,4 +109,6 @@ export const __internals = {
 	projectMatches, ProjectListView, Feedback,
 	// Btn（无障碍名是否真落到 props）与章节目录视图（图标按钮的 aria-label 端到端）
 	Btn, ChapterListView,
+	// 世界书视图：测试要拿它真实渲染出的 data-id（字符串 id 'W1'）驱动控制器
+	LorebookView,
 };
