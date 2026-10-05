@@ -21,6 +21,7 @@
 //     语义），防止 handler 双写响应在测试里静默通过。
 
 import { test, before, after } from 'node:test';
+import { normalizeWorldEntry } from '../lib/store.js';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
@@ -736,6 +737,29 @@ test('R5 createServerFsio：create 撞已存在响亮失败 / auto 走版本守�
 });
 
 // ── R6：worldbook / novel.json 的读-改-写原子性 ──────────────────────────
+
+test('R6a-2 已有「工具生成的 W 条目」的书上 REST POST：id 自增 W2，不得退化 NaN/null（原始真机触发场景）', async () => {
+    const created = await createBook('世界书工具种子');
+    assert.equal(created.statusCode, 200);
+
+    // 种子走工具层 normalizeWorldEntry 生成 id——种子就是工具路径的真实产物形状
+    // （novel_worldbook add 落盘的正是这个结构），不是测试手编的近似替身
+    const seeded = normalizeWorldEntry({ keywords: ['红泥'], content: '红泥遇水不散。' }, []);
+    assert.equal(seeded.id, 'W1', '工具层首条就是 W1（字符串）');
+    fs.mkdirSync(path.join(root, '世界书工具种子', '设定'), { recursive: true });
+    fs.writeFileSync(path.join(root, '世界书工具种子', '设定', '世界书.json'), JSON.stringify([seeded]));
+
+    // 面板「＋新建」打的就是这个 POST——旧实现 Math.max 对 ['W1'] 求值得 NaN → "id": null
+    const add = await drive({ method: 'POST', url: `${PREFIX}/worldbook/世界书工具种子`, body: { name: '铜铃', content: '三响定魂。', keywords: '铜铃' } });
+    assert.equal(add.statusCode, 200, add.body);
+    assert.equal(add.json.value.id, 'W2', '工具造的 W1 之后 REST POST 必须接 W2（不许 NaN/null）');
+
+    // 种子条目原样保留（只追加、不重写）
+    const after = JSON.parse(fs.readFileSync(path.join(root, '世界书工具种子', '设定', '世界书.json'), 'utf8'));
+    assert.equal(after.length, 2);
+    assert.equal(after[0].id, 'W1', '工具种子条目不被侵蚀');
+    assert.deepEqual(after[1].keywords, ['铜铃']);
+});
 
 test('R6a 世界书 CRUD 正常闭环，且落盘写全部经过版本守卫（基线来自读取时）', async () => {
     const created = await createBook('世界书守卫');
