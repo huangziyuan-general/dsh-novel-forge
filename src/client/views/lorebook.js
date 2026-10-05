@@ -6,6 +6,8 @@
 // 这一页的读者关心的是「**什么会被注入进上下文**」，所以每条都把它会在
 // 正文里被什么词触发、优先级多高、当前开没开，明明白白摆在卡面上。
 import { h } from '../react.js';
+// id 比较走单一入口（字符串化）——'W1' 绝不能 Number 强转
+import { sameEntryId } from '../../../lib/store.js';
 import { color, space, font, weight, hintStyle, inputStyle, stackStyle, card } from '../styles.js';
 import { Card, Btn, Chip, Empty, Mono, Feedback } from '../ui.js';
 
@@ -104,7 +106,7 @@ export function LorebookView({ state: s }) {
 						h('span', { style: { flex: '1 1 auto' } }),
 						// 删除两步确认：第一次点只点亮确认行（控制器 lore-delete 分支），
 						// 误触可取消——条目一删关键词/优先级/内容全没了，不能一键即走。
-						s.loreDeleteId === String(entry.id)
+						sameEntryId(s.loreDeleteId, entry.id)
 							? h('span', { style: { display: 'flex', alignItems: 'center', gap: space.xs } },
 								Btn({ size: 'sm', action: 'lore-delete-cancel' }, '取消删除'),
 								Btn({ size: 'sm', variant: 'danger', action: 'lore-delete', id: entry.id, disabled: s.loreBusy },

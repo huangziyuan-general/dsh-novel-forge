@@ -17,6 +17,9 @@
 import { h, Component, useState, useRef, useEffect } from './react.js';
 import { initialState, emptyLoreForm } from './state.js';
 import { apiFetch } from './api.js';
+// 世界书条目 id 的单一比较入口（lib/store.js 纯函数，可打进浏览器 bundle）：
+// 三处（工具/REST/面板）共用，禁止面板自行 Number(id) 强转。
+import { sameEntryId } from '../../lib/store.js';
 import { createTtsPlayer, resolveSynth } from './tts.js';
 import {
 	rootStyle, bodyStyle, headerStyle, brandMarkStyle, titleStyle, subtitleStyle,
@@ -615,7 +618,7 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 		const bookId = state.selected || 'default';
 		// 条目 id 是字符串（工具默认 W1/W2）——严禁 Number 强转（'W1'→NaN 永不命中，
 		// 「启用/停用」对工具生成的条目会静默失效：点了没反应）。一律按字符串比较。
-		const entry = state.loreEntries.find((e) => String(e.id) === String(entryId));
+		const entry = state.loreEntries.find((e) => sameEntryId(e.id, entryId));
 		if (!entry) { state.error = `找不到要切换的世界书条目（id "${entryId ?? ''}"）`; notify(); return; }
 		try {
 			await apiFetch(`/worldbook/${encodeURIComponent(bookId)}/${entryId}`, { method: 'PUT', body: JSON.stringify({ enabled: !entry.enabled }) });
@@ -781,7 +784,7 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 			case 'lore-edit': {
 				// id 字符串比较（理由同 toggleLoreEntry）：Number('W1')=NaN 会让「编辑」
 				// 对工具生成的条目静默失效（点了没反应）。
-				const entry = state.loreEntries.find((x) => String(x.id) === String(target.dataset.id));
+				const entry = state.loreEntries.find((x) => sameEntryId(x.id, target.dataset.id));
 				if (entry) {
 					state.loreForm = {
 						mode: 'edit', id: String(entry.id), name: entry.name, content: entry.content,
@@ -803,7 +806,7 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 			// 删除两步确认（与列表页删书同款）：第一次点只点亮确认行，再点才真删——
 			// 世界书条目删了就没了（关键词、优先级、内容全在一条里），误触不可逆。
 			case 'lore-delete':
-				if (state.loreDeleteId === target.dataset.id) {
+				if (sameEntryId(state.loreDeleteId, target.dataset.id)) {
 					state.loreDeleteId = null;
 					await deleteLoreEntry(target.dataset.id);
 				} else { state.loreDeleteId = target.dataset.id; notify(); }
