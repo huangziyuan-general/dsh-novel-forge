@@ -613,8 +613,10 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 
 	const toggleLoreEntry = async (entryId) => {
 		const bookId = state.selected || 'default';
-		const entry = state.loreEntries.find((e) => e.id === Number(entryId));
-		if (!entry) return;
+		// 条目 id 是字符串（工具默认 W1/W2）——严禁 Number 强转（'W1'→NaN 永不命中，
+		// 「启用/停用」对工具生成的条目会静默失效：点了没反应）。一律按字符串比较。
+		const entry = state.loreEntries.find((e) => String(e.id) === String(entryId));
+		if (!entry) { state.error = `找不到要切换的世界书条目（id "${entryId ?? ''}"）`; notify(); return; }
 		try {
 			await apiFetch(`/worldbook/${encodeURIComponent(bookId)}/${entryId}`, { method: 'PUT', body: JSON.stringify({ enabled: !entry.enabled }) });
 			await loadLoreEntries(bookId);
@@ -777,7 +779,9 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 			case 'discard-cancel': state.discardPending = null; notify(); break;
 			case 'lore-new': state.loreForm = { ...emptyLoreForm(), mode: 'new' }; state.loreDeleteId = null; notify(); break;
 			case 'lore-edit': {
-				const entry = state.loreEntries.find((x) => x.id === Number(target.dataset.id));
+				// id 字符串比较（理由同 toggleLoreEntry）：Number('W1')=NaN 会让「编辑」
+				// 对工具生成的条目静默失效（点了没反应）。
+				const entry = state.loreEntries.find((x) => String(x.id) === String(target.dataset.id));
 				if (entry) {
 					state.loreForm = {
 						mode: 'edit', id: String(entry.id), name: entry.name, content: entry.content,
@@ -785,6 +789,10 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 						enabled: entry.enabled, priority: String(entry.priority), bookId: entry.book_id || '',
 					};
 					state.loreDeleteId = null;
+					notify();
+				} else if (target.dataset.id !== undefined) {
+					// 拿不到条目不许静默：报出来，别让「点了没反应」再发生
+					state.error = `找不到要编辑的世界书条目（id "${target.dataset.id}"）`;
 					notify();
 				}
 				break;

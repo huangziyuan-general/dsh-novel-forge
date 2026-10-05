@@ -743,34 +743,38 @@ test('R6a 世界书 CRUD 正常闭环，且落盘写全部经过版本守卫（�
 
     const add1 = await drive({ method: 'POST', url: `${PREFIX}/worldbook/世界书守卫`, body: { name: '乱葬岗', content: '红泥遇水不散。', keywords: '红泥,乱葬岗' } });
     assert.equal(add1.statusCode, 200, add1.body);
-    assert.equal(add1.json.value.id, 1);
+    // id 与工具层同源（W 前缀字符串）。旧实现用 Math.max 对已有字符串 id（'W1'）求值得
+    // NaN → 落盘 "id": null（真机可复现）——这里同时锁「新建即 W1」与「自增不得变 NaN/null」。
+    assert.equal(add1.json.value.id, 'W1');
     const add2 = await drive({ method: 'POST', url: `${PREFIX}/worldbook/世界书守卫`, body: { name: '铜铃', content: '三响定魂。' } });
-    assert.equal(add2.json.value.id, 2, '自增 id 取现有最大 +1');
+    assert.equal(add2.statusCode, 200, add2.body);
+    assert.equal(add2.json.value.id, 'W2', '自增 id 取现有最大 +1（对字符串 id 不得变 NaN）');
 
-    const upd = await drive({ method: 'PUT', url: `${PREFIX}/worldbook/世界书守卫/1`, body: { content: '改注：红泥带石灰。' } });
+    const upd = await drive({ method: 'PUT', url: `${PREFIX}/worldbook/世界书守卫/W1`, body: { content: '改注：红泥带石灰。' } });
     assert.equal(upd.statusCode, 200, upd.body);
     assert.equal(upd.json.value.content, '改注：红泥带石灰。');
     assert.deepEqual(upd.json.value.keywords, ['红泥', '乱葬岗'], 'PUT 未给 keywords 保留原值');
 
     const list = await drive({ method: 'GET', url: `${PREFIX}/worldbook/世界书守卫` });
     assert.equal(list.json.value.length, 2);
-    const del = await drive({ method: 'DELETE', url: `${PREFIX}/worldbook/世界书守卫/2` });
+    const del = await drive({ method: 'DELETE', url: `${PREFIX}/worldbook/世界书守卫/W2` });
     assert.equal(del.statusCode, 200);
     const after = await drive({ method: 'GET', url: `${PREFIX}/worldbook/世界书守卫` });
-    assert.deepEqual(after.json.value.map((e) => e.id), [1]);
+    assert.deepEqual(after.json.value.map((e) => e.id), ['W1']);
 
     // 字符串 id 回归（真机 2026-09-21 实锤）：工具生成的条目 id 是 'W1' 这类字符串，
-    // 路由曾把它 Number 强转成 NaN → PUT/DELETE 永远 404，面板「启用/停用」「删除」全坏。
+    // 路由曾把它 Number 强转成 NaN → PUT/DELETE 永远 404。上面 add1/PUT 已覆盖字符串 id；
+    // 这里混入一条数字 id，锁「两种类型都能按 URL 段匹配、且存储 id 类型不被腐蚀」。
     fs.writeFileSync(path.join(root, '世界书守卫', '设定', '世界书.json'),
-        JSON.stringify([...after.json.value, { id: 'W1', name: '灯律', content: '禁借火。', keywords: ['灯律'], enabled: true }]), 'utf8');
-    const tog = await drive({ method: 'PUT', url: `${PREFIX}/worldbook/世界书守卫/W1`, body: { enabled: false } });
+        JSON.stringify([...after.json.value, { id: 7, name: '灯律', content: '禁借火。', keywords: ['灯律'], enabled: true }]), 'utf8');
+    const tog = await drive({ method: 'PUT', url: `${PREFIX}/worldbook/世界书守卫/7`, body: { enabled: false } });
     assert.equal(tog.statusCode, 200, tog.body);
-    assert.equal(tog.json.value.enabled, false, '字符串 id 的开关必须生效');
-    assert.equal(tog.json.value.id, 'W1', 'PUT 不得腐蚀原 id 类型');
-    const delW = await drive({ method: 'DELETE', url: `${PREFIX}/worldbook/世界书守卫/W1` });
+    assert.equal(tog.json.value.enabled, false, '数字 id 的开关必须生效');
+    assert.equal(tog.json.value.id, 7, 'PUT 不得腐蚀原 id 类型');
+    const delW = await drive({ method: 'DELETE', url: `${PREFIX}/worldbook/世界书守卫/7` });
     assert.equal(delW.statusCode, 200, delW.body);
     const listW = await drive({ method: 'GET', url: `${PREFIX}/worldbook/世界书守卫` });
-    assert.deepEqual(listW.json.value.map((e) => e.id), [1], '字符串 id 条目删除后只剩数字 id 条目');
+    assert.deepEqual(listW.json.value.map((e) => e.id), ['W1'], '数字 id 条目删除后只剩字符串 id 条目');
 
     // 现状钉死：世界书写入文件存在时，REST 一律 replaceIfVersion（0.13.6 H1 之后不再无条件覆盖）
     const wbWrites = backend.writes.filter((w) => w.abs.endsWith(path.join('世界书守卫', '设定', '世界书.json')));
