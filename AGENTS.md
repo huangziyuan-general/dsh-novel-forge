@@ -10,6 +10,8 @@ DSH（DeepSeek Harness）小说创作插件。设计主线：**代码强制 > �
 1. **所有书稿文件读写必须走 `ctx.fs`**（lib/fsio.js 收口），禁止 `node:fs` 直接碰书稿内容——
    当前获准的 node:fs 例外（新增例外必须先改本条再动代码）：
    - preset 部署（`~/.dsh/.agent-presets/`，工作区之外的基础设施）；
+   - `lib/skill-registration.js` 读**插件自己安装目录**的 `skills/novel/SKILL.md`
+     （与 preset 部署同类：工作区之外的基础设施，`import.meta.url` 定位安装目录）；
    - `lib/index-store.js` 的 **sqlite 派生索引**（`书/.novel/index.db` 二进制文件无法走文本
      fs 通道；落盘路径必须经 `io.abs()` → `ctx.fs.resolve` 取得，容器防护不绕过）。
      search 工具、`novel_project repair`、REST `/continuity` 三处共用此收口，禁止各自再拼路径；
