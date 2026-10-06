@@ -570,7 +570,13 @@ test('H0 载体自检：假 fs 按宿主语义拒绝；列表端点可跑通', a
 // ── R1：fence 全覆盖回归 ────────────────────────────────────────────────
 
 test('R1-00 路由清单与源码计数同步（清单烂掉即红）', () => {
-    const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'lib', 'server-api.js'), 'utf8');
+    // 路由按域拆到 lib/server-routes/*（server-http.js 提供共享基元），计数必须跨全部
+    // 路由文件聚合——只读 server-api.js（薄派发层）会扫出 0 条，护栏失效。
+    const libDir = path.join(import.meta.dirname, '..', 'lib');
+    const routeDir = path.join(libDir, 'server-routes');
+    const routeFiles = fs.readdirSync(routeDir).filter((f) => f.endsWith('.js')).map((f) => path.join(routeDir, f));
+    const src = [path.join(libDir, 'server-api.js'), ...routeFiles]
+        .map((f) => fs.readFileSync(f, 'utf8')).join('\n');
     const methodChecks = src.match(/req\.method === '/g) ?? [];
     const trustedChecks = src.match(/!trusted\(req\)/g) ?? [];
     assert.equal(methodChecks.length, ROUTES.length,

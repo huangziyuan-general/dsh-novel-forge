@@ -1,13 +1,14 @@
-// src/client/panel.js — 右侧栏「锻炉」面板：控制器（状态 + 业务动作）+ React 组件。
+// src/client/panel.js — 右侧栏「锻炉」面板：控制器装配（状态 + 共享 ctx + 子控制器接线）+ React 组件。
 //
 // 与 0.4.x 的差别：那时候是一个**自建 root 的全屏抽屉**（position:fixed + display 切换），
 // 0.5.0 起交给**右侧栏 slot 框架**渲染 —— 我们只返回 element，不再自己 createRoot，
 // 于是「点一次没反应 / 再点一次整屏空白」（createRoot 取错包）那类事故从根上消失。
 //
 // 分工：
-//   views/*        纯渲染，只读 state
-//   panel.js       状态流转、事件代理、REST 调用
-//   forge-tab.js   把它挂进右侧栏（三步契约）
+//   views/*              纯渲染，只读 state
+//   controllers/*        业务域（projects / chapters / proposals / lore / events），读写共享 ctx
+//   panel.js             装配：建 state/ctx/守卫、接线子控制器、返回对外 API
+//   forge-tab.js         把它挂进右侧栏（三步契约）
 //
 // 交互仍走 `data-action` + 容器级**原生** click 代理 —— 宿主环境里 React 合成事件
 // 不可靠（这也是全篇不写 onClick 的原因）；面板容器是 slot 框架画的 DOM，
@@ -15,11 +16,8 @@
 //
 // 「项目跟会话走」：所有列表/创建/认领请求都带 sessionId（来自 slot inject 工厂）。
 import { h, Component, useState, useRef, useEffect } from './react.js';
-import { initialState, emptyLoreForm } from './state.js';
+import { initialState } from './state.js';
 import { apiFetch } from './api.js';
-// 世界书条目 id 的单一比较入口（lib/store.js 纯函数，可打进浏览器 bundle）：
-// 三处（工具/REST/面板）共用，禁止面板自行 Number(id) 强转。
-import { sameEntryId } from '../../lib/store.js';
 import { createTtsPlayer, resolveSynth } from './tts.js';
 import {
 	rootStyle, bodyStyle, headerStyle, brandMarkStyle, titleStyle, subtitleStyle,
@@ -31,6 +29,12 @@ import { LorebookView } from './views/lorebook.js';
 import { SettingsView } from './views/settings.js';
 // 面板根属性 + 交互态样式表（:hover/:active 只能靠样式表，内联压不过它们）
 import { PANEL_ATTR, ensureStyles } from './css.js';
+// 业务域子控制器：各自只依赖共享 ctx（state/notify/seq/player + 晚绑定的跨域动作）
+import { createChaptersController } from './controllers/chapters.js';
+import { createLoreController } from './controllers/lore.js';
+import { createProposalsController } from './controllers/proposals.js';
+import { createProjectsController } from './controllers/projects.js';
+import { createEventsController } from './controllers/events.js';
 
 export { PANEL_ATTR };
 
@@ -58,6 +62,10 @@ const ForgeBoundary = typeof Component === 'function'
  *
  * 状态放闭包对象、改完手动 notify()（与 0.4.x 一致）：这样 headless 测试
  * 可以构造 controller 直接驱动断言，不必渲染 React。
+ *
+ * 域拆分见 controllers/*：本函数只负责建 state/守卫/播放器，把各域动作装进共享 ctx
+ * 再接线。跨域调用（如 openProject→loadProposals）走 ctx 晚绑定，因此各域之间没有
+ * 模块级循环 import。
  *
  * @param {object} [opts]
  * @param {string|null} [opts.sessionId] 当前会话（slot inject 工厂给的）
@@ -96,9 +104,8 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 	// openProject / loadChapter 都是「await 完成后写 state」：快速连续切换时，
 	// 慢响应后到会把新状态覆盖成旧内容（编辑器显示别章正文；此时点保存，
 	// saveChapter 会把 A 章内容 POST 到现行 chapterNo —— 写错章）。每次发起
-	// 切换自增序号，响应落地前比对，过期即弃。
-	let openSeq = 0;     // 项目级：openProject / 目录、要素、提案加载
-	let chapterSeq = 0;  // 章级：章正文（baseline/draft）写入
+	// 切换自增序号，响应落地前比对，过期即弃。放共享对象里由各域共写共读。
+	const seq = { open: 0, chapter: 0 };
 
 	// ── 章节听书（0.6.0）──
 	// 播放器先建好；onChange 把播放状态写进 state 再触发重渲染。
@@ -116,777 +123,21 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 		onChange: (playback) => { state.playback = playback; notify(); },
 	});
 
-	/** 拉小说基本要素（基本信息标签的展示数据）；缺失要素是常态，失败置空即可。 */
-	const loadElements = async (id) => {
-		const bookId = id || state.selected;
-		if (!bookId) return;
-		const seq = openSeq;
-		state.elementsLoading = true; notify();
-		try {
-			const elements = await apiFetch(`/projects/${encodeURIComponent(bookId)}/elements`);
-			if (seq !== openSeq) return; // 期间已切书：丢弃陈旧要素
-			state.elements = elements;
-		} catch { if (seq === openSeq) state.elements = null; }
-		finally { if (seq === openSeq) { state.elementsLoading = false; notify(); } }
-	};
-
-	/** 拉章节目录（听书列表 + 连播边界）。 */
-	const loadChapterList = async (id) => {
-		const bookId = id || state.selected;
-		if (!bookId) return;
-		const seq = openSeq;
-		state.chapterListLoading = true; notify();
-		try {
-			const list = await apiFetch(`/projects/${encodeURIComponent(bookId)}/chapters`);
-			if (seq !== openSeq) return; // 期间已切书：丢弃陈旧目录
-			state.chapterList = list;
-		} catch { if (seq === openSeq) state.chapterList = []; }
-		finally { if (seq === openSeq) { state.chapterListLoading = false; notify(); } }
-	};
-
-	// ── 业务动作 ──
-	const refreshProjects = async () => {
-		syncSession();
-		state.loading = true; state.error = ''; notify();
-		// 探针日志：用户卡「加载中」时，console 里有没有这行 + 后面有没有收尾，直接分诊
-		console.info('[novel-forge] GET /projects' + (state.sessionId ? `?session=${state.sessionId}` : '（无会话）'));
-		try {
-			// scope='all' 时不带 session 参数——多会话工作流里别的会话建的书也要能看（头部 chip 可切换）
-			const scopedUrl = state.sessionId && state.sessionScope !== 'all' ? withSession('/projects') : '/projects';
-			state.projects = await apiFetch(scopedUrl);
-			// 回落：会话过滤为空但全量有书 → 显示全部。宿主 slot inject 给的会话
-			// 标识与工具写入 novel.json 的 session id 可能不同源（0.13.2 真机实锤：
-			// session-watch 用 sessions 服务的 id 能探到书、slot 的 id 过滤却是空），
-			// 与其让用户对着「还没有项目」发呆，不如摊开全部书让他点开。
-			if (state.projects.length === 0 && state.sessionId) {
-				state.projects = await apiFetch('/projects');
-				state.sessionFallback = state.projects.length > 0;
-			} else {
-				state.sessionFallback = false;
-			}
-		} catch (error) {
-			state.error = String(error?.message ?? error);
-			console.warn('[novel-forge] 项目列表加载失败：', state.error);
-		} finally {
-			state.loading = false; notify();
-		}
-		// 未归属的旧书（0.5.0 之前建的没有会话戳）：单独拿一份，给个认领入口
-		try {
-			state.unclaimed = state.sessionId ? await apiFetch('/projects?scope=unclaimed') : [];
-		} catch { state.unclaimed = []; }
-		notify();
-	};
-
-	const claimProject = async (id) => {
-		if (!state.sessionId) { state.error = '未能识别当前会话，无法认领'; notify(); return; }
-		state.busy = true; notify();
-		try {
-			await apiFetch('/projects/claim', {
-				method: 'POST',
-				body: JSON.stringify({ session: state.sessionId, ids: id ? [id] : undefined }),
-			});
-			state.notice = id ? `已认领：${id}` : '已把未归属的书认领到本会话';
-			await refreshProjects();
-		} catch (error) { state.error = String(error?.message ?? error); }
-		finally { state.busy = false; notify(); }
-	};
-
-	/** 改名：只改 novel.json.title（目录名=id 是稳定身份，不挪），改完刷新列表并同步正在看的书。 */
-	const renameProject = async () => {
-		const r = state.rename;
-		if (!r || !r.id) return;
-		const title = String(r.value ?? '').trim();
-		if (!title) { state.error = '书名不能为空'; notify(); return; }
-		state.renaming = true; state.error = ''; notify();
-		try {
-			await apiFetch(`/projects/${encodeURIComponent(r.id)}/rename`, {
-				method: 'POST', body: JSON.stringify({ title }),
-			});
-			state.notice = `已改名：${title}`;
-			state.rename = null;
-			await refreshProjects();
-			if (state.selected === r.id) await openProject(r.id); // 详情页正开着这本书，回头刷标题
-		} catch (error) { state.error = String(error?.message ?? error); }
-		finally { state.renaming = false; notify(); }
-	};
-
-	/** 克隆为模板：老书连章节带资产复制成新书（REST 走 lib/clone.js 共享核心）。
-	 *  新书目录名必填（是稳定身份，同书名规则）；成功后刷新列表，新书带会话戳直接出现。 */
-	const cloneProject = async () => {
-		const c = state.clone;
-		if (!c || !c.id) return;
-		const newBook = String(c.value ?? '').trim();
-		if (!newBook) { state.error = '新书目名不能为空'; notify(); return; }
-		state.cloning = true; state.error = ''; notify();
-		try {
-			const v = await apiFetch(`/projects/${encodeURIComponent(c.id)}/clone`, {
-				method: 'POST', body: JSON.stringify({ newBook, title: newBook, session: state.sessionId ?? undefined }),
-			});
-			state.notice = v?.next ?? `已克隆：${c.id} → ${newBook}`;
-			state.clone = null;
-			await refreshProjects();
-		} catch (error) { state.error = String(error?.message ?? error); }
-		finally { state.cloning = false; notify(); }
-	};
-
-	/** 列表删除：软删（服务端清 novel.json 标记非书）。 */
-	const deleteListProject = async (id) => {
-		// 用独立的 listDeleting，而不是往 listDeleteId 里塞 'busy'：
-		// 确认行按 `listDeleteId === p.name` 渲染，哨兵会让整行在请求期间消失（闪烁），
-		// 并把视图里「删除中…」的禁用分支变成死代码。
-		if (state.listDeleting) return;
-		state.listDeleting = true; notify();
-		try {
-			await apiFetch(`/projects/${encodeURIComponent(id)}`, { method: 'DELETE' });
-			state.notice = `已删除：${id}`;
-			if (state.selected === id) { state.selected = null; state.detail = null; state.chapterList = []; }
-			state.listDeleteId = null;
-			await refreshProjects();
-		} catch (error) { state.error = String(error?.message ?? error); }
-		finally { state.listDeleting = false; notify(); }
-	};
-
-	const openProject = async (id) => {
-		const seq = ++openSeq;
-		// 换书必然换章内容：使所有在途 loadChapter 的响应作废（它们的 seq 已过期）
-		const cseq = ++chapterSeq;
-		state.selected = id; state.view = 'detail'; state.detail = null; state.chapterNo = 1;
-		state.draft = ''; state.error = ''; state.detailTab = 'info';
-		state.elements = null; state.discardPending = null; state.rename = null; state.listDeleteId = null; state.clone = null;
-		// deleteState 属于「上一本书的删除确认」：漏清会让 B 书的「删除」单击直接生效
-		//（两步确认跨书泄漏）。gateNotice/listDeleting 同理，都是上一本书的残留。
-		state.deleteState = null; state.gateNotice = null; state.listDeleting = false;
-		state.proposals = []; state.proposalsError = null; state.proposalBusy = null; state.proposalDetail = null; // 展开的全文也属于上一本书
-		// 换书：体检结果与批量结果都属于「上一本书」，必须清掉（否则会把 A 书的红字
-		// 挂在 B 书头上——这类串台比不显示更糟）
-		state.continuity = null; state.continuityError = ''; state.batchResult = null; state.revising = null;
-		state.diagnosis = null; state.diagnosisError = '';
-		state.reader = null; // 阅读器也属于「上一本书」
-		player.stop();
-		notify();
-		// detail 与 第 1 章正文并行拉；elements/chapters 由以下并行加载
-		try {
-			const [detail, text] = await Promise.all([
-				apiFetch(`/projects/${encodeURIComponent(id)}`),
-				apiFetch(`/projects/${encodeURIComponent(id)}/chapters/1`).catch(() => ''),
-			]);
-			if (seq !== openSeq) return; // 期间已打开别的书：整体作废
-			state.detail = detail;
-			// 章正文只在「期间没有更晚的 loadChapter 抢先」时才写——否则会把第 1 章
-			// 内容盖到用户刚点的章上（章号与正文错位）
-			if (cseq === chapterSeq) {
-				state.baseline = text ?? ''; state.draft = text ?? '';
-				state.draftVersion++; state.draftModified = false; state.undoStack = [];
-			}
-		} catch (error) { if (seq === openSeq) state.error = String(error?.message ?? error); }
-		if (seq !== openSeq) return; // 失败路径同样不再追拉旧书的目录/要素/提案
-		notify();
-		await Promise.all([loadChapterList(id), loadElements(id), loadProposals(id)]);
-	};
-
-	const loadChapter = async (no) => {
-		if (!state.selected) return;
-		const seq = ++chapterSeq;
-		state.chapterNo = no; state.discardPending = null; notify();
-		try {
-			const text = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/chapters/${no}`);
-			if (seq !== chapterSeq) return; // 期间已切章/切书：丢弃陈旧正文
-			state.baseline = text ?? ''; state.draft = text ?? ''; state.draftVersion++;
-			state.draftModified = false; state.undoStack = [];
-		} catch {
-			if (seq !== chapterSeq) return; // 陈旧失败的报错也不许覆盖新章
-			// 读不到正文不能静默——给一句人话，别让用户以为这一章是空的
-			state.baseline = ''; state.draft = ''; state.draftVersion++;
-			state.error = `读取第 ${no} 章失败（刷新或检查服务）`;
-			console.warn('[novel-forge] 读取章节失败', state.error);
-		}
-		notify();
-	};
-
-	// ── 提案队列（0.7.0 · 融合第一批 A1）──
-	//
-	// 模型只能 novel_propose（登记提案），**工具面没有 apply**（见 lib/proposals.js）。
-	// 「应用」这个批准动作因此只能从这里发起 —— 批准钥匙在用户手里是工具层保证的。
-
-	/** 拉提案队列（待批准的修订稿）。 */
-	const loadProposals = async (id) => {
-		const bookId = id || state.selected;
-		if (!bookId) return;
-		const seq = openSeq;
-		state.proposalsLoading = true; state.proposalsError = null; notify();
-		try {
-			const value = await apiFetch(`/projects/${encodeURIComponent(bookId)}/proposals`);
-			if (seq !== openSeq) return; // 期间已切书：丢弃陈旧提案队列
-			state.proposals = Array.isArray(value?.proposals) ? value.proposals : [];
-		} catch (error) {
-			// 加载失败 ≠ 没有待批：必须留痕可辨（2026-09-23 真机教训——失败曾被静默
-			// 渲染成「没有待批的修订」，用户盯着空列表误以为提案被吞了几天）
-			if (seq === openSeq) { state.proposals = []; state.proposalsError = String(error?.message ?? error); }
-		}
-		finally { if (seq === openSeq) { state.proposalsLoading = false; notify(); } }
-	};
-
-	/** 应用提案：生成新版本（旧版保留），审计 actor 记 'user'。 */
-	const applyProposalAction = async (proposalId) => {
-		if (!state.selected || !proposalId) return;
-		state.proposalBusy = proposalId; state.error = ''; notify();
-		try {
-			const value = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/proposals/${encodeURIComponent(proposalId)}/apply`, { method: 'POST' });
-			state.notice = `已应用提案 ${proposalId}：第${value.chapter}章 v${value.version}（旧版保留）`;
-			// 服务端已把这版正文过了一遍内容门禁（lib/proposals.js）：应用是用户主权不拦，
-			// 但「改出了死人复活/隐藏人物泄底」必须当场看见。gate 为 null = 门禁输入读不到，跳过。
-			const gate = value.gate;
-			state.gateNotice = gate && ((gate.blocking?.length ?? 0) > 0 || (gate.warnings?.length ?? 0) > 0)
-				? { chapter: value.chapter, version: value.version, ...gate }
-				: null;
-			if (state.gateNotice) {
-				const bits = [...(state.gateNotice.blocking ?? []), ...(state.gateNotice.warnings ?? [])];
-				state.notice += ` ⚠ 门禁提示 ${bits.length} 条（详见下方）`;
-			}
-			await Promise.all([loadProposals(state.selected), loadChapterList(state.selected)]);
-			// 正开着被改的那一章就刷新正文，让用户立刻看到新版本
-			if (state.chapterNo === value.chapter) await loadChapter(value.chapter);
-		} catch (error) { state.error = String(error?.message ?? error); }
-		finally { state.proposalBusy = null; notify(); }
-	};
-
-	/** 丢弃提案：正文不动，提案转 discarded（同样只从面板触发）。 */
-	const discardProposalAction = async (proposalId) => {
-		if (!state.selected || !proposalId) return;
-		state.proposalBusy = proposalId; state.error = ''; notify();
-		try {
-			await apiFetch(`/projects/${encodeURIComponent(state.selected)}/proposals/${encodeURIComponent(proposalId)}/discard`, { method: 'POST' });
-			state.notice = `已丢弃提案 ${proposalId}`;
-			if (state.proposalDetail?.id === proposalId) state.proposalDetail = null;
-			await loadProposals(state.selected);
-		} catch (error) { state.error = String(error?.message ?? error); }
-		finally { state.proposalBusy = null; notify(); }
-	};
-
-	/** 展开/收起单条提案全文——应用前让人看清楚到底改了什么。
-	 *  0.13.1 之前提案卡只有「第 N 章」三个字，看不出提案要干嘛（仙尊实测反馈）。 */
-	const toggleProposalDetail = async (proposalId) => {
-		if (!state.selected) return;
-		if (!proposalId) {
-			state.error = '拿不到提案号（查看钮上应有 data-id）';
-			notify();
-			return;
-		}
-		// 再点一次收起
-		if (state.proposalDetail?.id === proposalId && !state.proposalDetail.loading) {
-			state.proposalDetail = null; notify();
-			return;
-		}
-		state.proposalDetail = { id: proposalId, loading: true, data: null, error: '' }; notify();
-		try {
-			const value = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/proposals/${encodeURIComponent(proposalId)}`);
-			if (state.proposalDetail?.id !== proposalId) return; // 期间已点别条/换书：丢弃陈旧响应
-			state.proposalDetail = { id: proposalId, loading: false, data: value, error: '' };
-		} catch (error) {
-			if (state.proposalDetail?.id !== proposalId) return;
-			state.proposalDetail = { id: proposalId, loading: false, data: null, error: String(error?.message ?? error) };
-		} finally { notify(); }
-	};
-
-	// ── 旁路引擎动作（0.13.0 · 融合第五批 D1）────────────────────────────────
-	//
-	// 润色/校对走服务端的 /polish 与 /proofread：**引擎在服务端**（插件已拿到 ctx.llm），
-	// 所以面板侧不需要任何 key。两条纪律：
-	//   ① 产物是**提案** —— 面板只发起、只提示「去哪里批准」，绝不直接落正文；
-	//   ② 超时要放宽：服务端通道超时 180s 且默认重试 2 次，用通用的 12s 会把
-	//      正常的长任务一律误报成「请求超时」。
-	const REVISION_TIMEOUT_MS = 600_000;
-
-	/** 把服务端的语义化错误码翻成人话（503/409/422/499 各有各的处置办法）。 */
-	const revisionErrorText = (error, mode) => {
-		const raw = String(error?.message ?? error);
-		const what = mode === 'proofread' ? '校对' : '润色';
-		if (/ENGINE_UNAVAILABLE|引擎未就绪/.test(raw)) return `${what}需要模型服务：本进程还没有可用的模型路由，先在会话里正常对话一次再试。`;
-		if (/NO_ROUTE/.test(raw)) return `${what}通道没有可用路由：检查插件配置里的 engine.channels.${mode}。`;
-		if (/GUARD_BLOCKED|守卫/.test(raw)) return `${what}结果被守卫拦下（改动过大或与原文偏离太多），已丢弃——正文没动。`;
-		if (/ABORTED/.test(raw)) return `${what}被中止。`;
-		return raw;
-	};
-
-	const runRevision = async (mode) => {
-		if (!state.selected || state.revising) return;
-		state.revising = mode; state.error = ''; state.notice = ''; notify();
-		try {
-			const value = await apiFetch(
-				`/projects/${encodeURIComponent(state.selected)}/chapters/${state.chapterNo}/${mode}`,
-				{
-					method: 'POST', timeoutMs: REVISION_TIMEOUT_MS,
-					// session = 面板锚定的会话 id：服务端拿它找活的父 agent 起子代理
-					// （SubagentStartRequest.parent 必填，缺了宿主直接炸进程——0.13.2 事故）。
-					body: JSON.stringify({ session: state.sessionId ?? undefined }),
-				},
-			);
-			const what = mode === 'proofread' ? '校对' : '润色';
-			const delta = Number(value?.deltaChars ?? 0);
-			state.notice = `${what}完成：提案 ${value.proposalId}（${value.chars} 字，改动 ${delta >= 0 ? '+' : ''}${delta}）—— 到「待批准提案」里点应用才生效`;
-			await loadProposals(state.selected);
-		} catch (error) { state.error = revisionErrorText(error, mode); }
-		finally { state.revising = null; notify(); }
-	};
-
-	/** 全书体检：死人复活 / 账本矛盾 / 伏笔超期 / 章号断档 / 人物卡缺失。零 token。 */
-	const loadContinuity = async () => {
-		if (!state.selected) return;
-		const seq = openSeq;
-		state.continuityLoading = true; state.continuityError = ''; notify();
-		try {
-			const result = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/continuity`);
-			if (seq !== openSeq) return; // 期间已切书：丢弃陈旧体检（M12）
-			state.continuity = result;
-		} catch (error) {
-			if (seq !== openSeq) return;
-			state.continuity = null;
-			state.continuityError = String(error?.message ?? error);
-		} finally { if (seq === openSeq) { state.continuityLoading = false; notify(); } }
-	};
-
-	/** 黄金三章诊断：钩子/开场/冲突/灌输四维数字。与 novel_diagnose 同一纯函数，零 token。 */
-	const loadDiagnosis = async () => {
-		if (!state.selected || state.diagnosisLoading) return;
-		const seq = openSeq;
-		state.diagnosisLoading = true; state.diagnosisError = ''; notify();
-		try {
-			const result = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/diagnose`);
-			if (seq !== openSeq) return; // 期间已切书：丢弃陈旧诊断（M12）
-			state.diagnosis = result;
-		} catch (error) {
-			if (seq !== openSeq) return;
-			state.diagnosis = null;
-			state.diagnosisError = String(error?.message ?? error);
-		} finally { if (seq === openSeq) { state.diagnosisLoading = false; notify(); } }
-	};
-
-	// ── 批量起草（D2）──
-	//
-	// 服务端是**并发生成 + 串行提交**：每章照样过机审/内容门禁/账本/契约指标，
-	// 单章被拦不影响其余章。所以失败不是异常，是结果的一部分——摊给用户看，不吞。
-	/** 单章写章（0.13.2）：复用批量起草端点——from=当前编辑章、count=1。
-	 *  与会话里 novel_write_chapter 同一条 commitChapter 门禁链，直接落盘（版本化，旧稿保留）。
-	 *  被拦（细纲缺失/机审不过/熔断）不算异常——结果摊在批量结果区看。 */
-	const writeSingleChapter = async () => {
-		if (!state.selected || state.batchBusy) return;
-		const no = state.chapterNo || 1;
-		// 借用批量表单的值通道（表单会同步显示为单章，所见即所跑）
-		state.batchFrom = String(no);
-		state.batchCount = '1';
-		state.batchConcurrency = '1';
-		await runBatch();
-	};
-
-	const runBatch = async () => {
-		if (!state.selected || state.batchBusy) return;
-		state.batchBusy = true; state.error = ''; state.notice = ''; state.batchResult = null; notify();
-		try {
-			state.batchResult = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/draft-batch`, {
-				method: 'POST',
-				timeoutMs: 900_000,
-				body: JSON.stringify({
-					from: Number(state.batchFrom) || 1,
-					count: Number(state.batchCount) || 1,
-					concurrency: Number(state.batchConcurrency) || 1,
-					force: state.batchForce === true,
-					session: state.sessionId ?? undefined,
-				}),
-			});
-			const st = state.batchResult?.stats ?? {};
-			state.notice = `批量起草完成：落盘 ${st.committed ?? 0} 章，被拦 ${st.failed ?? 0} 章`;
-			// 新章会改变账本与提案队列；同时体检结果作废（它按章算的）
-			await Promise.all([loadChapterList(state.selected), loadProposals(state.selected)]);
-			state.continuity = null;
-			state.diagnosis = null; // 批量可能覆盖前三章（force 时），诊断同样作废
-			// M15 修复：正被编辑的章若在本次批量范围内（且真的落了盘），重拉正文——
-			// 否则编辑器里还是旧稿，用户一点「保存」就把旧内容盖回成新版本
-			const batchFrom = Number(state.batchFrom) || 1;
-			const batchCount = Number(state.batchCount) || 1;
-			if ((st.committed ?? 0) > 0
-				&& state.selected !== null
-				&& state.chapterNo >= batchFrom && state.chapterNo < batchFrom + batchCount) {
-				await loadChapter(state.chapterNo);
-				state.notice += `；第 ${state.chapterNo} 章已在编辑器里重载为最新版本`;
-			}
-		} catch (error) {
-			const raw = String(error?.message ?? error);
-			state.error = /ENGINE_UNAVAILABLE|引擎未就绪/.test(raw)
-				? '批量起草需要模型服务：本进程还没有可用的模型路由。'
-				: raw;
-		} finally { state.batchBusy = false; notify(); }
-	};
-
-	const createProject = async () => {
-		if (!state.title.trim()) { state.error = '请先输入书名'; notify(); return; }
-		state.creating = true; state.error = ''; notify();
-		try {
-			await apiFetch('/projects', {
-				method: 'POST',
-				// 创建即打会话戳：面板按会话过滤时它才会出现在本会话里
-				// 题材：面板没有题材输入框，留空就不传（服务端默认「未分类」），
-				// 别再学早期把 'fantasy' 写死在默认值里（书卡上全是英文 chip 的来历）。
-				body: JSON.stringify({ title: state.title.trim(), genre: state.genre.trim() || undefined, session: state.sessionId ?? undefined }),
-			});
-			state.title = ''; state.titleReset = (state.titleReset ?? 0) + 1; await refreshProjects();
-		} catch (error) { state.error = String(error?.message ?? error); }
-		finally { state.creating = false; notify(); }
-	};
-
-	const saveChapter = async () => {
-		if (!state.selected) return;
-		// M13 修复：await 期间用户可能已切书/切章/继续打字——保存完成后先核对
-		// 「还是这本书的这一章、编辑器正文也还是存出去的那份」，再标记干净
-		const bookId = state.selected;
-		const no = state.chapterNo;
-		const snapshot = state.draft;
-		try {
-			await apiFetch(`/projects/${encodeURIComponent(bookId)}/chapters/${no}`, {
-				method: 'POST', body: JSON.stringify({ title: `第 ${no} 章`, text: snapshot }),
-			});
-			if (state.selected === bookId && state.chapterNo === no && state.draft === snapshot) {
-				state.notice = `已保存：第 ${no} 章`;
-				state.baseline = snapshot; state.draftModified = false; state.undoStack = [];
-			} else {
-				state.notice = `已保存：第 ${no} 章——但编辑器已切走或继续改动，当前改动仍未保存`;
-			}
-		} catch (error) { state.error = String(error?.message ?? error); }
-		notify();
-	};
-
-	const exportProject = async () => {
-		if (!state.selected) return;
-		state.exporting = true; notify();
-		try {
-			const result = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/export`, { method: 'POST', body: JSON.stringify({ format: 'txt' }) });
-			const blob = new Blob(['\uFEFF' + result.content], { type: 'text/plain;charset=utf-8' });
-			const url = URL.createObjectURL(blob);
-			const a = document.createElement('a');
-			a.href = url; a.download = result.fileName;
-			document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-			state.notice = `已导出：${result.fileName}`;
-		} catch (error) { state.error = String(error?.message ?? error); }
-		finally { state.exporting = false; notify(); }
-	};
-
-	const deleteProject = async () => {
-		if (!state.selected) return;
-		state.deleteState = 'busy'; notify();
-		try {
-			await apiFetch(`/projects/${encodeURIComponent(state.selected)}`, { method: 'DELETE' });
-			player.stop();
-			state.selected = null; state.view = 'projects'; state.detail = null; state.chapterList = [];
-			await refreshProjects();
-		} catch (error) {
-			state.error = String(error?.message ?? error);
-			state.deleteState = 'confirm'; // L17：失败退回确认态，不在按钮上闪一下又消失
-		}
-		notify();
-	};
-
-	const loadLoreEntries = async (bookId) => {
-		try { state.loreEntries = await apiFetch(`/worldbook/${encodeURIComponent(bookId)}`); }
-		catch { state.loreEntries = []; }
-		notify();
-	};
-
-	const saveLoreEntry = async () => {
-		const f = state.loreForm;
-		if (!f.name.trim()) { state.error = '条目名称不能为空'; notify(); return; }
-		state.loreBusy = true; notify();
-		try {
-			const bookId = state.selected || f.bookId || 'default';
-			const body = JSON.stringify({
-				name: f.name, content: f.content, keywords: f.keywords,
-				always_active: f.alwaysActive, enabled: f.enabled, priority: Number(f.priority),
-			});
-			if (f.mode === 'new') await apiFetch(`/worldbook/${encodeURIComponent(bookId)}`, { method: 'POST', body });
-			else if (f.mode === 'edit') await apiFetch(`/worldbook/${encodeURIComponent(bookId)}/${f.id}`, { method: 'PUT', body });
-			state.loreForm = emptyLoreForm();
-			await loadLoreEntries(bookId);
-		} catch (error) { state.error = String(error?.message ?? error); }
-		finally { state.loreBusy = false; notify(); }
-	};
-
-	const deleteLoreEntry = async (entryId) => {
-		const bookId = state.selected || 'default';
-		try { await apiFetch(`/worldbook/${encodeURIComponent(bookId)}/${entryId}`, { method: 'DELETE' }); await loadLoreEntries(bookId); }
-		catch (error) { state.error = String(error?.message ?? error); notify(); }
-	};
-
-	const toggleLoreEntry = async (entryId) => {
-		const bookId = state.selected || 'default';
-		// 条目 id 是字符串（工具默认 W1/W2）——严禁 Number 强转（'W1'→NaN 永不命中，
-		// 「启用/停用」对工具生成的条目会静默失效：点了没反应）。一律按字符串比较。
-		const entry = state.loreEntries.find((e) => sameEntryId(e.id, entryId));
-		if (!entry) { state.error = `找不到要切换的世界书条目（id "${entryId ?? ''}"）`; notify(); return; }
-		try {
-			await apiFetch(`/worldbook/${encodeURIComponent(bookId)}/${entryId}`, { method: 'PUT', body: JSON.stringify({ enabled: !entry.enabled }) });
-			await loadLoreEntries(bookId);
-		} catch (error) { state.error = String(error?.message ?? error); notify(); }
-	};
-
-	/** 需要模型参与的动作：面板只给引导，真动作在会话里。 */
-	const needsModel = (msg) => { state.error = msg; notify(); };
-
-	/** 有未保存改动时，把「离开意图」挂起，由视图里的 丢弃改动/取消 二选一。 */
-	const intentLeave = (pending) => {
-		if (state.draftModified) { state.discardPending = pending; notify(); return false; }
-		return true;
-	};
-
-	/** 真正返回项目列表。 */
-	const goBack = async () => {
-		player.stop(); state.view = 'projects'; state.selected = null; state.detail = null;
-		state.discardPending = null; state.draftModified = false; state.rename = null; state.listDeleteId = null; state.clone = null;
-		state.deleteState = null; state.gateNotice = null;
-		await refreshProjects();
-	};
-
-	const handleAction = async (action, target) => {
-		syncSession();   // 所有带会话戳的动作（润色/校对/写章/认领/创建）先对齐真会话 id
-		state.error = ''; state.notice = '';
-		switch (action) {
-			case 'reload-proposals': state.proposalsError = null; await loadProposals(state.selected); break;
-			case 'refresh-projects': await refreshProjects(); break;
-			case 'toggle-scope':
-				if (!state.sessionId) break; // 无会话标识时本来就是全量，无可切换
-				state.sessionScope = state.sessionScope === 'all' ? 'session' : 'all';
-				await refreshProjects();
-				break;
-			case 'create': await createProject(); break;
-			case 'open': await openProject(target.dataset.id); break;
-			case 'rename-open': {
-				const id = target.dataset.id;
-				const p = state.projects.find((x) => x.name === id) || state.unclaimed.find((x) => x.name === id);
-				state.rename = { id, value: p?.title || p?.name || '' };
-				state.listDeleteId = null; notify(); break;
-			}
-			case 'rename-confirm': await renameProject(); break;
-			case 'rename-cancel': state.rename = null; notify(); break;
-			// 克隆为模板：与改名同款内联表单（clone = {id, value}）。互斥——开一个关另一个
-			case 'clone-open': {
-				const id = target.dataset.id;
-				if (!id) { state.error = '拿不到要克隆的书（按钮上应有 data-id）'; notify(); break; }
-				state.clone = { id, value: '' };
-				state.rename = null; state.listDeleteId = null; notify(); break;
-			}
-			case 'clone-confirm': await cloneProject(); break;
-			case 'clone-cancel': state.clone = null; notify(); break;
-			case 'list-delete':
-				if (state.listDeleteId === target.dataset.id) await deleteListProject(target.dataset.id);
-				else { state.listDeleteId = target.dataset.id; state.rename = null; notify(); }
-				break;
-			case 'list-delete-cancel': state.listDeleteId = null; notify(); break;
-			case 'back':
-				if (!intentLeave({ kind: 'back' })) break;
-				await goBack(); break;
-			case 'claim': await claimProject(target.dataset.id || null); break;
-			// 详情页两个标签：基本信息 / 章节听书
-			case 'detail-tab': {
-				const tab = target.dataset.tab === 'chapters' ? 'chapters' : 'info';
-				if (state.detailTab !== tab) state.detailTab = tab;
-				if (tab === 'chapters') await loadChapterList();
-				notify(); break;
-			}
-			case 'play-from': {
-				state.detailTab = 'chapters';
-				// 章号走 data-id（视图是 `Btn({ id: c.no })`，Btn 把 id 写成 data-id）。
-				// ⚠️ 曾经这里读的是 `dataset.no` —— 而全项目**没有任何地方写过 data-no**，
-				// 于是 Number(undefined) = NaN 一路传进播放器：synth.cancel → status=playing
-				// → loadChapter(NaN) 取不到正文 → nextChapterAfter(NaN) 也找不到下一章 → finish 回 idle。
-				// 前后两次 emit 把状态**还原成原样**，界面于是"点了毫无反应"——
-				// 整列「▶」和顶部「从第 N 章开始听」全是死的（0.13.0 真实故障）。
-				const no = Number(target.dataset.id);
-				if (!Number.isFinite(no) || no <= 0) {
-					state.error = `拿不到要播的章号（播放钮上应有 data-id，实际是 "${target.dataset.id ?? ''}"）`;
-					notify();
-					break;
-				}
-				try { await player.playFrom(no); }
-				catch (error) { state.error = String(error?.message ?? error); notify(); }
-				break;
-			}
-			case 'read-chapter': {
-				// 阅读器：取单章正文展开在目录上方。与播放互相独立（可以边听边看）。
-				// 章号同样只认 data-id —— 理由见 play-from 里的注释（字段名对不上＝点了没反应）。
-				state.detailTab = 'chapters';
-				const no = Number(target.dataset.id);
-				if (!Number.isFinite(no) || no <= 0) {
-					state.error = `拿不到要读的章号（阅读钮上应有 data-id，实际是 "${target.dataset.id ?? ''}"）`;
-					notify();
-					break;
-				}
-				const meta = state.chapterList.find((c) => c.no === no);
-				state.reader = { no, title: meta?.title ?? `第 ${no} 章`, text: '', loading: true };
-				notify();
-				try {
-					const text = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/chapters/${no}`);
-					// 请求期间用户可能已点了另一章的 📖 —— 只更新仍是同一章的 reader
-					if (state.reader?.no === no) {
-						state.reader = { no, title: meta?.title ?? `第 ${no} 章`, text: String(text ?? ''), loading: false };
-					}
-				} catch (error) {
-					if (state.reader?.no === no) state.reader = null;
-					state.error = `读不出第 ${no} 章正文：${String(error?.message ?? error)}`;
-				}
-				notify();
-				break;
-			}
-			case 'close-reader': state.reader = null; notify(); break;
-			case 'playback-pause': player.pause(); notify(); break;
-			case 'playback-resume': player.resume(); notify(); break;
-			case 'playback-stop': player.stop(); notify(); break;
-			case 'goto-lorebook':
-				state.view = 'lorebook'; state.selected = target.dataset.id || state.selected;
-				await loadLoreEntries(state.selected || 'default'); break;
-			case 'back-from-lore':
-			case 'back-from-settings': state.view = state.selected ? 'detail' : 'projects'; notify(); break;
-			case 'goto-settings': state.view = 'settings'; notify(); break;
-			case 'write': await writeSingleChapter(); break;
-			case 'polish': await runRevision('polish'); break;
-			case 'proofread': await runRevision('proofread'); break;
-			case 'continuity': await loadContinuity(); break;
-			case 'draft-batch': await runBatch(); break;
-			case 'diagnose': await loadDiagnosis(); break;
-			case 'import-demo': case 'import-file': needsModel('请在会话中调用 novel_import 导入'); break;
-			case 'save': await saveChapter(); break;
-			// M14 修复：刷新会重拉当前章、覆盖编辑器——有未保存改动时走同一套
-			// 「确认丢弃」流程（与切章一致），不再静默把草稿冲掉
-			case 'refresh':
-				if (state.selected && state.chapterNo) {
-					if (state.draftModified) { state.discardPending = { kind: 'chapter', no: state.chapterNo }; notify(); }
-					else await loadChapter(state.chapterNo);
-				}
-				break;
-			// 提案：应用 / 丢弃都是**用户主权动作**（工具面刻意不提供，见 lib/proposals.js）
-			case 'proposal-view': await toggleProposalDetail(target.dataset.id); break;
-			case 'proposal-apply': await applyProposalAction(target.dataset.id); break;
-			case 'proposal-discard': await discardProposalAction(target.dataset.id); break;
-			case 'export': await exportProject(); break;
-			case 'delete':
-				if (state.deleteState === 'busy') break; // L17：删除进行中，重复点无效
-				if (state.deleteState === 'confirm') await deleteProject();
-				else { state.deleteState = 'confirm'; notify(); }
-				break;
-			case 'delete-cancel': state.deleteState = null; notify(); break;
-			// 未保存改动：确认丢弃后才真正离开 / 换章；取消则留在原地
-			case 'discard-confirm': {
-				const pending = state.discardPending;
-				state.discardPending = null; state.draftModified = false;
-				if (pending?.kind === 'back') await goBack();
-				else if (pending?.kind === 'chapter') await loadChapter(pending.no);
-				else notify();
-				break;
-			}
-			case 'discard-cancel': state.discardPending = null; notify(); break;
-			case 'lore-new': state.loreForm = { ...emptyLoreForm(), mode: 'new' }; state.loreDeleteId = null; notify(); break;
-			case 'lore-edit': {
-				// id 字符串比较（理由同 toggleLoreEntry）：Number('W1')=NaN 会让「编辑」
-				// 对工具生成的条目静默失效（点了没反应）。
-				const entry = state.loreEntries.find((x) => sameEntryId(x.id, target.dataset.id));
-				if (entry) {
-					state.loreForm = {
-						mode: 'edit', id: String(entry.id), name: entry.name, content: entry.content,
-						keywords: (entry.keywords || []).join(','), alwaysActive: entry.always_active,
-						enabled: entry.enabled, priority: String(entry.priority), bookId: entry.book_id || '',
-					};
-					state.loreDeleteId = null;
-					notify();
-				} else if (target.dataset.id !== undefined) {
-					// 拿不到条目不许静默：报出来，别让「点了没反应」再发生
-					state.error = `找不到要编辑的世界书条目（id "${target.dataset.id}"）`;
-					notify();
-				}
-				break;
-			}
-			case 'lore-save': await saveLoreEntry(); break;
-			case 'lore-cancel': state.loreForm = emptyLoreForm(); notify(); break;
-			case 'lore-toggle': await toggleLoreEntry(target.dataset.id); break;
-			// 删除两步确认（与列表页删书同款）：第一次点只点亮确认行，再点才真删——
-			// 世界书条目删了就没了（关键词、优先级、内容全在一条里），误触不可逆。
-			case 'lore-delete':
-				if (sameEntryId(state.loreDeleteId, target.dataset.id)) {
-					state.loreDeleteId = null;
-					await deleteLoreEntry(target.dataset.id);
-				} else { state.loreDeleteId = target.dataset.id; notify(); }
-				break;
-			case 'lore-delete-cancel': state.loreDeleteId = null; notify(); break;
-			default:
-				// 视图发了控制器不认的动作名 = 「按钮点了没反应」的静默病根（AGENTS.md 第三次学费）。
-				// 本项目不许可静默失败：报错可见 + 控制台留痕，client.test.mjs 的「动作契约对账」
-				// 用例据此把「视图发出但控制器没有对应 case」判成红灯。
-				state.error = `未处理的动作：${action}（界面按钮与控制器动作名不符，请报告）`;
-				console.warn('[novel-forge] unknown action:', action);
-				notify();
-				break;
-		}
-	};
-
-	// ── 原生事件代理（React 合成事件在宿主环境失效，故走容器级监听） ──
-	const onClick = (e) => {
-		const actionEl = e.target?.closest?.('[data-action]');
-		if (actionEl) { e.preventDefault(); e.stopPropagation(); void handleAction(actionEl.dataset.action, actionEl); }
-	};
-	const onInput = (e) => {
-		const field = e.target?.dataset?.field;
-		// 书名输入是非受控的（defaultValue）：每键只记值不重渲染——
-		// 「创建中…」那一下的 notify 由 create 自己负责（每键全列表重渲染白烧）。
-		if (field === 'title') { state.title = e.target.value; }
-		else if (field === 'project-filter') { state.filter = e.target.value; notify(); }
-		else if (field === 'draft') { state.draft = e.target.value; state.draftModified = e.target.value !== state.baseline; }
-		else if (field === 'rename-value') { if (state.rename) state.rename.value = e.target.value; }
-		else if (field === 'clone-value') { if (state.clone) state.clone.value = e.target.value; }
-		else if (field === 'chapterNo') {
-			const no = Number(e.target.value);
-			if (no > 0) {
-				// 有未保存草稿时换章会丢内容——先确认再切
-				if (state.draftModified) { state.discardPending = { kind: 'chapter', no }; notify(); }
-				else void loadChapter(no);
-			}
-		}
-		else if (field === 'lore-name') state.loreForm.name = e.target.value;
-		else if (field === 'lore-keywords') state.loreForm.keywords = e.target.value;
-		else if (field === 'lore-content') state.loreForm.content = e.target.value;
-		else if (field === 'lore-priority') state.loreForm.priority = e.target.value;
-		// 批量起草表单：留成受控值，但只在提交时才校验（边输边报错太吵）
-		else if (field === 'batch-from') state.batchFrom = e.target.value;
-		else if (field === 'batch-count') state.batchCount = e.target.value;
-		else if (field === 'batch-concurrency') state.batchConcurrency = e.target.value;
-		else if (field === 'batch-force') state.batchForce = e.target.checked === true;
-	};
-	const onChangeEvent = (e) => {
-		const field = e.target?.dataset?.field;
-		if (field === 'lore-always') state.loreForm.alwaysActive = e.target.checked;
-		else if (field === 'batch-concurrency') state.batchConcurrency = e.target.value;
-		else if (field === 'batch-force') state.batchForce = e.target.checked === true;
-	};
-
-	let bound = null;
-	const attach = (node) => {
-		if (!node || bound === node) return;
-		detach();
-		bound = node;
-		node.addEventListener('click', onClick);
-		node.addEventListener('input', onInput);
-		node.addEventListener('change', onChangeEvent);
-	};
-	const detach = () => {
-		if (!bound) return;
-		try {
-			bound.removeEventListener('click', onClick);
-			bound.removeEventListener('input', onInput);
-			bound.removeEventListener('change', onChangeEvent);
-		} catch { /* 节点已被框架拆掉 */ }
-		bound = null;
-	};
+	// 共享上下文：各子控制器往这里挂自己的动作；跨域调用（如 openProject 要拉提案）
+	// 在装配完成后才发生，晚绑定天然解环。
+	const ctx = { state, notify, syncSession, withSession, seq, player };
+	Object.assign(ctx, createChaptersController(ctx));
+	Object.assign(ctx, createLoreController(ctx));
+	Object.assign(ctx, createProposalsController(ctx));
+	Object.assign(ctx, createProjectsController(ctx));
+	Object.assign(ctx, createEventsController(ctx));
 
 	let started = false;
 	/** 首次挂载后拉数据（幂等）。 */
 	const start = () => {
 		if (started) return;
 		started = true;
-		void refreshProjects();
+		void ctx.refreshProjects();
 	};
 
 	/** 会话切换：换 id 并重新拉列表（面板是按会话的账本）。 */
@@ -901,22 +152,15 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 		state.loreDeleteId = null; state.filter = '';
 		started = true;
 		notify();
-		void refreshProjects();
+		void ctx.refreshProjects();
 	};
 
-	/** 页面重新可见/聚焦时的提案重拉：写作会话随时可能提交新提案，而队列只在
-	 *  开书/应用动作时加载——挂着面板的用户看到的永远是打开那一刻的快照
-	 *  （真机 10-04 实锤：写作会话新建 P45/P48/P49，用户面板停在旧空态）。
-	 *  只在详情态且无在途动作时执行；loadProposals 同步置 proposalsLoading，
-	 *  visibilitychange+focus 连发也不会双拉。 */
-	const refreshProposalsIfIdle = () => {
-		if (state.view !== 'detail' || !state.selected) return;
-		if (state.proposalsLoading || state.proposalBusy) return;
-		loadProposals(state.selected);
+	return {
+		state, notify, attach: ctx.attach, detach: ctx.detach, start, setSession,
+		refreshProjects: ctx.refreshProjects, handleAction: ctx.handleAction, syncSession,
+		loadProposals: ctx.loadProposals, refreshProposalsIfIdle: ctx.refreshProposalsIfIdle,
+		stopPlayback: () => player.stop(),
 	};
-
-	return { state, notify, attach, detach, start, setSession, refreshProjects, handleAction, syncSession, loadProposals, refreshProposalsIfIdle,
-		stopPlayback: () => player.stop() };
 }
 
 /**
