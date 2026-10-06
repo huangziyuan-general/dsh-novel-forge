@@ -12,7 +12,8 @@ import { breakerState, recordRejection, recordSuccess, clearBreaker, breakerDige
 import { reviewForPlatform, longestSufferingRun, sentenceCv } from '../lib/platform-review.js';
 import { scanSensitive, CENSOR_KEYS } from '../lib/censor.js';
 import { applyFactUpdates, queryFacts, factsDigest, assertLedgerChapter, factsAt, statusTimeline, foreshadowSetup, foreshadowPayoff, openForeshadows, foreshadowDigest, overdueForeshadows } from '../lib/ledger.js';
-import { computeAudit, auditVerdict } from '../lib/audit.js';
+import { computeAudit, auditVerdict, paragraphCharProfile } from '../lib/audit.js';
+import { detectHookKind } from '../lib/hook.js';
 import { matchWorldEntries, buildContextPack, renderPack, declaredCoverageTerms } from '../lib/contextpack.js';
 import { pathsFor, defaultNovel, chapterRecord, normalizeWorldEntry, bookInSession, isUnclaimed, addBookSession, nextWorldEntryId, sameEntryId, migrateNovel, SCHEMA_VERSION } from '../lib/store.js';
 import { scanAiFlavor } from '../lib/noai.js';
@@ -244,6 +245,42 @@ test('auditVerdict: 字数驳回带「还差 N 字 + 本章目标」——只说
     const msg = v.problems.find((p) => p.includes('低于下限'));
     assert.match(msg, /还差 1998 字/);
     assert.match(msg, /本章目标 3000 字左右/);
+});
+
+test('auditVerdict: 字数驳回带段落级分布——模型定向加厚，不再整章重发（真机三章靠 2–3 版整章重试烧穿输出预算）', () => {
+    const a = computeAudit({ content: '短。', previous: [], terms: [] });
+    // 真机 82 章形态：1114→1465→2016 三版整章；驳回时给出各段分布让模型只补最薄几段
+    const v = auditVerdict(a, { minChapterChars: 2000, maxChapterChars: 4000 }, { paragraphChars: [412, 96, 380, 226] });
+    const msg = v.problems.find((p) => p.includes('低于下限'));
+    assert.match(msg, /各段字数：412\/96\/380\/226/, '分布必须逐段列出');
+    assert.match(msg, /定向加厚最薄的几段即可，不必整章重写/, '必须给「不必整章重写」的行动指引');
+    // 封顶：>24 段只列前 24 + 总段数
+    const many = Array.from({ length: 30 }, (_, i) => i + 1);
+    const v2 = auditVerdict(a, { minChapterChars: 2000, maxChapterChars: 4000 }, { paragraphChars: many });
+    const msg2 = v2.problems.find((p) => p.includes('低于下限'));
+    assert.match(msg2, /…（共 30 段）/, '超封顶要报总段数');
+    assert.ok(!msg2.includes('30/'), '第 25 段起不得列出');
+});
+
+test('auditVerdict: 不传段落分布时文案退化为不带分布（向后兼容）', () => {
+    const a = computeAudit({ content: '短。', previous: [], terms: [] });
+    const v = auditVerdict(a, { minChapterChars: 2000, maxChapterChars: 4000 });
+    const msg = v.problems.find((p) => p.includes('低于下限'));
+    assert.ok(!msg.includes('各段字数'), '省略 extra 时不得出现空分布');
+});
+
+test('paragraphCharProfile: 按空行分段、与 chars 同口径（非空白字数）、滤空段', () => {
+    const profile = paragraphCharProfile('第一段有十字整。\n\n第二段。\n\n\n\n');
+    assert.deepEqual(profile, [8, 4], '「第一段有十字整。」8 个非空白字；空段滤掉');
+    assert.deepEqual(paragraphCharProfile(''), [], '空文空分布');
+});
+
+test('detectHookKind: 章末强调标记不再吞检——「**三个！**」必须认出感叹钩子（真机同型吞检连犯 16 例）', () => {
+    assert.equal(detectHookKind('她数完第三遍，只有三个！'), 'exclaim', '裸感叹基准');
+    assert.equal(detectHookKind('她数完第三遍，只有**三个！**'), 'exclaim', '★ 粗体包裹的感叹——旧检测器瞎');
+    assert.equal(detectHookKind('**他到底是谁？**'), 'question', '★ 粗体包裹的问句');
+    assert.equal(detectHookKind('__井里有人——__'), 'ellipsis', '★ 下划线强调不挡省略号');
+    assert.equal(detectHookKind('夜色平静地合拢，一切如常。'), null, '真没钩子的照旧报 null');
 });
 
 test('auditVerdict: 过下限但未达目标 → 放行 + 非阻断提醒（不是驳回）', () => {
