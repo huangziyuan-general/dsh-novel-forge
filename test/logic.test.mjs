@@ -1322,6 +1322,21 @@ test('★ 字数标准：写前简报带「本章字数目标」段（会话写�
     assert.ok(b.totalChars >= own, 'totalChars 要计入字数目标段');
 });
 
+test('★ 交付纪律：写前简报带「收尾怎么走」段——收尾=纯文字汇报，禁止 present（防收尾死锁）', async () => {
+    const { buildBriefing } = await import('../lib/briefing.js');
+    const io = { readText: async () => '', readJson: async () => null, listDir: async () => [] };
+    const base = { minChapterChars: 2000, maxChapterChars: 4000, contextBudgetChars: 6000 };
+    const pack = await buildBriefing({
+        config: base, io, book: '测试书',
+        novel: { title: '测试书', cast: [], proposals: [] }, n: 1,
+    });
+    const sec = pack.sections.find((s) => s.name === '交付纪律（收尾怎么走）');
+    assert.ok(sec, '简报必须有「交付纪律」段——收尾死锁要在计划成形时刻拆');
+    assert.ok(sec.content.includes('禁止调用宿主 present'), '必须明说禁止 present');
+    assert.ok(sec.content.includes('不存在'), '必须明说该步骤根本不存在（模型只知道会失败、不知道可以没有）');
+    assert.ok(sec.content.includes('纯文字') || sec.content.includes('纯文本'), '必须给替代出口：纯文字汇报');
+});
+
 test('★ 提案队列实况：写前简报带「待批提案（唯一真相）」段，防交付里复述过期的「N 枚待审」', async () => {
     const { buildBriefing } = await import('../lib/briefing.js');
     const io = { readText: async () => '', readJson: async () => null, listDir: async () => [] };
