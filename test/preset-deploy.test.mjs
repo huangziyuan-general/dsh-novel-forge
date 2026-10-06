@@ -88,3 +88,69 @@ test('预设部署：SKIP_DEPLOY=1 时完全不碰盘', () => {
         } finally { delete process.env.DSH_NOVEL_FORGE_SKIP_DEPLOY; }
     });
 });
+
+// ── 发行漂移对账（方向4）────────────────────────────────────────────────────
+//
+// 预设（agent.cordis.yml）在 persona 里点名 `novel_*` 工具与动作，让模型照着调。
+// 工具或动作被改名/删除时，预设文案**不会报错**——模型照着叫，工具找不到，
+// 或动作落进默认分支，表现为「模型说的动作没生效」。这与 PLUGIN_VERSION 那条
+// 同类：源码改了但发行物没跟上，只能靠对账在 CI 期拦下。
+//
+// 判据来源是**源码真值**（每个工具定义里的 name 与 action enum），不是手写清单。
+
+const TOOLS_DIR = path.join(import.meta.dirname, '..', 'lib', 'tools');
+const PRESET_DIR = path.join(import.meta.dirname, '..', 'lib', 'preset', PRESET_ID);
+
+/** 从工具源码解析出 { 工具名 → Set(动作名) }（按 `name: 'novel_` 切块，块内取 action 的 enum）。 */
+function toolRegistry() {
+    const map = new Map();
+    for (const file of fs.readdirSync(TOOLS_DIR).filter((n) => n.endsWith('.js'))) {
+        const src = fs.readFileSync(path.join(TOOLS_DIR, file), 'utf8');
+        for (const block of src.split(/(?=name:\s*'novel_)/)) {
+            const nm = /name:\s*'(novel_[a-z_]+)'/.exec(block);
+            if (!nm) continue;
+            const actions = new Set();
+            const m = /action:\s*\{[^}]*?enum:\s*\[([^\]]*)\]/s.exec(block);
+            if (m) for (const a of m[1].matchAll(/'([^']+)'/g)) actions.add(a[1]);
+            map.set(nm[1], actions);
+        }
+    }
+    return map;
+}
+
+function presetText() {
+    return fs.readdirSync(PRESET_DIR).filter((n) => n.endsWith('.yml'))
+        .map((n) => fs.readFileSync(path.join(PRESET_DIR, n), 'utf8')).join('\n');
+}
+
+test('★ 预设引用的 novel_* 工具名与动作名必须真实存在（发行漂移对账）', () => {
+    const registry = toolRegistry();
+    // 覆盖哨兵：工具被漏注册/漏解析时，下面的子集断言会假绿 —— 先钉住规模
+    const indexSrc = fs.readFileSync(path.join(import.meta.dirname, '..', 'lib', 'index.js'), 'utf8');
+    const registerCount = (indexSrc.match(/ctx\.tools\.register\(/g) ?? []).length;
+    assert.equal(registry.size, registerCount,
+        `工具定义数（${registry.size}）与 index.js 注册数（${registerCount}）不符——有工具定义了没注册，或解析漏了`);
+    assert.ok(registry.size >= 20, `工具注册表规模异常：${registry.size}`);
+
+    const text = presetText();
+    const tokens = [...text.matchAll(/\b(novel_[a-z_]+)\b/g)].map((m) => m[1]);
+    assert.ok(tokens.length > 0, '预设里应至少引用一个 novel_* 工具名（否则这条用例是空跑）');
+
+    const unknown = [...new Set(tokens)].filter((t) => !registry.has(t));
+    assert.deepEqual(unknown, [], `预设点名了不存在的工具：${unknown.join(', ')}`);
+
+    // 动作对账：`novel_X <word>` 里的 word 若命中「任意工具的动作名」，它就该属于 X。
+    // 只对「像命令的标识符」判——后面跟中文/标点（纯叙述）一律跳过，避免误杀；
+    // `voice`/`platform` 这类**参数名**不在任何动作集里，天然被跳过（它们是 flag，不是动作）。
+    const allActions = new Set([...registry.values()].flatMap((s) => [...s]));
+    const mismatches = [];
+    for (const m of text.matchAll(/\b(novel_[a-z_]+)\s+([a-z_][a-z_0-9]*)/g)) {
+        const [, tool, word] = m;
+        if (!registry.has(tool)) continue;             // 工具名问题上面已单独报
+        if (!allActions.has(word)) continue;           // 不是动作词（叙述/参数名）
+        if (!registry.get(tool).has(word)) {
+            mismatches.push(`${tool} 无动作「${word}」（现有：${[...registry.get(tool)].join('/') || '无'}）`);
+        }
+    }
+    assert.deepEqual([...new Set(mismatches)], [], `预设动作名与实际注册不符：\n${[...new Set(mismatches)].join('\n')}`);
+});

@@ -1622,6 +1622,44 @@ test('★ 方向2/3 repair 体检：控制字符路径归一化 + 幽灵提案 +
         '★ 数值字段落成 null 的残留必须报（value is not lossless JSON 那类事故的盘面痕迹）');
 });
 
+test('★ 方向2 派生索引对账：删章后 repair 清掉索引里的幽灵块（否则检索命中「查无此文」）', async () => {
+    const B = '幽灵索引书';
+    await tool('novel_project').execute({ action: 'init', book: B, title: B, genre: '悬疑' }, exec);
+    fs.mkdirSync(path.join(root, B, '正文'), { recursive: true });
+    const c1 = '夜色压城，巡夜人把灯笼拧亮了一格。城门下的影子长了一寸，更夫敲响铜锣，一声一声数到五更。';
+    const c2 = '义庄里停着三口棺材，最里面那口没盖棺。守夜人看见一只戴斗笠的影子立在墙根，袖口沾着河滩青泥。';
+    fs.writeFileSync(path.join(root, B, '正文', '第1章-夜巡-v1.md'), `${c1}\n`);
+    fs.writeFileSync(path.join(root, B, '正文', '第2章-义庄-v1.md'), `${c2}\n`);
+    const metaPath = path.join(root, B, 'novel.json');
+    const novel = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    const rec = (title, file, chars) => ({ title, versions: [1], files: [{ version: 1, file }], latest: 1, path: file, chars, summary: '' });
+    novel.chapters = {
+        '1': rec('夜巡', `${B}/正文/第1章-夜巡-v1.md`, c1.length),
+        '2': rec('义庄', `${B}/正文/第2章-义庄-v1.md`, c2.length),
+    };
+    fs.writeFileSync(metaPath, `${JSON.stringify(novel, null, 2)}\n`);
+
+    const built = await tool('novel_search').execute({ action: 'build', book: B }, exec);
+    if (built.degraded) return; // 运行时无 node:sqlite：索引整体退化，本用例不适用
+    assert.equal(built.chapters, 2, '前置：两章都已进索引');
+
+    // 作者删掉第 2 章（索引是派生物，不会自动感知 → 残块留存）
+    novel.chapters = { '1': novel.chapters['1'] };
+    fs.writeFileSync(metaPath, `${JSON.stringify(novel, null, 2)}\n`);
+
+    const before = await tool('novel_search').execute({ action: 'query', book: B, q: '斗笠' }, exec);
+    assert.equal(before.chapters, 2, '★ 删章后、repair 前索引仍是陈旧的两章（本用例的前提）');
+
+    const rep = await tool('novel_project').execute({ action: 'repair', book: B }, exec);
+    assert.deepEqual(rep.indexGhostChapters, [2], '★ 索引里有、书里已无的章号必须报出来');
+    assert.ok(rep.indexRemoved >= 1, '幽灵块必须真删掉（索引是派生物，删错重跑 build 即得）');
+    assert.match(rep.next, /检索索引/, '用户可见文案要点名「检索索引」，不能只给个内部码');
+    assert.match(rep.next, /已不在书中|残留/, '文案要让人看懂「为什么会有这些块」');
+
+    const status = await tool('novel_search').execute({ action: 'status', book: B }, exec);
+    assert.equal(status.chapters, 1, '★ repair 之后索引只剩第 1 章（幽灵块已清干净）');
+});
+
 // ── novel skill 运行时注册（0.1.7 宿主无「插件 skills/ 目录自动发现」——文件惯例不存在）──
 
 test('★ parseSkillFrontmatter：取 name/description，正文原样保留', async () => {
