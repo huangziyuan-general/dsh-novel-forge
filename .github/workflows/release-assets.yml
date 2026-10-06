@@ -1,0 +1,34 @@
+# Release 资产自动挂载：Release 发布时把源码树打成 zip 挂上去。
+#
+# 为什么存在：GitHub 只对「附加资产」显示下载计数徽章，对源码自动包永远不显示——
+# v0.13.2–v0.13.9 八个版本全是裸源码包，面板上从未有过下载量字段（2026-10-05 补挂修复）。
+# 触发用 release:published 而非 tag push：本仓库发版顺序是「先 push main+tag，后 gh release
+# create」——tag 触发会跑在 Release 对象诞生之前，upload 无处可挂。
+# --clobber：重复发布/重跑时覆盖同名资产，幂等。
+name: release-assets
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  attach-zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - name: Package source tree and attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${TAG#v}"
+          ZIP="dsh-novel-forge-${VERSION}.zip"
+          # HEAD 即 tag 指向的提交（checkout 已锁定 ref）；不引 tag 名，避免浅克隆下 tag ref 缺失
+          git archive --format=zip --prefix="dsh-novel-forge-${VERSION}/" -o "$ZIP" HEAD
+          gh release upload "$TAG" "$ZIP" --clobber --repo "$GITHUB_REPOSITORY"
+          echo "attached: $ZIP"
