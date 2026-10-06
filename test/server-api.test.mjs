@@ -966,4 +966,7 @@ test('R7 /continuity 归并 health 体检：控制字符路径 / NaN→null 残�
     }
     assert.match(res.json.value.issues.find((i) => i.code === 'proposal-file-missing').message, /P2/);
     assert.match(res.json.value.issues.find((i) => i.code === 'proposal-orphan-file').message, /P9/);
+    // 只读体检不得有写副作用：以前 openIndexForBook 会 mkdir + new DatabaseSync，
+    // 一次 GET /continuity 就凭空建出 .novel/index.db。这里锁死「库不存在就不建」。
+    assert.equal(fs.existsSync(path.join(bookDir, '.novel', 'index.db')), false, '只读体检不得凭空建出索引库');
 });
