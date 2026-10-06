@@ -1585,6 +1585,8 @@ test('★ 方向1 进度卡：novel_write_chapter 现算章数/账本/伏笔/待
     const text = JSON.stringify(tool('novel_write_chapter').output.render({}, w));
     assert.match(text, /进度卡/, '渲染必须把进度卡交给模型（据实转述）');
     assert.match(text, /待批提案 0 条/);
+    assert.match(text, /已随本次落盘送达/, '★ 交付声明必须随写章返回——到达通道是工具输出不是预设（standard 预设的会话收不到预设文案）');
+    assert.match(text, /不要再调宿主 present/, '真机 85/108 次 present 拼路径失败，返回值必须明说不要再调');
 
     // 提一条修订提案后，下一章的进度卡必须如实报 1（唯一真相来自 novel.json，不是历史消息）
     await tool('novel_outline').execute({ action: 'save_chapter', book: B, chapter: 2, outline: '第2章：来客。出场：林晚。' }, exec);
