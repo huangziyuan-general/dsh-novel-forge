@@ -14,6 +14,7 @@ description: Use when the user asks to write, create, outline, or continue a nov
 3. **回溯用账本不凭记忆**：引用「第 N 章时」的状态用 `novel_ledger status_at`；查某值哪章改的用 `timeline`；找前文段落用 `novel_search query`（没索引先 build）。
 4. **门禁是硬的**：细纲未 approve 不能写章；字数 2000–4000；同章被拒 3 次熔断——回去改细纲/场景契约，不要换措辞硬压。
 5. **修改已存章走 `novel_propose`**（生成提案，永不覆盖旧版）。提案的「应用」是用户主权动作——提完就停，告诉用户到面板点「应用」，绝不说「已生效」。
+6. **收尾=纯文字汇报，禁止 present**：正文由 `novel_write_chapter` 落盘即送达（面板立即可见），收尾汇报直接输出文字。不要调用宿主 present 交付章节（真机 85/108 次自拼路径失败并引发输出退化），也不要生成「present 预期失败→跳过」之类的占位步骤——收尾链路里没有这一步。
 
 ## 开新书（无书时按序走）
 

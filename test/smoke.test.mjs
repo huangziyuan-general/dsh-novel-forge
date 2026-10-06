@@ -1715,6 +1715,7 @@ test('★ novelSkillDefinition：从插件包内 SKILL.md 组装宿主可校验�
     assert.equal(d.name, 'novel');
     assert.ok(d.description.length > 0 && d.description.length <= 300, 'description 非空且不超 300');
     assert.ok(d.content.includes('小说锻炉'), '正文来自插件包内 SKILL.md');
+    assert.ok(d.content.includes('禁止 present'), 'SKILL.md 必须带收尾交付纪律（standard 预设会话靠技能/工具输出拿到纪律）');
     assert.match(d.source, /^plugin:/);
     assert.ok(d.path.endsWith('skills/novel/SKILL.md'));
 });
