@@ -1317,7 +1317,7 @@ test('★ 会话过滤为空但全量有书：自动回落显示全部并标记 
         return Promise.resolve({
             json: () => Promise.resolve({
                 ok: true,
-                value: isAll ? [{ name: '开局觉醒加特林' }] : [],
+                value: isAll ? [{ name: '示例书' }] : [],
             }),
         });
     };
