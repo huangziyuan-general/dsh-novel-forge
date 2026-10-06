@@ -1319,7 +1319,7 @@ test('★ G2 书库：导入饲料 → 拆结构 → 与本书并排 → 只移�
     assert.equal(fs.existsSync(path.join(root, '书库', '对标样本', '原文.txt')), true, 'delete 不得删原文');
 });
 
-// ── 会话「孙宇」真机事故回归：novel_scene 恒 invalid output（13 次全军覆没）──
+// ── 真机会话事故回归：novel_scene 恒 invalid output（13 次全军覆没）──
 // 根因：normalizeContract 产出 updatedAt，output schema 没声明 → 宿主
 // additionalProperties:false 直接拒收。schema 补字段 + 出口盖章双保险。
 

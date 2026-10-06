@@ -1786,7 +1786,7 @@ test('diagnoseIntro: 空书给「先写第 1 章」，超三章只取前三', ()
     assert.equal(many.perChapter.length, 3, '黄金三章只看前三章');
 });
 
-// ── 会话「孙宇」真机事故回归（0.13.3 复盘）：宿主对工具输出做 strict
+// ── 真机会话事故回归（0.13.3 复盘）：宿主对工具输出做 strict
 //    lossless-JSON 校验，undefined / 未声明字段都会被判 invalid output ──
 
 test('judgeAgainstBaseline: 旧基线条目缺 sigma/tolerance → 输出补齐、无 undefined 混入', () => {
@@ -1829,7 +1829,7 @@ test('judgeAgainstBaseline: 实际值略低于均值 → deviationPct 不得是 
 
 test('health: 控制字符检测/归一化——\\r\\n 等被识别并剥掉，纯字符串不受影响', () => {
     assert.equal(hasControlChars('正常/路径.md'), false);
-    assert.equal(hasControlChars('开局觉醒加特林\r\r/正文/第1章.md'), true);
+    assert.equal(hasControlChars('示例书\r\r/正文/第1章.md'), true);
     assert.equal(hasControlChars(undefined), false, '非字符串一律 false，不抛');
     assert.equal(hasControlChars(7), false);
     assert.equal(stripControlChars('a\r\nb\tc'), 'abc');
