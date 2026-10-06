@@ -323,6 +323,22 @@ test('硬约束：账本同章改值 → 拒绝保存；字数不足 → 拒绝'
     );
     // force 放行但被机审拒绝的调用不应留下任何正文文件
     assert.equal(fs.existsSync(path.join(root, '星海拾骨', '正文', '第2章-太短-v1.md')), false);
+
+    // 驳回审计字段必须统一为 reason（+kind 标明哪道门禁）——此前各路径叫
+    // problems/conflicts/contentGate/bannedHits，排查时要猜字段名。
+    const auditLog = fs.readFileSync(path.join(root, '星海拾骨', '.novel', 'audit.jsonl'), 'utf8')
+        .split('\n').filter((l) => l.trim() !== '').map((l) => JSON.parse(l));
+    const rejected = auditLog.filter((r) => r.action === 'write_chapter/rejected');
+    assert.ok(rejected.length >= 2, '两次驳回都要留审计行');
+    for (const r of rejected) {
+        assert.equal(typeof r.reason, 'string', `驳回审计必须带 reason（实际字段 ${Object.keys(r).join(',')}）`);
+        assert.ok(r.reason.length > 0, 'reason 不能为空');
+        assert.equal(typeof r.kind, 'string', '并带 kind 标明门禁种类');
+        assert.equal(r.problems, undefined, '旧字段名 problems 应已退场');
+        assert.equal(r.conflicts, undefined, '旧字段名 conflicts 应已退场');
+    }
+    assert.ok(rejected.some((r) => r.kind === 'ledger-conflict'), '账本冲突驳回要标 ledger-conflict');
+    assert.ok(rejected.some((r) => r.kind === 'audit'), '机审驳回要标 audit');
 });
 
 test('质检：noai 扫描与确定性审计', async () => {

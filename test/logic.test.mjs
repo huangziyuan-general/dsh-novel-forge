@@ -13,7 +13,7 @@ import { reviewForPlatform, longestSufferingRun, sentenceCv } from '../lib/platf
 import { scanSensitive, CENSOR_KEYS } from '../lib/censor.js';
 import { applyFactUpdates, queryFacts, factsDigest, assertLedgerChapter, factsAt, statusTimeline, foreshadowSetup, foreshadowPayoff, openForeshadows, foreshadowDigest, overdueForeshadows } from '../lib/ledger.js';
 import { computeAudit, auditVerdict } from '../lib/audit.js';
-import { matchWorldEntries, buildContextPack, renderPack } from '../lib/contextpack.js';
+import { matchWorldEntries, buildContextPack, renderPack, declaredCoverageTerms } from '../lib/contextpack.js';
 import { pathsFor, defaultNovel, chapterRecord, normalizeWorldEntry, bookInSession, isUnclaimed, addBookSession, nextWorldEntryId, sameEntryId, migrateNovel, SCHEMA_VERSION } from '../lib/store.js';
 import { scanAiFlavor } from '../lib/noai.js';
 import { roughOutline, splitIntoChapters, isChapterHeading } from '../lib/import.js';
@@ -97,6 +97,18 @@ test('ledger: 追加/幂等/同章冲突拒绝/跨章推进放行', () => {
     assert.equal(latest.length, 1);
     assert.equal(latest[0].value, '筑基一层');
     assert.ok(factsDigest(r4.facts, ['林晚'])[0].includes('第12章起'));
+});
+
+test('ledger: 冲突 reason 里的取值被截断（完整值可能上千字），结构化字段仍保留全值', () => {
+    const long = '甲'.repeat(500);
+    const facts = [{ entity: '林晚', key: '位置', value: long, chapter: 3, note: '', ts: 't1' }];
+    const { conflicts } = applyFactUpdates(facts, [{ entity: '林晚', key: '位置', value: `${long}乙` }], { chapter: 3, now: 't2' });
+    assert.equal(conflicts.length, 1);
+    assert.ok(conflicts[0].reason.length < 250, `reason 应被截断，实际 ${conflicts[0].reason.length} 字`);
+    assert.ok(conflicts[0].reason.includes('…'), '截断要有省略号');
+    assert.ok(conflicts[0].reason.includes('第3章起'), '截断后仍要保留可读的章号上下文');
+    assert.equal(conflicts[0].current, long, '结构化字段 current 保留全值（供程序判断）');
+    assert.equal(conflicts[0].attempted, `${long}乙`, '结构化字段 attempted 保留全值');
 });
 
 test('ledger: 空值与坏行拒绝', () => {
@@ -226,6 +238,32 @@ test('audit: 字数上下限与要素缺失警告', () => {
     assert.ok(v.problems.some((p) => p.includes('低于下限')));
 });
 
+test('auditVerdict: 字数驳回带「还差 N 字 + 本章目标」——只说「低于下限」模型无从下手', () => {
+    const a = computeAudit({ content: '短。', previous: [], terms: [] });
+    const v = auditVerdict(a, { minChapterChars: 2000, maxChapterChars: 4000 });
+    const msg = v.problems.find((p) => p.includes('低于下限'));
+    assert.match(msg, /还差 1998 字/);
+    assert.match(msg, /本章目标 3000 字左右/);
+});
+
+test('auditVerdict: 过下限但未达目标 → 放行 + 非阻断提醒（不是驳回）', () => {
+    // 2160 字：≥ 下限 2000、< 目标 3000；三段成篇、无重复、无硬伤
+    const body = Array.from({ length: 3 }, () => '夜色压下来，她握紧了刀。'.repeat(60)).join('\n\n');
+    const a = computeAudit({ content: body, previous: [], terms: [] });
+    const v = auditVerdict(a, { minChapterChars: 2000, maxChapterChars: 4000 });
+    assert.equal(v.ok, true, '过下限就该放行保存');
+    assert.ok(v.warnings.some((w) => w.includes('未达目标')), '篇幅偏短要有非阻断提醒');
+});
+
+test('auditVerdict: 覆盖率缺失项过多时警告封顶（只列前 10 + 等 N 项）', () => {
+    const terms = Array.from({ length: 15 }, (_, i) => `要素${i}`);
+    const a = computeAudit({ content: '正文。', previous: [], terms });
+    const v = auditVerdict(a, { minChapterChars: 1, maxChapterChars: 999999 });
+    const w = v.warnings.find((x) => x.includes('未在正文出现'));
+    assert.match(w, /共 15 项|（15 项）/);
+    assert.match(w, /等 5 项/);
+});
+
 // ── contextpack ─────────────────────────────────────────────────────────────
 
 test('contextpack: 世界书关键词命中与 always 常驻', () => {
@@ -237,6 +275,17 @@ test('contextpack: 世界书关键词命中与 always 常驻', () => {
     const hit = matchWorldEntries(entries, ['第三章：灵潮将至', '林晚']);
     assert.deepEqual(hit.map((e) => e.id), ['W1', 'W3']);
     assert.equal(matchWorldEntries(entries, ['没有触发词']).map((e) => e.id)[0], 'W3');
+});
+
+test('contextpack: 覆盖率要素收敛——世界书泛词只在细纲点过名时才计入（真机第69章 50+ 噪声）', () => {
+    const entries = [
+        { id: 'W1', keywords: ['觉醒', '本命神兵', '弹匣', '膛纹', '灵弹'], content: 'x' },
+        { id: 'W2', keywords: ['灵潮'], content: 'y' },
+    ];
+    const terms = declaredCoverageTerms({ outline: '本章写觉醒与灵潮，主角林晚出场。', castNames: ['林晚'], worldEntries: entries });
+    assert.deepEqual(terms, ['林晚', '觉醒', '灵潮'], '未在细纲出现的泛词（本命神兵/弹匣/膛纹/灵弹）不得计入');
+    assert.deepEqual(declaredCoverageTerms({ outline: '无关正文', castNames: [], worldEntries: entries }), [], '细纲没点名的条目关键词全过滤');
+    assert.deepEqual(declaredCoverageTerms(), [], '缺参不抛');
 });
 
 test('contextpack: 预算裁剪优先保细纲，先丢大纲', () => {
@@ -1755,6 +1804,25 @@ test('judgeAgainstBaseline: 旧基线条目缺 sigma/tolerance → 输出补齐�
     assert.equal(judged.dims.syntax.tolerance, 35, '缺 tolerance 兜底 35');
     assert.equal(judged.dims.syntax.sigma, null, '缺 sigma 兜底 null');
     assert.equal(judged.dims.modifier.tolerance, 30, '给了 tolerance 照用');
+});
+
+test('judgeAgainstBaseline: 实际值略低于均值 → deviationPct 不得是 -0（真机 lossless JSON 拒收负零）', () => {
+    // 基线均值 100，本章测得 99.6 → 相对偏差 (99.6-100)/100*100 = -0.4 → Math.round 产出 -0。
+    // 真机：本书 69 章里第 14/35/46/57 章间歇性报「value is not lossless JSON」。
+    const baseline = { chapters: 3, dims: { modifier: { mu: 100, sigma: 1, tolerance: 35 } } };
+    const metrics = { chars: 1000, sentences: 10, syntax: 2, modifier: 99.6, abstract: 1, action: 10, hedging: 1, blank: 1 };
+    const judged = judgeAgainstBaseline(metrics, baseline, {});
+    assert.equal(judged.dims.modifier.deviationPct, 0);
+    assert.equal(Object.is(judged.dims.modifier.deviationPct, -0), false, '负零必须归正零');
+    // 通用防线：整份输出不得含 -0 / NaN / Infinity（与宿主 isJsonValue 同语义）
+    const bad = [];
+    const walk = (v, p) => {
+        if (Object.is(v, -0)) { bad.push(`${p}=-0`); return; }
+        if (typeof v === 'number' && !Number.isFinite(v)) { bad.push(`${p}=${v}`); return; }
+        if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) walk(x, `${p}.${k}`);
+    };
+    walk(judged, 'judged');
+    assert.deepEqual(bad, [], `工具输出必须是 lossless JSON：${bad.join(', ')}`);
 });
 
 // ── 存储健康度体检（lib/health.js，repair 与 /continuity 共用）──────────────
