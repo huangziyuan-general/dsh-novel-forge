@@ -1676,6 +1676,24 @@ test('★ 方向2 派生索引对账：删章后 repair 清掉索引里的幽灵
     assert.equal(status.chapters, 1, '★ repair 之后索引只剩第 1 章（幽灵块已清干净）');
 });
 
+test('★ repair 对没建过索引的书零写副作用：不凭空 mkdir/建库，只降级说明（pruneGhostIndex create:false）', async () => {
+    const B = '索引未建书';
+    await tool('novel_project').execute({ action: 'init', book: B, title: B, genre: '悬疑' }, exec);
+    fs.mkdirSync(path.join(root, B, '正文'), { recursive: true });
+    fs.writeFileSync(path.join(root, B, '正文', '第1章-起-v1.md'), '他在码头数完第三遍风灯，才确认那只船没有回头的意思。\n');
+    const metaPath = path.join(root, B, 'novel.json');
+    const novel = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    novel.chapters = { '1': { title: '起', versions: [1], files: [{ version: 1, file: `${B}/正文/第1章-起-v1.md` }], latest: 1, path: `${B}/正文/第1章-起-v1.md`, chars: 30, summary: '' } };
+    fs.writeFileSync(metaPath, `${JSON.stringify(novel, null, 2)}\n`);
+
+    const indexPath = path.join(root, B, '.novel', 'index.db');
+    assert.equal(fs.existsSync(indexPath), false, '前置：本书从没跑过 novel_search build');
+
+    const rep = await tool('novel_project').execute({ action: 'repair', book: B }, exec);
+    assert.match(String(rep.indexNote ?? ''), /索引尚未建立/, '★ 没索引≠故障：repair 要说清「只是还没建」，不说成对账失败');
+    assert.equal(fs.existsSync(indexPath), false, '★ repair 不得凭空造出空 index.db（写副作用归 build）');
+});
+
 // ── novel skill 运行时注册（0.1.7 宿主无「插件 skills/ 目录自动发现」——文件惯例不存在）──
 
 test('★ parseSkillFrontmatter：取 name/description，正文原样保留', async () => {
