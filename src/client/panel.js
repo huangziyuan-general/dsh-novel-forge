@@ -812,6 +812,14 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 				} else { state.loreDeleteId = target.dataset.id; notify(); }
 				break;
 			case 'lore-delete-cancel': state.loreDeleteId = null; notify(); break;
+			default:
+				// 视图发了控制器不认的动作名 = 「按钮点了没反应」的静默病根（AGENTS.md 第三次学费）。
+				// 本项目不许可静默失败：报错可见 + 控制台留痕，client.test.mjs 的「动作契约对账」
+				// 用例据此把「视图发出但控制器没有对应 case」判成红灯。
+				state.error = `未处理的动作：${action}（界面按钮与控制器动作名不符，请报告）`;
+				console.warn('[novel-forge] unknown action:', action);
+				notify();
+				break;
 		}
 	};
 

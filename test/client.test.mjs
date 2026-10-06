@@ -1571,3 +1571,95 @@ test('★ 章节目录：纯图标按钮（📖 / ▶）端到端必须带 aria-
         assert.ok(b.props['aria-label'], `★ ${textOf(b)} 按钮必须有 aria-label（视图传的键名要和 Btn 收的键名对上）`);
     }
 });
+
+// ── 动作契约对账 ─────────────────────────────────────────────────────────
+// 「按钮点了没反应」最隐蔽的一类病根：**视图发出的 data-action 控制器里没有对应 case**，
+// 于是点下去静默 no-op（AGENTS.md 第三次学费）。老的交互用例全是手挑动作名直调
+// handleAction（按实现编 dataset），只会沿着已知动作跑，拦不住这种漂移。
+//
+// 这里改成端到端对账：真渲染每个视图 → 收集**真机渲染出来的** data-action →
+// 逐个喂给控制器，凡是落进 default 分支（state.error 以「未处理的动作」开头）即红灯。
+// 反过来，控制器里多出的 case（没人发的动作）不判红——那是无害的冗余，不是故障。
+
+test('★ 未知动作不许静默：控制器给可见报错并在控制台留痕（不变量 #11）', async () => {
+    const { mod } = boot();
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+    const warns = [];
+    mod.sandbox.console.warn = (...args) => warns.push(args);
+
+    await controller.handleAction('no-such-action', { dataset: {} });
+
+    assert.match(String(controller.state.error || ''), /未处理的动作.*no-such-action/,
+        '视图发了控制器不认的动作，必须变成界面上看得见的报错，不许静默无反应');
+    assert.ok(warns.some((a) => String(a[0]).includes('unknown action')),
+        '控制台要留痕（分诊「点了没反应」时先看这里）');
+});
+
+test('★ 动作契约对账：视图发出的每个 data-action 控制器都有分支', async () => {
+    const { mod } = boot();
+    const I = mod.exports.__internals;
+
+    // kitchen-sink state：刻意把各条件分支（改名中 / 克隆中 / 删除确认 / 未保存 / 提案 / 暂停态 …）
+    // 全点亮，好让视图把「平时藏在分支里的按钮」也渲染出来——分支漏了 = 对账样本漏了。
+    const book = { name: '书A', title: '书A', genre: 'xuanhuan', stage: 'topic', chapters: 3, style: {} };
+    const sink = {
+        // 列表页
+        creating: false, title: '', titleReset: 0, loading: false, filter: '',
+        projects: [book], unclaimed: [book],
+        rename: { id: '书A', value: '新名' }, clone: { id: '书A', value: '新书' },
+        renaming: false, cloning: false, listDeleteId: '书A', listDeleting: false, busy: false,
+        sessionScope: 'session', sessionFallback: false,
+        // 详情 / 通用
+        selected: '书A', detail: { title: '书A', stage: 'topic', chapters: { 1: {} } }, detailTab: 'info',
+        chapterList: [{ no: 1, title: '第一章', chars: 20, version: 2 }], chapterListLoading: false,
+        chapterNo: 1, draft: '正文', draftVersion: 0, draftModified: true,
+        proposals: [{ id: 'P1', status: 'pending', chapter: 1, title: '第一章' }],
+        proposalDetail: null, proposalBusy: null, proposalsLoading: false, proposalsError: null,
+        continuity: null, continuityLoading: false, continuityError: null,
+        diagnosis: null, diagnosisLoading: false, diagnosisError: null,
+        revising: null, batchBusy: false, batchResult: null,
+        batchFrom: 2, batchCount: 3, batchConcurrency: 1, batchForce: false,
+        discardPending: { kind: 'back' }, deleteState: 'confirm', exporting: false, gateNotice: null,
+        playback: { status: 'idle', currentNo: null },
+        reader: { no: 1, title: '第一章', text: '正文', loading: false },
+        // 世界书
+        loreEntries: [{ id: 'W1', name: '灯律', keywords: ['灯律'], content: '禁借火。', priority: 50, enabled: true, always_active: false, book_id: '书A' }],
+        loreForm: { mode: 'new', id: '', name: '', content: '', keywords: '', alwaysActive: false, enabled: true, priority: '50', bookId: '' },
+        loreDeleteId: 'W1', loreBusy: false,
+        // 反馈
+        error: '', notice: '',
+    };
+
+    // 每个视图都要真渲染（播放态/空目录各来一份，把三条播放分支都逼出来）。
+    const renders = [
+        ['ProjectListView', () => I.ProjectListView({ state: sink })],
+        ['ProjectDetailView(基本信息)', () => I.ProjectDetailView({ state: { ...sink, detailTab: 'info' } })],
+        ['ProjectDetailView(章节听书/播放中)', () => I.ProjectDetailView({ state: { ...sink, detailTab: 'chapters', playback: { status: 'playing', currentNo: 1 } } })],
+        ['ChapterListView(暂停态)', () => I.ChapterListView({ state: { ...sink, playback: { status: 'paused', currentNo: 1 } } })],
+        ['ChapterListView(空目录)', () => I.ChapterListView({ state: { ...sink, chapterList: [], reader: null } })],
+        ['ProjectOverviewView', () => I.ProjectOverviewView({ state: sink })],
+        ['LorebookView', () => I.LorebookView({ state: sink })],
+        ['SettingsView', () => I.SettingsView()],
+    ];
+
+    const actions = new Set();
+    for (const [name, render] of renders) {
+        const tree = render();
+        for (const el of collect(tree, (e) => typeof e.props?.['data-action'] === 'string')) {
+            actions.add(el.props['data-action']);
+        }
+    }
+    // 覆盖哨兵：渲染器若因 state 变形整块不出，样本会缩水成「假绿」——先卡住下限
+    assert.ok(actions.size >= 40, `对账样本太少（实测 ${actions.size} 个动作），渲染分支可能没被点亮`);
+
+    // 控制器拿真机动作名 + 空入参跑一遍：命中 case 的动作即便因缺参抛错/报错都算「有分支」；
+    // 只有落进 default（写「未处理的动作」）才是我们要拦的漂移。
+    const controller = I.createForgeController({ sessionId: 's1' });
+    for (const action of [...actions].sort()) {
+        try {
+            await controller.handleAction(action, { dataset: {} });
+        } catch { /* 已识别但入参不足 → 抛错也证明分支存在 */ }
+        assert.ok(!String(controller.state.error || '').startsWith('未处理的动作'),
+            `视图发出了 "${action}"，但控制器 handleAction 没有对应分支 —— 点下去会静默无反应`);
+    }
+});

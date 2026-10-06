@@ -14,7 +14,7 @@ import { scanSensitive, CENSOR_KEYS } from '../lib/censor.js';
 import { applyFactUpdates, queryFacts, factsDigest, assertLedgerChapter, factsAt, statusTimeline, foreshadowSetup, foreshadowPayoff, openForeshadows, foreshadowDigest, overdueForeshadows } from '../lib/ledger.js';
 import { computeAudit, auditVerdict } from '../lib/audit.js';
 import { matchWorldEntries, buildContextPack, renderPack } from '../lib/contextpack.js';
-import { pathsFor, defaultNovel, chapterRecord, normalizeWorldEntry, bookInSession, isUnclaimed, addBookSession, nextWorldEntryId, sameEntryId } from '../lib/store.js';
+import { pathsFor, defaultNovel, chapterRecord, normalizeWorldEntry, bookInSession, isUnclaimed, addBookSession, nextWorldEntryId, sameEntryId, migrateNovel, SCHEMA_VERSION } from '../lib/store.js';
 import { scanAiFlavor } from '../lib/noai.js';
 import { roughOutline, splitIntoChapters, isChapterHeading } from '../lib/import.js';
 import { diagnoseIntro, computeChapterDiagnosis } from '../lib/diagnose.js';
@@ -26,7 +26,7 @@ import { bigrams } from '../lib/retrieval.js';
 import { validateContinuity, isDeathRecord, deathTimeline } from '../lib/continuity.js';
 import { contentGate, setupKeywords, factStatesAt } from '../lib/content-gate.js';
 import { validatePolishEdits } from '../lib/polish.js';
-import { hasControlChars, stripControlChars, controlCharPaths, numericNullFields, ghostProposals, healthIssues } from '../lib/health.js';
+import { hasControlChars, stripControlChars, controlCharPaths, numericNullFields, ghostProposals, ghostIndexChapters, healthIssues } from '../lib/health.js';
 
 // ── versioning ──────────────────────────────────────────────────────────────
 
@@ -1829,4 +1829,69 @@ test('health: healthIssues 产出 continuity 同款 issue（severity/code/where/
     assert.match(byCode['proposal-file-missing'].message, /P2/);
     assert.equal(byCode['proposal-orphan-file'].severity, 'warning');
     assert.match(byCode['proposal-orphan-file'].message, /P9/);
+});
+
+test('health: ghostIndexChapters 只报「索引有、书里已删」的章（升序去重），健康索引零噪音', () => {
+    // 索引含 1/2/3/5，书里只剩 1/2 → 3/5 是幽灵（删章后索引未重建的残留）
+    assert.deepEqual(ghostIndexChapters([3, 1, 2, 5, 3], [1, 2]), [3, 5]);
+    assert.deepEqual(ghostIndexChapters([1, 2], ['1', '2']), [], '字符串章节键也要能对齐（无谎言阳性）');
+    assert.deepEqual(ghostIndexChapters([], [1, 2]), [], '空索引不是问题（只是没建/没覆盖）');
+    assert.deepEqual(ghostIndexChapters([1, 2], []), [1, 2], '书里一章都没有时，索引里全是幽灵');
+    assert.deepEqual(ghostIndexChapters([null, 'x', 2], [2]), [], '坏数据不得让比较崩（非整数被过滤）');
+    assert.deepEqual(ghostIndexChapters(null, null), [], '缺参不抛');
+});
+
+test('health: healthIssues 把检索索引陈旧块并进全书体检（search-index-stale，含可行动指引）', () => {
+    const issues = healthIssues({
+        novel: { chapters: { 1: { title: 'a' } } },
+        indexedChapters: [1, 4],
+    });
+    assert.equal(issues.length, 1, `只报第4章幽灵块，实际：${JSON.stringify(issues)}`);
+    assert.equal(issues[0].code, 'search-index-stale');
+    assert.equal(issues[0].severity, 'warning');
+    assert.match(issues[0].where, /第4章/);
+    assert.match(issues[0].message, /repair/, '文案要给出可行动的修复入口');
+    // 默认不带 indexedChapters → 不误报（向后兼容：老调用点行为不变）
+    assert.equal(healthIssues({ novel: { chapters: { 1: {} } } }).length, 0);
+});
+
+// ── 数据格式版本锚点与迁移（lib/store.js，方向3）────────────────────────────
+
+test('store: 新书带当前 schemaVersion 锚点；migrateNovel 幂等（迁移完再跑无改动）', () => {
+    const fresh = defaultNovel({ title: '新书', genre: '悬疑' });
+    assert.equal(fresh.schemaVersion, SCHEMA_VERSION);
+    const again = migrateNovel(fresh);
+    assert.equal(again.changed, false, '新书已是当前版本，迁移应为空操作');
+    assert.equal(fresh.schemaVersion, SCHEMA_VERSION);
+});
+
+test('store: migrateNovel 把「旧书」（无 schemaVersion 的残缺结构）补齐并升到当前版本', () => {
+    // 模拟早期版本落下的 novel.json：没有 id / sessions / cast / approvals.outline
+    const legacy = { title: '旧书', genre: '玄幻', chapters: { 1: { title: 'a' } } };
+    const { changed, from, to, notes } = migrateNovel(legacy);
+    assert.equal(changed, true);
+    assert.equal(from, 0, '无版本号视为 v0');
+    assert.equal(to, SCHEMA_VERSION);
+    assert.equal(legacy.schemaVersion, SCHEMA_VERSION);
+    assert.equal(typeof legacy.id, 'string');
+    assert.ok(legacy.id.startsWith('nb_'), '旧书要补稳定 id');
+    assert.deepEqual(legacy.sessions, []);
+    assert.deepEqual(legacy.cast, []);
+    assert.deepEqual(legacy.proposals, []);
+    assert.deepEqual(legacy.gateFailures, {});
+    assert.deepEqual(legacy.approvals.outline, {}, '缺 approvals.outline 的旧书要补（否则 approve 会报错）');
+    assert.deepEqual(legacy.chapters, { 1: { title: 'a' } }, '只补结构，不动已有内容');
+    assert.ok(notes.length > 0);
+    // 幂等：对补完的书再迁移一次，应无改动
+    assert.equal(migrateNovel(legacy).changed, false);
+});
+
+test('store: migrateNovel 遇到「比自己新」的数据版本一律不动（本地降级不毁数据）', () => {
+    const future = { title: '未来书', schemaVersion: SCHEMA_VERSION + 5 };
+    const snapshot = JSON.stringify(future);
+    const { changed, from, to } = migrateNovel(future);
+    assert.equal(changed, false);
+    assert.equal(from, SCHEMA_VERSION + 5);
+    assert.equal(to, SCHEMA_VERSION + 5);
+    assert.equal(JSON.stringify(future), snapshot, '高版本数据必须原样保留');
 });
