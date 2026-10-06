@@ -42,8 +42,25 @@ export function createProposalsController(ctx) {
 				state.notice += ` ⚠ 门禁提示 ${bits.length} 条（详见下方）`;
 			}
 			await Promise.all([loadProposals(state.selected), ctx.loadChapterList(state.selected)]);
-			// 正开着被改的那一章就刷新正文，让用户立刻看到新版本
-			if (state.chapterNo === value.chapter) await ctx.loadChapter(value.chapter);
+			// 提示与正文必须对齐：应用的是第 N 章，编辑器却停在第一章，会出现
+			// 「本章编辑」区挂着第 N 章的提示、下面却是第 1 章的怪相。故把编辑器切到被改的那一章：
+			//   · 正开着该章 → 重新载入取新版本（旧分支行为不变）；
+			//   · 别的章有未保存草稿 → 不静默丢弃，挂起交给视图的「丢弃改动 / 取消」；
+			//   · 否则直接切过去。
+			const targetChapter = Number(value.chapter);
+			if (!Number.isFinite(targetChapter) || targetChapter <= 0) {
+				// 服务端没回章号 = 拿不到目标章，别猜（Number(undefined)=NaN 会切到幽灵章）
+				state.notice += '；未拿到被改的章号，编辑器未切换';
+				console.warn('[novel-forge] 应用提案返回的 chapter 非法：', value.chapter);
+			} else if (state.chapterNo === targetChapter) {
+				await ctx.loadChapter(targetChapter);
+			} else if (state.draftModified) {
+				state.discardPending = { kind: 'chapter', no: targetChapter };
+				state.notice += `；第 ${state.chapterNo} 章有未保存改动，确认后切到第 ${targetChapter} 章`;
+			} else {
+				await ctx.loadChapter(targetChapter);
+				state.notice += `；已切到第 ${targetChapter} 章`;
+			}
 		} catch (error) { state.error = String(error?.message ?? error); }
 		finally { state.proposalBusy = null; notify(); }
 	};
