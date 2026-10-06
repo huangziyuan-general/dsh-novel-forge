@@ -78,7 +78,7 @@ export function startForgeAutoOpen(ctx, opts = {}) {
 	const clearTimer = opts.clearTimer ?? clearTimeout;
 	const log = opts.log ?? console;
 	const fetchProjects = opts.fetchProjects
-		?? ((sessionId) => apiFetch(`/projects?session=${encodeURIComponent(sessionId)}`));
+		?? ((sessionId) => apiFetch('/projects', { headers: { 'x-dsh-session': sessionId } }));
 	const openTab = opts.openTab ?? ((c) => openForgeTab(c, { timer: setTimer, log }));
 
 	/** 已经自动打开过的会话 —— 不重复打扰（用户手动关掉后也不强行再开）。 */
