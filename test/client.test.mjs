@@ -1487,6 +1487,36 @@ test('★ 门禁干净（gate.ok / gate=null）：不制造噪音', async () => 
     }
 });
 
+test('★ 应用提案到别的章：编辑器自动切过去（提示与正文对齐）', async () => {
+    const requests = [];
+    const { controller } = bootWith(forgeRouter(requests, { applyValue: { chapter: 3, version: 2, gate: null } }));
+    await controller.handleAction('open', { dataset: { id: '书A' } });
+    assert.equal(controller.state.chapterNo, 1, '开书默认停在第 1 章');
+
+    await controller.handleAction('proposal-apply', { dataset: { id: 'P3-x' } });
+
+    assert.equal(controller.state.chapterNo, 3, '★ 应用第 3 章的提案后，编辑器必须切到第 3 章（否则提示挂在本章编辑、正文却是第 1 章）');
+    assert.ok(requests.some((r) => /\/chapters\/3($|\?)/.test(r.url)), '要真的去载入第 3 章正文');
+    assert.match(controller.state.notice, /已切到第 3 章/, '提示里说明已切章');
+});
+
+test('★ 应用提案到别的章而当前章有未保存改动：不静默丢弃，先挂起确认', async () => {
+    const requests = [];
+    const { controller } = bootWith(forgeRouter(requests, { applyValue: { chapter: 3, version: 2, gate: null } }));
+    await controller.handleAction('open', { dataset: { id: '书A' } });
+    controller.state.draft = '写了一半的字'; controller.state.draftModified = true;
+
+    await controller.handleAction('proposal-apply', { dataset: { id: 'P3-x' } });
+
+    assert.equal(controller.state.chapterNo, 1, '未确认前停在原章，草稿不丢');
+    assert.equal(controller.state.discardPending?.kind, 'chapter', '挂起的是切章意图');
+    assert.equal(controller.state.discardPending?.no, 3, '目标是第 3 章');
+    assert.equal(controller.state.draft, '写了一半的字', '草稿仍在');
+
+    await controller.handleAction('discard-confirm', { dataset: {} });
+    assert.equal(controller.state.chapterNo, 3, '确认丢弃后才切到目标章');
+});
+
 test('★ 删除确认态不得跨书存活：A 书点过「删除」→ 开 B 书必须回到未确认', async () => {
     const requests = [];
     const { controller } = bootWith(forgeRouter(requests));
