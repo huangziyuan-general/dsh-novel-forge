@@ -1146,7 +1146,7 @@ test('R-建会话-5 全能力（真控制器）→ 建+归档一次完成，arch
             list: async () => ({ sessions: [{ id: 's1', workspaceId: 'w-novel' }] }),
             create: async () => ({ sessionId: 'session-real-1' }),
         },
-        workspace: { archiveSession: async (id) => { archived.push(id); } },
+        workspace: { archiveSession: async (req) => { archived.push(req?.sessionId ?? req); } },
         full: true,
     };
     const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1' } });
@@ -1154,6 +1154,26 @@ test('R-建会话-5 全能力（真控制器）→ 建+归档一次完成，arch
     assert.equal(res.json.value.archived, true, '全能力下必须顺手归档——一个按钮完成轮换');
     assert.deepEqual(archived, ['s1']);
     assert.equal(res.json.value.createdSessionId, 'session-real-1');
+    rotateProbeResult = undefined;
+});
+
+test('R-建会话-5b archiveSession 首形状失败 → 次形状兜底，错误不吞', async () => {
+    const got = [];
+    rotateProbeResult = {
+        sessions: { list: async () => ({ sessions: [] }), create: async () => ({ sessionId: 's-x' }) },
+        workspace: {
+            archiveSession: async (req) => {
+                got.push(req);
+                if (got.length === 1) throw new Error('cannot archive session \'undefined\'');
+            },
+        },
+        full: true,
+    };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1' } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json.value.archived, true, '第二形状成功');
+    assert.equal(got.length, 2, '先试 {sessionId} 再试 {id}');
+    assert.deepEqual(got[0], { sessionId: 's1' });
     rotateProbeResult = undefined;
 });
 
