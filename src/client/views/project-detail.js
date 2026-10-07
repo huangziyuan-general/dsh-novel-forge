@@ -47,6 +47,37 @@ function Segmented({ tab }) {
 	}, item('info', '📋 基本信息'), item('chapters', '🎧 章节听书'));
 }
 
+/** 会话疲劳横幅（0.15.1）：服务端按当前会话聚合的首稿趋势——退化时提醒换会话。
+ *  动作是「复制交接摘要」：新会话粘一句即可续写（书的状态全在盘上，换会话零损失）。
+ *  一键创建会话宿主未对第三方 client 暴露（0.15.x 复核过网关是读取向），不做假按钮。 */
+function SessionFatigueBanner({ session, copied }) {
+	if (!session?.warn) return null;
+	return h('div', {
+		style: {
+			border: `1px solid ${tint(color.warn, 34)}`, borderRadius: '9px',
+			padding: `${space.sm}px ${space.md}px`, background: tint(color.warn, 10),
+		},
+	},
+		h('div', { style: { display: 'flex', alignItems: 'baseline', gap: space.sm, flexWrap: 'wrap' } },
+			h('span', { style: { fontWeight: weight.semibold } }, '⚠ 会话疲劳'),
+			h('span', { style: hintStyle },
+				`本会话已写 ${session.chapters} 章 · 首稿均长 ${session.firstAvg} 字（全书基线 ${session.baselineAvg}）`),
+		),
+		h('div', { style: { ...hintStyle, marginTop: space.xs } },
+			'对话历史堆积会稀释输出质量。书的状态全在盘上——换会话零损失。'),
+		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, marginTop: space.sm } },
+			h('button', {
+				'data-action': 'copy-handoff',
+				style: {
+					cursor: 'pointer', padding: `${space.xs}px ${space.md}px`, borderRadius: '7px',
+					border: `1px solid ${tint(color.warn, 34)}`, background: 'transparent',
+					color: 'inherit', fontFamily: 'inherit', fontSize: font.small,
+				},
+			}, copied ? '✓ 已复制——去 shell 新建会话后粘贴即可续写' : '复制交接摘要'),
+		),
+	);
+}
+
 /** 体检结果里的一条问题。 */
 function issueRow(issue, i, total) {
 	const isErr = issue.severity === 'error';
@@ -448,6 +479,7 @@ h('span', { style: { flex: '1 1 auto' } }),
 
 	return h('div', { style: stackStyle(space.lg) },
 		crumb,
+		SessionFatigueBanner({ session: s.detail?.session, copied: s.copiedHandoff === true }),
 		Segmented({ tab: s.detailTab }),
 		s.detailTab === 'chapters' ? ChapterListView({ state: s }) : infoView,
 	);

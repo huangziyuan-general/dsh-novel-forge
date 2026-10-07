@@ -154,6 +154,24 @@ export function createEventsController(ctx) {
 				break;
 			}
 			case 'discard-cancel': state.discardPending = null; notify(); break;
+		case 'copy-handoff': {
+			// 会话疲劳横幅的交接摘要：复制到剪贴板，用户去 shell 新建会话粘贴即可续写。
+			// 剪贴板要安全上下文（localhost 满足）；不可用时给可行动提示，不静默。
+			// ⚠ navigator 必须先过 typeof：headless（vm 测试环境）里它是未声明标识符，
+			// 可选链只防 null/undefined，不防未声明——直接 navigator?.clipboard 会 ReferenceError。
+			const handoff = state.detail?.session?.handoff;
+			if (!handoff) break;
+			const clipboard = typeof navigator !== 'undefined' ? navigator?.clipboard : undefined;
+			if (typeof clipboard?.writeText !== 'function') {
+				state.error = '剪贴板不可用（非安全上下文）——请在详情里手动选中交接摘要复制';
+				notify();
+				break;
+			}
+			clipboard.writeText(handoff)
+				.then(() => { state.copiedHandoff = true; notify(); })
+				.catch((error) => { state.error = `复制失败：${error?.message ?? error}`; notify(); });
+			break;
+		}
 			case 'lore-new': state.loreForm = { ...emptyLoreForm(), mode: 'new' }; state.loreDeleteId = null; notify(); break;
 			case 'lore-edit': {
 				// id 字符串比较（理由同 toggleLoreEntry）：Number('W1')=NaN 会让「编辑」

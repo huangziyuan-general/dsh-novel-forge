@@ -1019,7 +1019,8 @@ test('★ 陈旧响应守卫：快速连开两本书，慢到的旧书响应不�
     const p2 = controller.handleAction('open', { dataset: { id: '乙' } });
 
     // 乙全链路放行。⚠️ URL 段是 percent-encoded（视图 encodeURIComponent，0.6.3 的老教训），
-    // match 必须用编码后的书名；openProject 的 detail/章请求不带 session（withSession 只在列表页用）。
+    // match 必须用编码后的书名；openProject 的 detail 请求带 ?session=（0.15.1 疲劳横幅），
+    // respond 的子串兜底能命中；章请求不带 session。
     const yi = encodeURIComponent('乙');
     dfr.respond(`/api/novel-forge/projects/${yi}/chapters/1`, '乙的第一章');
     dfr.respond(`/api/novel-forge/projects/${yi}`, { title: '乙书' });
@@ -1049,7 +1050,7 @@ test('★ 陈旧响应守卫：快速连点两章，后点的章必须赢（draf
     // 用锚定结尾的正则：/chapters$ 只命中目录、不误伤 /chapters/N 的正文请求。
     const shu = encodeURIComponent('书');
     const dfr = gatedFetch([
-        { match: new RegExp(`/projects/${shu}$`), value: { title: '书' } },
+        { match: new RegExp(`/projects/${shu}(\\?.*)?$`), value: { title: '书' } },
         { match: /\/chapters$/, value: [] },
         { match: /\/elements$/, value: {} },
         { match: /\/proposals$/, value: { proposals: [] } },
@@ -1692,4 +1693,25 @@ test('★ 动作契约对账：视图发出的每个 data-action 控制器都有
         assert.ok(!String(controller.state.error || '').startsWith('未处理的动作'),
             `视图发出了 "${action}"，但控制器 handleAction 没有对应分支 —— 点下去会静默无反应`);
     }
+});
+
+test('★ 详情请求带会话 + 疲劳横幅数据落 state；copy-handoff 无剪贴板给可行动错误', async () => {
+    const seq = scriptedFetch([
+        { value: { id: '书C', title: '书C', chapters: { 9: { chars: 2000 } }, session: { chapters: 9, firstAvg: 850, baselineAvg: 2100, warn: '本会话首稿均长 850 字——建议开新会话', handoff: '继续《书C》：已写至第 9 章。' } } },
+        { value: '' },
+        { value: [] }, { value: {} }, { value: [] },
+    ]);
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch: seq.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's9' });
+    controller.loadProposals = async () => {}; // 裸控制器未接线：openProject 尾部的跨域调用由测试桩顶上
+    await controller.handleAction('open', { dataset: { id: '书C' } });
+
+    const detailUrl = seq.requests.map((r) => r.url).find((u) => u.includes('/projects/%E4%B9%A6C'));
+    assert.ok(detailUrl && detailUrl.includes('session=s9'), '详情请求必须带 session（疲劳横幅数据面）');
+    assert.equal(controller.state.detail.session.chapters, 9, '横幅数据落到 state.detail.session');
+
+    // 复制交接摘要：Node 测试环境没有剪贴板 → 必须给可行动错误，不是静默失败
+    await controller.handleAction('copy-handoff', { dataset: {} });
+    assert.ok(controller.state.error.includes('剪贴板不可用'), '无剪贴板要给可见错误');
 });
