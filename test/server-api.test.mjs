@@ -976,3 +976,40 @@ test('R7 /continuity 归并 health 体检：控制字符路径 / NaN→null 残�
     // 一次 GET /continuity 就凭空建出 .novel/index.db。这里锁死「库不存在就不建」。
     assert.equal(fs.existsSync(path.join(bookDir, '.novel', 'index.db')), false, '只读体检不得凭空建出索引库');
 });
+
+test('R-疲劳 详情按 ?session= 聚合首稿趋势并给交接摘要（面板横幅数据面）', async () => {
+    await createBook('疲劳检测');
+    // 模拟 agent 会话 s1 的写章审计行（0.15.1 起 audit() 带 session 字段）；
+    // 无 session 的行（旧版本 / REST 面存章）不计入——退化场景是 agent 长会话连写。
+    const bookDir = path.join(root, '疲劳检测');
+    const auditPath = path.join(bookDir, '.novel', 'audit.jsonl');
+    fs.mkdirSync(path.dirname(auditPath), { recursive: true });
+    const lines = [
+        { ts: 't', session: 's1', action: 'write_chapter/rejected', chapter: 2, reason: '正文 800 字，低于下限 2000', actor: 'agent' },
+        { ts: 't', session: 's1', action: 'write_chapter/saved', chapter: 2, chars: 2000, actor: 'agent' },
+        { ts: 't', session: 's1', action: 'write_chapter/saved', chapter: 3, chars: 900, actor: 'agent' },
+        { ts: 't', action: 'write_chapter/saved', chapter: 4, chars: 2100, actor: 'agent' },
+    ];
+    fs.writeFileSync(auditPath, lines.map((j) => JSON.stringify(j)).join('\n') + '\n');
+    // 基线来自 novel.json 的章节 chars：注进两章有效数值
+    const metaPath = path.join(bookDir, 'novel.json');
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    meta.chapters = { 2: { chars: 2000 }, 3: { chars: 2100 } };
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+
+    const hit = await drive({ method: 'GET', url: `${PREFIX}/projects/${encodeURIComponent('疲劳检测')}?session=s1` });
+    assert.equal(hit.statusCode, 200, hit.body);
+    assert.equal(hit.json.value.session.chapters, 2, '只统计 s1 的 saved 章');
+    assert.equal(hit.json.value.session.firstAvg, 850, '首稿=每章第一次出现的行（ch2 取 rejected 的 800）');
+    assert.equal(hit.json.value.session.baselineAvg, 2050, '基线=章节 chars 均值');
+    assert.ok(hit.json.value.session.warn.includes('低于全书基线'), '首稿退化 → 警示');
+    assert.ok(hit.json.value.session.handoff.includes('疲劳检测'), '交接摘要带书名');
+    assert.ok(hit.json.value.session.handoff.includes('第 3 章'), '交接摘要指到下一章');
+
+    // 不带 session 参数：无 session 字段（面板无横幅）
+    const plain = await drive({ method: 'GET', url: `${PREFIX}/projects/${encodeURIComponent('疲劳检测')}` });
+    assert.equal(plain.json.value.session, undefined, '无 session 参数不给疲劳数据');
+    // 别的会话：无写章记录 → 同样无横幅
+    const other = await drive({ method: 'GET', url: `${PREFIX}/projects/${encodeURIComponent('疲劳检测')}?session=s2` });
+    assert.equal(other.json.value.session, undefined, '其它会话无写章记录不给横幅');
+});
