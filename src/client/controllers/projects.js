@@ -344,6 +344,25 @@ export function createProjectsController(ctx) {
 		} finally { state.batchBusy = false; notify(); }
 	};
 
+	// 会话疲劳「创建新会话并交接」：服务端 sessions.create（同工作区优先），交接摘要自动
+	// 进剪贴板；归档通道宿主门禁封死——提示手动归档，不说做不到就装没这回事。
+	const createSession = async () => {
+		if (!state.sessionId) { state.error = '缺会话 id（面板未挂在会话上）——无法创建新会话'; notify(); return; }
+		state.busy = true; notify();
+		try {
+			const value = await apiFetch('/session/create', {
+				method: 'POST', body: JSON.stringify({ session: state.sessionId }),
+			});
+			const handoff = state.detail?.session?.handoff ?? '';
+			if (handoff && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+				navigator.clipboard.writeText(handoff).then(() => { state.copiedHandoff = true; notify(); }).catch(() => { /* 剪贴板不可用时交接摘要仍在横幅可手复制 */ });
+			}
+			state.notice = value.createdSessionId
+				? `新会话已创建（${value.workspaceMatched ? '同工作区' : '宿主默认位置'}），交接摘要已复制——到会话列表打开新会话粘贴即续写；旧会话可在会话列表手动归档`
+				: '新会话已创建但未取得 id——请到会话列表查看';
+		} catch (error) { state.error = String(error?.message ?? error); }
+		finally { state.busy = false; notify(); }
+	};
 	// 会话疲劳一键轮换（真发请求在第二击，armed 判定在 events 控制器）：
 	// POST /session/rotate 由服务端探测宿主能力——探测不到返回 501，错误原文直接给面板。
 	const rotateSession = async () => {
@@ -362,7 +381,7 @@ export function createProjectsController(ctx) {
 	};
 	return {
 		loadElements, loadChapterList, refreshProjects, claimProject, renameProject, cloneProject,
-		deleteListProject, openProject, createProject, deleteProject, goBack, rotateSession,
+		deleteListProject, openProject, createProject, deleteProject, goBack, rotateSession, createSession,
 		loadContinuity, loadDiagnosis, runRevision, writeSingleChapter, runBatch,
 	};
 }

@@ -345,6 +345,27 @@ test('★ 创建项目带会话戳：POST /projects body 里有 session', async 
     assert.equal(body.title, '新书');
 });
 
+test('★ 疲劳横幅「创建新会话并交接」：单击即 POST /session/create，成功后自动复制交接摘要', async () => {
+    const seq = scriptedFetch([
+        { value: { title: '星海拾骨', stage: 'planning', chapters: {}, session: { chapters: 9, firstAvg: 800, baselineAvg: 2000, warn: '低于全书基线', handoff: '交接摘要内容', canCreate: true } } },
+        { value: '' }, // 第 1 章正文
+        { value: [] }, { value: [] },
+        { value: { created: true, createdSessionId: 's-new-1', workspaceMatched: true } },
+    ]);
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch: seq.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    assert.equal(controller.state.detail?.session?.canCreate, true, '能力位亮起才该有按钮');
+
+    await controller.handleAction('session-create', { dataset: {} });
+    const post = seq.requests.find((r) => r.url.endsWith('/session/create'));
+    assert.ok(post, '单击必须发创建请求');
+    assert.equal(JSON.parse(post.init.body).session, 's1', '带当前会话 id 供工作区匹配');
+    assert.ok(controller.state.notice.includes('新会话已创建'), '成功提示要指路：去会话列表打开新会话');
+    assert.ok(controller.state.notice.includes('手动归档'), '归档不可自动——如实告知手动路径');
+});
+
 test('★ 会话疲劳一键轮换：第一击只 arm 不发请求，第二击才 POST /session/rotate 并带会话 id', async () => {
     // 501 降级形态由 server 侧契约覆盖（scriptedFetch 只能回 ok:true）——这里锁两段确认与请求形状
     const seq = scriptedFetch([
