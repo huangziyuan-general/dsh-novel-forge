@@ -84,5 +84,7 @@ export function initialState() {
 		undoStack: [], baseline: '', draftModified: false,
 		// 未保存离开确认：null | {kind:'back'} | {kind:'chapter', no:number}
 		discardPending: null,
+		// 会话疲劳横幅「复制交接摘要」的已复制反馈（换书/重新打开详情时复位）
+		copiedHandoff: false,
 	};
 }

@@ -28,7 +28,8 @@ import { bigrams } from '../lib/retrieval.js';
 import { validateContinuity, isDeathRecord, deathTimeline } from '../lib/continuity.js';
 import { contentGate, setupKeywords, factStatesAt } from '../lib/content-gate.js';
 import { validatePolishEdits } from '../lib/polish.js';
-import { hasControlChars, stripControlChars, controlCharPaths, numericNullFields, ghostProposals, ghostIndexChapters, healthIssues } from '../lib/health.js';
+import { hasControlChars, stripControlChars, controlCharPaths, numericNullFields, ghostProposals, ghostIndexChapters, healthIssues, sessionFatigue, bookCharBaseline } from '../lib/health.js';
+import { auditLine } from '../lib/fsio.js';
 
 // ── versioning ──────────────────────────────────────────────────────────────
 
@@ -1055,6 +1056,25 @@ test('A3/A4 契约指标：覆盖率/漏写/偏离度/场景豁免', () => {
     const broken = computeGateMetrics({ content: '随便一段。', outline: '## 本章必写场景\n\n## 本章禁止偏离项\n- 不得让陆寒出场\n' });
     assert.equal(broken.available, false);
     assert.match(broken.note, /解析不出/, '段存在但解析不出要给提示（不阻断，写不了章的代价更大）');
+});
+
+test('★ 关键词分词：—— / · 自然断开，用 —— 连接的场景描述也能命中（真机第93章假阴性回归）', () => {
+    // 复刻真机第93章的写法：场景描述大量用 —— 连接、用 · 分隔短语。
+    // 旧实现只枚举常见中文标点，—— 与 · 不断句 → 整句粘成超长 token → 假阴性。
+    const outline = '## 本章必写场景\n'
+        + '- 井的账：井欠的七条命一座封——苗在还——“命账等到什么时候”\n'
+        + '- 第一枪：孙宇算三笔——“今夜不打”\n'
+        + '- 对笔迹：掌灯人认纸不认笔迹——“纸认账·不认人”\n'
+        + '- 暗巷：孙宇潜入后巷——“有人在等他”\n\n'
+        + '## 本章禁止偏离项\n- 不得让陆寒出场\n';
+    const content = '井欠的：七条命，一座封。井醒了，苗在还。'
+        + '“命账等到什么时候？”'
+        + '孙宇说：“今夜不打。”'
+        + '掌灯人摇头：“纸认账，不认人。”';
+    const g = computeGateMetrics({ content, outline });
+    // 前三个场景正文确实写了（—— 断开后每个短句都能在正文命中）
+    assert.equal(g.coverage, 75, '—— 断开的短句应能在正文命中，不该整句粘连成超长 token');
+    assert.deepEqual(g.missedScenes, ['暗巷'], '真没写的场景仍要判漏写（阈值不能松到失去意义）');
 });
 
 
@@ -2108,4 +2128,49 @@ test('store: migrateNovel 遇到「比自己新」的数据版本一律不动（
     assert.equal(from, SCHEMA_VERSION + 5);
     assert.equal(to, SCHEMA_VERSION + 5);
     assert.equal(JSON.stringify(future), snapshot, '高版本数据必须原样保留');
+});
+
+// ── 会话疲劳（0.15.1）：长会话上下文堆积的首稿退化检测 ──────────────────────
+
+test('auditLine: session 字段只在给准时出现（历史行无 session 的兼容性）', () => {
+    const withS = JSON.parse(auditLine('write_chapter/saved', { chars: 2000 }, 'agent', 'sess-1'));
+    assert.equal(withS.session, 'sess-1');
+    assert.equal(withS.chars, 2000);
+    const noS = JSON.parse(auditLine('write_chapter/saved', { chars: 2000 }, 'agent'));
+    assert.equal('session' in noS, false, 'REST 面/旧形状不得带 session 键');
+});
+
+test('health: 会话疲劳——首稿退化警示优先于章数阈值，别会话/非写章行不计入', () => {
+    const lines = [
+        { session: 's1', action: 'write_chapter/rejected', chapter: 10, reason: '正文 800 字，低于下限 2000' },
+        { session: 's1', action: 'write_chapter/saved', chapter: 10, chars: 2000 },
+        { session: 's1', action: 'write_chapter/saved', chapter: 11, chars: 900 },
+        { session: 'other', action: 'write_chapter/saved', chapter: 12, chars: 2100 },
+        { session: 's1', action: 'ledger/update', chapter: 10 },
+        { noSessionAtAll: true, action: 'write_chapter/saved', chapter: 13, chars: 2050 },
+    ].map((j) => JSON.stringify(j)).join('\n');
+    const f = sessionFatigue(lines, 's1', 2100);
+    assert.equal(f.sessionChapters, 2, '只有 s1 的两个 saved 章');
+    assert.equal(f.sessionFirstAvg, 850, '首稿=每章第一次出现的行（ch10 取 rejected 的 800）');
+    assert.equal(f.baselineAvg, 2100);
+    assert.ok(f.warn.includes('低于全书基线'), '首稿退化警示优先');
+});
+
+test('health: 会话疲劳——首稿健康但连续章数超阈值，改发章数警示', () => {
+    const many = Array.from({ length: 9 }, (_, i) => JSON.stringify({
+        session: 's2', action: 'write_chapter/saved', chapter: i + 1, chars: 2100,
+    })).join('\n');
+    const f2 = sessionFatigue(many, 's2', 2100);
+    assert.equal(f2.sessionChapters, 9);
+    assert.equal(f2.sessionFirstAvg, 2100);
+    assert.ok(f2.warn.includes('连续写 9 章'), '章数阈值警示');
+    assert.equal(f2.warn.includes('低于全书基线'), false);
+});
+
+test('health: 会话疲劳——无基线/空会话不警示，bookCharBaseline 滤掉 null 残留', () => {
+    assert.equal(sessionFatigue('', 's1', 2100).sessionFirstAvg, null);
+    assert.equal(sessionFatigue('{}\n{}\n', 's1', 2100).sessionFirstAvg, null);
+    assert.equal(sessionFatigue(JSON.stringify({ session: 's1', action: 'write_chapter/saved', chapter: 1, chars: 1900 }), 's1', 0).warn, null, '无基线不判退化');
+    assert.equal(bookCharBaseline({ chapters: { 1: { chars: 2000 }, 2: { chars: 2200 }, 3: { chars: null } } }), 2100, 'NaN→null 残留被滤掉');
+    assert.equal(bookCharBaseline({ chapters: {} }), 0);
 });
