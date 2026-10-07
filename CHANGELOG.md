@@ -10,6 +10,12 @@
   详情块 `rotate:true` 时渲染，两段确认防手滑（第一击 arm、第二击才发）；create 成功而
   archive 失败时 200 带 `archiveError` 不吞新会话。请求形状未静态实证（宿主包是打包产物），
   create 按最小形状逐个尝试、失败原文进错误消息——重启验证时据此校准。
+  **真机实证（2026-10-07）**：①cordis ctx 代理对未 inject 的服务名访问即 throw
+  （"cannot get property X without inject"）而非返回 undefined——探测必须逐名
+  try/catch，首个实现因此炸掉疲劳横幅整块（回归钉已加：对拒绝式代理安全降级）；
+  ②注入的 `sessions` 服务在服务端带 `create`（建会话通道在），但 workspace 控制器
+  未注册任何 cordis 服务名 → 归档对第三方插件不可见 → 旋转按钮保持隐藏、端点 501
+  明细如实报告，宿主哪天开放即自动点亮。
 - **会话疲劳进面板：横幅 + 复制交接摘要**：`GET /projects/:id?session=<id>` 按会话聚合首稿
   趋势（health.js sessionFatigue）并在详情响应里带 `session` 块；面板详情页渲染疲劳横幅
   （本会话章数 / 首稿均长 / 基线 + 警示文案），动作是**「复制交接摘要」**——新会话粘一句即可

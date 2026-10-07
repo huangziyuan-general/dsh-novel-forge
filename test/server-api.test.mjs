@@ -1029,7 +1029,16 @@ test('R-轮换-0 探测器：候选名直读 + 方法面对账（只读 face 不
     const readonly = probeSessionCapabilities({ sessions: { list() {}, subscribe() {} } });
     assert.equal(readonly.full, false, '浏览器侧只读 face 没有 create，不算能力');
     assert.equal(readonly.sessions, null);
-    assert.deepEqual(probeSessionCapabilities({}), { sessions: null, workspace: null, full: false });
+    const none = probeSessionCapabilities({});
+    assert.equal(none.sessions, null);
+    assert.equal(none.workspace, null);
+    assert.equal(none.full, false);
+    assert.match(none.detail, /不可见/, '探测明细要说清「为什么不可见」（cordis 未 inject 即不可见）');
+    // 回归钉：探测绝不允许 throw——cordis 代理对未 inject 名直接抛错（68cb694 曾借此炸掉疲劳横幅）
+    const hostile = new Proxy({}, { get(target, prop) { throw new Error(`cannot get property "${String(prop)}" without inject`); } });
+    const safe = probeSessionCapabilities(hostile);
+    assert.equal(safe.full, false, '对 cordis 式拒绝代理必须安全降级，不许 throw');
+    assert.match(safe.detail, /不可见/);
 });
 
 test('R-轮换-1 无能力（默认桩）→ 501 SESSION_ROTATE_UNSUPPORTED 且指路复制交接', async () => {
