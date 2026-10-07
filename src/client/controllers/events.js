@@ -172,6 +172,13 @@ export function createEventsController(ctx) {
 				.catch((error) => { state.error = `复制失败：${error?.message ?? error}`; notify(); });
 			break;
 		}
+			case 'session-rotate': {
+				// 两段确认：归档的是「正在看面板的这个会话」，第一击 arm 防手滑，第二击才发。
+				if (!state.rotatePending) { state.rotatePending = true; notify(); break; }
+				state.rotatePending = false;
+				await ctx.rotateSession();
+				break;
+			}
 			case 'lore-new': state.loreForm = { ...emptyLoreForm(), mode: 'new' }; state.loreDeleteId = null; notify(); break;
 			case 'lore-edit': {
 				// id 字符串比较（理由同 toggleLoreEntry）：Number('W1')=NaN 会让「编辑」
