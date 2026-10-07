@@ -12,8 +12,9 @@ import { breakerState, recordRejection, recordSuccess, clearBreaker, breakerDige
 import { reviewForPlatform, longestSufferingRun, sentenceCv } from '../lib/platform-review.js';
 import { scanSensitive, CENSOR_KEYS } from '../lib/censor.js';
 import { applyFactUpdates, queryFacts, factsDigest, assertLedgerChapter, factsAt, statusTimeline, foreshadowSetup, foreshadowPayoff, openForeshadows, foreshadowDigest, overdueForeshadows } from '../lib/ledger.js';
-import { computeAudit, auditVerdict, paragraphCharProfile } from '../lib/audit.js';
-import { detectHookKind } from '../lib/hook.js';
+import { computeAudit, auditVerdict, paragraphCharProfile, chapterCharTarget, thickenQuota } from '../lib/audit.js';
+import { detectHookKind, stripEmphasis } from '../lib/hook.js';
+import { sceneCapacityShortfall, SCENE_CAPACITY_CHARS } from '../lib/gate-metrics.js';
 import { matchWorldEntries, buildContextPack, renderPack, declaredCoverageTerms } from '../lib/contextpack.js';
 import { pathsFor, defaultNovel, chapterRecord, normalizeWorldEntry, bookInSession, isUnclaimed, addBookSession, nextWorldEntryId, sameEntryId, migrateNovel, SCHEMA_VERSION } from '../lib/store.js';
 import { scanAiFlavor } from '../lib/noai.js';
@@ -247,19 +248,31 @@ test('auditVerdict: 字数驳回带「还差 N 字 + 本章目标」——只说
     assert.match(msg, /本章目标 3000 字左右/);
 });
 
-test('auditVerdict: 字数驳回带段落级分布——模型定向加厚，不再整章重发（真机三章靠 2–3 版整章重试烧穿输出预算）', () => {
+test('auditVerdict: 字数驳回带段落级分布 + 定向补字配额（模型定向加厚，不再整章重发）', () => {
     const a = computeAudit({ content: '短。', previous: [], terms: [] });
-    // 真机 82 章形态：1114→1465→2016 三版整章；驳回时给出各段分布让模型只补最薄几段
+    // 真机 82 章形态：1114→1465→2016 三版整章；驳回时给出各段分布 + 每段加多少，让模型只补最薄几段
     const v = auditVerdict(a, { minChapterChars: 2000, maxChapterChars: 4000 }, { paragraphChars: [412, 96, 380, 226] });
     const msg = v.problems.find((p) => p.includes('低于下限'));
     assert.match(msg, /各段字数：412\/96\/380\/226/, '分布必须逐段列出');
-    assert.match(msg, /定向加厚最薄的几段即可，不必整章重写/, '必须给「不必整章重写」的行动指引');
+    // 「还差 1998 字」模型不会执行；换算成「第 2 段 +2000 字」才可执行
+    assert.match(msg, /定向补字配额/, '必须给可执行的补字配额');
+    assert.match(msg, /第 2 段各 \+2000 字/, '配额要带段号与增量（只有第 2 段 < 150 字入选）');
+    assert.match(msg, /现在分别 96 字/, '要给出该段当前字数，模型好判断要加多少');
+    assert.match(msg, /不必整章重写/, '必须给「不必整章重写」的行动指引');
     // 封顶：>24 段只列前 24 + 总段数
     const many = Array.from({ length: 30 }, (_, i) => i + 1);
     const v2 = auditVerdict(a, { minChapterChars: 2000, maxChapterChars: 4000 }, { paragraphChars: many });
     const msg2 = v2.problems.find((p) => p.includes('低于下限'));
     assert.match(msg2, /…（共 30 段）/, '超封顶要报总段数');
-    assert.ok(!msg2.includes('30/'), '第 25 段起不得列出');
+    assert.ok(msg2.includes('第 1/2/3/4/5 段'), '配额只取最薄的 5 段（这里全是短段，取前 5）');
+});
+
+test('auditVerdict: 段落全是长段时不给配额，退化为「对照分布加厚」（不硬凑指令）', () => {
+    const a = computeAudit({ content: '短。', previous: [], terms: [] });
+    const v = auditVerdict(a, { minChapterChars: 2000, maxChapterChars: 4000 }, { paragraphChars: [412, 380, 226] });
+    const msg = v.problems.find((p) => p.includes('低于下限'));
+    assert.ok(!msg.includes('定向补字配额'), '没有 < 150 字的段就不该给配额表');
+    assert.match(msg, /定向加厚最薄的几段即可，不必整章重写/, '退化为旧文案（向后兼容）');
 });
 
 test('auditVerdict: 不传段落分布时文案退化为不带分布（向后兼容）', () => {
@@ -1320,6 +1333,87 @@ test('★ 字数标准：写前简报带「本章字数目标」段（会话写�
     // totalChars 统计在目标段加入之后 → 必须把它算进去
     const own = sec.content.length + sec.name.length + 4;
     assert.ok(b.totalChars >= own, 'totalChars 要计入字数目标段');
+});
+
+test('★ 字数翻译成段落规格：简报要把「3000 字」换算成「单段 N–150 字 / 全章 M 段」', async () => {
+    // 真机病根：一句一段 + 每句空行，62 段平均 31 字 → 结构上限锁死在 1900 字。
+    // 模型对「3000 字」无感，对「这一段写 70–150 字」才有操作性。
+    const { buildBriefing } = await import('../lib/briefing.js');
+    const io = { readText: async () => '', readJson: async () => null, listDir: async () => [] };
+    const b = await buildBriefing({
+        config: { minChapterChars: 2000, maxChapterChars: 4000, contextBudgetChars: 6000 },
+        io, book: '测试书', novel: { title: '测试书', cast: [] }, n: 1,
+    });
+    const sec = b.sections.find((s) => s.name === '本章字数目标');
+    assert.match(sec.content, /段落规格/, '目标段必须带段落规格');
+    assert.match(sec.content, /单段 70–150 字/, '单段规格由下限换算：2000/30 → 70');
+    assert.match(sec.content, /全章约 20–40 段/, '全章段数由目标换算：3000/150–3000/75');
+    assert.match(sec.content, /不要一句一段/, '必须点名禁止一句一段（真机就是这么写的）');
+});
+
+test('★ 目标字数单一真相：chapterCharTarget = 中值取整百（细纲/简报/批量起草/写章共用）', () => {
+    assert.equal(chapterCharTarget({ minChapterChars: 2000, maxChapterChars: 4000 }), 3000);
+    assert.equal(chapterCharTarget({ minChapterChars: 1500, maxChapterChars: 3000 }), 2300);
+    assert.equal(chapterCharTarget({ minChapterChars: 2000, maxChapterChars: 2001 }), 2000);
+});
+
+test('★ 字数口径：先剥 markdown 强调标记再数（`**` 是排版不是正文）', () => {
+    // 真机病根：一章 188 个 `*` 被算成 188 字，门禁报「1905 字」读者实际只看到 1717
+    // ——「还差 95」是假的（真实差 283），模型据此以为快过线、继续小改凑数。
+    const raw = '**沈十六**把油担放下。\n\n*他不知道*，井台上已经有人等着了。';
+    const a = computeAudit({ content: raw });
+    const plain = raw.replace(/[*_]+/g, '');
+    assert.equal(a.chars, plain.replace(/\s/g, '').length, 'chars 必须与剥标记后的口径一致');
+    assert.ok(a.chars < raw.replace(/\s/g, '').length, '带标记的原始长度必须大于真实正文字数');
+    assert.equal(stripEmphasis('**粗** _斜_ __下__'), '粗 斜 下');
+});
+
+test('★ 字数口径：段落分布与 chars 同口径（否则「各段字数」与总数自相矛盾）', () => {
+    // 若段落分布不剥标记，驳回文案里的「各段字数」会比总数虚高，模型按它补字仍不达标
+    const raw = '**第一段**内容内容内容。\n\n**第二段**内容。';
+    assert.deepEqual(paragraphCharProfile(raw), [10, 6]);
+    assert.equal(paragraphCharProfile(raw).reduce((a, b) => a + b, 0), computeAudit({ content: raw }).chars);
+});
+
+test('★ 补字配额：给最薄的段落一张「+N 字」清单（把「写够 3000」翻译成可执行动作）', () => {
+    // 真机现状：模型对「还差 95 字」无感，对「第 5/6/2/7 段各 +80 字」才有操作性
+    const q = thickenQuota([412, 96, 380, 226, 60, 88, 140], 300);
+    assert.ok(q, '有缺口且有短段时必须给配额');
+    assert.deepEqual(q.items.map((x) => x.no), [5, 6, 2, 7], '短段按字数升序取前 5（序号 1-based，226 不算短段）');
+    assert.equal(q.quota, 80, 'ceil(300/4/10)*10 = 80：配额取整到十位，模型好执行');
+    assert.ok(!q.items.some((x) => x.n >= 150), '长段不入选——它们本来就是满的');
+});
+
+test('补字配额：没有缺口或没有短段 → null（不硬凑指令）', () => {
+    assert.equal(thickenQuota([412, 380], 300), null, '全是长段 → 无可加厚目标');
+    assert.equal(thickenQuota([96, 88], 0), null, '没有缺口');
+    assert.equal(thickenQuota([], 300), null);
+});
+
+test('★ 细纲门禁前移：场景数连机审下限都撑不到 → 报差额并要求拆场景', () => {
+    // 真机第 91 章：4 个必写场景 × 480 = 1920 < 下限 2000 → 十次尝试卡在 1905 字
+    const four = ['## 本章必写场景', '- 出井：井绳断了', '- 井上摊账：对质', '- 熔断重置：真相', '- 回营：收尾'].join('\n');
+    const s = sceneCapacityShortfall({ outline: four, minChars: 2000, target: 3000 });
+    assert.ok(s, '4 个场景连下限都撑不到，必须拦下');
+    assert.equal(s.sceneCount, 4);
+    assert.equal(s.capacityChars, 4 * SCENE_CAPACITY_CHARS);
+    assert.equal(s.needed, Math.ceil(3000 / SCENE_CAPACITY_CHARS), '建议场景数按目标算（照目标拆才写得舒服）');
+    // 场景给够 → 通过
+    const seven = ['## 本章必写场景', ...Array.from({ length: 7 }, (_, i) => `- 场景${i + 1}：要点`)].join('\n');
+    assert.equal(sceneCapacityShortfall({ outline: seven, minChars: 2000, target: 3000 }), null);
+});
+
+test('细纲门禁前移：不误驳——没写场景段 / 场景段解析不出 / 场景够用 三种情形都放行', () => {
+    // 自由文本细纲（老书写法，没写「本章必写场景」段）→ 不判
+    assert.equal(sceneCapacityShortfall({ outline: '第2章：来客。出场：林晚。事件：收殓尸体。', minChars: 2000, target: 3000 }), null);
+    // 段在但解析不出条目（格式漂移）→ 不判（与 computeGateMetrics 同策略：只警告不阻断）
+    assert.equal(sceneCapacityShortfall({ outline: '## 本章必写场景\n\n', minChars: 2000, target: 3000 }), null);
+    // 目标很大但下限很小（玩具配置）→ 结构上限 ≥ 下限即放行，不拿目标当驳回线
+    assert.equal(sceneCapacityShortfall({ outline: '## 本章必写场景\n1. 只有一个场景\n', minChars: 300, target: 2700 }), null);
+    // 下限本身够小 → 单场景也过
+    assert.equal(sceneCapacityShortfall({ outline: '## 本章必写场景\n- 甲：乙', minChars: SCENE_CAPACITY_CHARS, target: 3000 }), null);
+    // 没给下限 → 不判（`x >= undefined` 恒为 false，会凭空造出误驳）
+    assert.equal(sceneCapacityShortfall({ outline: '## 本章必写场景\n1. 只有一个场景\n', target: 3000 }), null);
 });
 
 test('★ 交付纪律：写前简报带「收尾怎么走」段——收尾=纯文字汇报，禁止 present（防收尾死锁）', async () => {
