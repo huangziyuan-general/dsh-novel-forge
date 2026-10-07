@@ -86,5 +86,7 @@ export function initialState() {
 		discardPending: null,
 		// 会话疲劳横幅「复制交接摘要」的已复制反馈（换书/重新打开详情时复位）
 		copiedHandoff: false,
+		// 会话疲劳横幅「开新会话并归档」的两段确认（第一击 arm、第二击才发；换书复位）
+		rotatePending: false,
 	};
 }

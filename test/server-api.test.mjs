@@ -28,6 +28,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { registerServerApi } from '../lib/server-api.js';
+import { probeSessionCapabilities } from '../lib/server-routes/session.js';
 import { createServerFsio } from '../lib/fsio.js';
 
 const PREFIX = '/api/novel-forge';
@@ -67,6 +68,7 @@ const ROUTES = [
     { name: 'POST /worldbook/:bookId', method: 'POST', url: `${PREFIX}/worldbook/护栏本` },
     { name: 'PUT /worldbook/:bookId/:entryId', method: 'PUT', url: `${PREFIX}/worldbook/护栏本/1` },
     { name: 'DELETE /worldbook/:bookId/:entryId', method: 'DELETE', url: `${PREFIX}/worldbook/护栏本/1` },
+    { name: 'POST /session/rotate', method: 'POST', url: `${PREFIX}/session/rotate` },
 ];
 
 // ── 假 fs：覆盖临时目录，intent 语义镜像宿主 ─────────────────────────────
@@ -247,6 +249,9 @@ function walkFiles(dir, out = []) {
     return out;
 }
 
+/** 会话轮换能力桩：null = 无能力（其余既有测试全部走 501/false 形态，不受污染）。 */
+let rotateProbeResult;
+
 before(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-rest-'));
     fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-home-'));
@@ -260,7 +265,7 @@ before(() => {
         effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
         webServer: { register: (def) => { registrations.push(def); return () => {}; } },
     };
-    registerServerApi(ctx, { workspaceRoot: root, scanTopK: 8 }, { homedir: fakeHome });
+    registerServerApi(ctx, { workspaceRoot: root, scanTopK: 8 }, { homedir: fakeHome, sessionProbe: () => rotateProbeResult ?? { sessions: null, workspace: null, full: false } });
     assert.equal(registrations.length, 1, 'registerServerApi 必须恰好注册一条 prefix 路由');
     assert.equal(registrations[0].kind, 'prefix');
     assert.equal(registrations[0].path, PREFIX);
@@ -1012,4 +1017,76 @@ test('R-疲劳 详情按 ?session= 聚合首稿趋势并给交接摘要（面板
     // 别的会话：无写章记录 → 同样无横幅
     const other = await drive({ method: 'GET', url: `${PREFIX}/projects/${encodeURIComponent('疲劳检测')}?session=s2` });
     assert.equal(other.json.value.session, undefined, '其它会话无写章记录不给横幅');
+});
+
+// ── R-轮换：疲劳横幅一键开新会话+归档（服务端能力探测决定 501 还是 200）──
+
+test('R-轮换-0 探测器：候选名直读 + 方法面对账（只读 face 不算 create 能力）', () => {
+    const full = probeSessionCapabilities({ sessions: { create() {} }, workspace: { archiveSession() {} } });
+    assert.equal(full.full, true);
+    assert.equal(typeof full.sessions.create, 'function');
+    assert.equal(typeof full.workspace.archiveSession, 'function');
+    const readonly = probeSessionCapabilities({ sessions: { list() {}, subscribe() {} } });
+    assert.equal(readonly.full, false, '浏览器侧只读 face 没有 create，不算能力');
+    assert.equal(readonly.sessions, null);
+    assert.deepEqual(probeSessionCapabilities({}), { sessions: null, workspace: null, full: false });
+});
+
+test('R-轮换-1 无能力（默认桩）→ 501 SESSION_ROTATE_UNSUPPORTED 且指路复制交接', async () => {
+    rotateProbeResult = undefined;
+    await createBook('轮换书甲');
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/rotate`, body: { session: 's1' } });
+    assert.equal(res.statusCode, 501, res.body);
+    assert.equal(res.json.error.code, 'SESSION_ROTATE_UNSUPPORTED');
+    assert.match(res.json.error.message, /复制交接摘要/, '降级指路必须可见');
+});
+
+test('R-轮换-2 全能力 → create 新会话 + archive 指定会话，详情块带 rotate 位', async () => {
+    const archived = [];
+    rotateProbeResult = {
+        sessions: { create: async () => ({ sessionId: 's-new-1' }) },
+        workspace: { archiveSession: async (r) => { archived.push(r.sessionId); return { archived: [r.sessionId] }; } },
+        full: true,
+    };
+    // 「疲劳检测」由 R-疲劳 用例造好（s1 有首稿退化数据）——全能力时横幅数据才带 rotate
+    const hit = await drive({ method: 'GET', url: `${PREFIX}/projects/${encodeURIComponent('疲劳检测')}?session=s1` });
+    assert.equal(hit.json.value.session.rotate, true, '全能力 → 横幅按钮位亮起');
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/rotate`, body: { session: 's1' } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.deepEqual(res.json.value, { rotated: true, newSessionId: 's-new-1', archived: true });
+    assert.deepEqual(archived, ['s1'], '归档的必须是请求指定的会话，不许张冠李戴');
+});
+
+test('R-轮换-3 create 各形状全失败 → 500 带收集到的错误原文（重启校准的抓手）', async () => {
+    rotateProbeResult = {
+        sessions: { create: async () => { throw new Error('形状不对'); } },
+        workspace: { archiveSession: async () => ({}) },
+        full: true,
+    };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/rotate`, body: { session: 's1' } });
+    assert.equal(res.statusCode, 500);
+    assert.equal(res.json.error.code, 'SESSION_ROTATE_FAILED');
+    assert.ok((res.json.error.message.match(/形状不对/g) ?? []).length >= 2, '两种调用形状都试过（错误收集≥2）');
+});
+
+test('R-轮换-4 archive 失败不吞掉新会话 → 200 rotated:true + archived:false + archiveError', async () => {
+    rotateProbeResult = {
+        sessions: { create: async () => ({ sessionId: 's-new-2' }) },
+        workspace: { archiveSession: async () => { throw new Error('归档被拒'); } },
+        full: true,
+    };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/rotate`, body: { session: 's1' } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json.value.rotated, true, '新会话已经建出来，不能当失败整体报错');
+    assert.equal(res.json.value.archived, false);
+    assert.match(res.json.value.archiveError, /归档被拒/);
+    rotateProbeResult = undefined; // 还原，不污染后续用例
+});
+
+test('R-轮换-5 缺 session → 400 INVALID_FIELD（要归档哪个会话必须显式）', async () => {
+    rotateProbeResult = { sessions: { create: async () => ({}) }, workspace: { archiveSession: async () => ({}) }, full: true };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/rotate`, body: {} });
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.json.error.code, 'INVALID_FIELD');
+    rotateProbeResult = undefined;
 });

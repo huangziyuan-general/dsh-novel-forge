@@ -345,6 +345,33 @@ test('★ 创建项目带会话戳：POST /projects body 里有 session', async 
     assert.equal(body.title, '新书');
 });
 
+test('★ 会话疲劳一键轮换：第一击只 arm 不发请求，第二击才 POST /session/rotate 并带会话 id', async () => {
+    // 501 降级形态由 server 侧契约覆盖（scriptedFetch 只能回 ok:true）——这里锁两段确认与请求形状
+    const seq = scriptedFetch([
+        { value: { title: '星海拾骨', stage: 'planning', chapters: {}, session: { chapters: 9, firstAvg: 800, baselineAvg: 2000, warn: '低于全书基线', handoff: '交接摘要', rotate: true } } },
+        { value: '' }, // 第 1 章正文
+        { value: [] }, { value: [] }, // elements / 章节目录（openProject 并行追拉）
+        { value: { rotated: true, newSessionId: 's-new-1', archived: true } }, // POST /session/rotate（尾值重复，落在队尾必被 POST 拿到）
+    ]);
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch: seq.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    assert.equal(controller.state.detail?.session?.rotate, true, '详情块带能力位，横幅才有第二个按钮');
+
+    await controller.handleAction('session-rotate', { dataset: {} });
+    assert.equal(controller.state.rotatePending, true, '第一击 arm（归档的是当前会话，必须防手滑）');
+    assert.ok(!seq.requests.some((r) => r.url.endsWith('/session/rotate')), '第一击不许发请求');
+
+    await controller.handleAction('session-rotate', { dataset: {} });
+    const post = seq.requests.find((r) => r.url.endsWith('/session/rotate'));
+    assert.ok(post, '第二击必须发轮换请求');
+    assert.equal(post.init.method, 'POST');
+    assert.equal(JSON.parse(post.init.body).session, 's1', '要归档的就是面板所在会话');
+    assert.ok(controller.state.notice.includes('已开新会话并归档旧会话'), '成功提示要指路：去会话列表打开新会话');
+    assert.equal(controller.state.rotatePending, false, '发完复位');
+});
+
 test('★ 认领未归属的书：POST /projects/claim 带 session 与 ids', async () => {
     const seq = scriptedFetch([{ value: [] }, { value: [] }]);
     const dom = createDom();
