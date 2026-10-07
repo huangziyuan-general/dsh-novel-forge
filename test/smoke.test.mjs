@@ -956,6 +956,39 @@ test('★ A3/A4 细纲禁项：命中即拒绝落盘（判定权归代码）', a
     );
 });
 
+test('★ 细纲门禁前移（真机配置）：场景数连下限都撑不到 → save_chapter 直接驳回', async () => {
+    assert.equal(hasSdk, true, '缺宿主 SDK symlink：先 npm run setup-dev');
+    // 真机标准配置（2000–4000）下另挂一套工具：smoke 默认 CFG 下限只有 300，触发不了这条门禁
+    const reg = [];
+    const ctx2 = { ...ctx, tools: { register: (t) => reg.push(t) }, _registered: reg, systemPrompt: { section() {} } };
+    apply(ctx2, { ...CFG, minChapterChars: 2000, maxChapterChars: 4000 });
+    const outline2 = reg.find((t) => t.name === 'novel_outline');
+    await reg.find((t) => t.name === 'novel_project')
+        .execute({ action: 'init', book: '细纲容量书', title: '细纲容量书' }, exec);
+
+    // 真机第 91 章形态：4 个必写场景 × 480 = 1920 < 下限 2000 → 十次尝试卡在 1905 字
+    await assert.rejects(
+        () => outline2.execute({
+            action: 'save_chapter', book: '细纲容量书', chapter: 1,
+            outline: '## 本章必写场景\n1. 出井：井绳断了\n2. 井上摊账：对质\n3. 熔断重置：真相\n4. 回营：收尾\n',
+        }, exec),
+        (e) => /必写场景只有 4 个/.test(e.message)
+            && /连机审下限 2000 字都到不了/.test(e.message)
+            && /至少 7 个/.test(e.message),
+        '★ 场景撑不到下限必须在写章之前驳回，文案要给出「拆到几个」这个可执行数字',
+    );
+
+    // 拆够场景（照目标 3000 / 单场景 480 → 7 个）→ 放行
+    const enough = ['## 本章必写场景', ...Array.from({ length: 7 }, (_, i) => `- 场景${i + 1}：要点`)]
+        .join('\n');
+    const ok = await outline2.execute({ action: 'save_chapter', book: '细纲容量书', chapter: 1, outline: `${enough}\n` }, exec);
+    assert.equal(ok.action, 'save_chapter');
+
+    // 没写场景段的自由文本细纲不受影响（老书兼容：不判、不阻断）
+    const free = await outline2.execute({ action: 'save_chapter', book: '细纲容量书', chapter: 2, outline: '第2章：来客。出场：林晚。' }, exec);
+    assert.equal(free.chapter, 2);
+});
+
 test('★ E3 语言基因卡：建卡单独注入；角色说了自己的禁忌词被抓出', async () => {
     const character = tool('novel_character');
     const briefing = tool('novel_briefing');
@@ -1587,6 +1620,9 @@ test('★ 方向1 进度卡：novel_write_chapter 现算章数/账本/伏笔/待
     assert.match(text, /待批提案 0 条/);
     assert.match(text, /已随本次落盘送达/, '★ 交付声明必须随写章返回——到达通道是工具输出不是预设（standard 预设的会话收不到预设文案）');
     assert.match(text, /不要再调宿主 present/, '真机 85/108 次 present 拼路径失败，返回值必须明说不要再调');
+    // 护栏：工具返回值只放行动指令。夹带内部调试统计（「真机 85/108 次」这类）会误导模型
+    // ——它会当成「本会话」自己的经历；且随每章返回重复进上下文，纯噪声。
+    assert.ok(!/真机|\d+\/\d+ 次|\d+ 次 present/.test(text), '返回值不得夹带内部调试统计数字');
 
     // 提一条修订提案后，下一章的进度卡必须如实报 1（唯一真相来自 novel.json，不是历史消息）
     await tool('novel_outline').execute({ action: 'save_chapter', book: B, chapter: 2, outline: '第2章：来客。出场：林晚。' }, exec);

@@ -24,7 +24,7 @@ import {
 } from '../lib/retrieval.js';
 import {
     planDraftBatch, deriveTitleSummary, mapWithConcurrency, buildDraftPrompt,
-    runDraftBatch, MAX_CONCURRENCY, DRAFT_SYSTEM,
+    runDraftBatch, MAX_CONCURRENCY, draftSystem,
 } from '../lib/batch-draft.js';
 import { pathsFor } from '../lib/store.js';
 import { updateJson, isVersionConflict } from '../lib/fsio.js';
@@ -472,6 +472,18 @@ test('retrieval: makeSnippet 定位命中；hitRatio 反映片段命中比例；
 });
 
 // ── D2：批量起草 ───────────────────────────────────────────────────────────
+
+test('batch-draft: draftSystem 字数与段落规格由 config 现算（不再写死 2000–4000/3000）', () => {
+    // 写死的数字一旦与配置漂移，批量路径就成了唯一说错话的地方——真机病根之一
+    const a = draftSystem({ minChapterChars: 2000, maxChapterChars: 4000 });
+    assert.ok(a.includes('2000–4000 字、目标 3000 字左右'), '下限/上限/目标都要现算出来');
+    assert.ok(a.includes('不要一句一段'), '要带段落规格（模型对「3000 字」无感，对「单段 70–150 字」才有操作性）');
+    assert.ok(a.includes('单段写足 70–150 字'), '单段规格由下限换算（2000/30 → 70）');
+
+    const b = draftSystem({ minChapterChars: 1500, maxChapterChars: 3000 });
+    assert.ok(b.includes('1500–3000 字、目标 2300 字左右'), '换配置后数字必须跟着变');
+    assert.ok(!b.includes('3000 字左右'), '不得残留上一套配置的目标值');
+});
 
 test('batch-draft: planDraftBatch 逐类拦截（已写/无细纲/未批/熔断）且 force 可放行', () => {
     const novel = {
