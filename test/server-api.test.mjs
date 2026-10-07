@@ -1107,7 +1107,7 @@ test('R-建会话-1 create✓ → 同工作区优先（list 命中当前会话�
     };
     const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1' } });
     assert.equal(res.statusCode, 200, res.body);
-    assert.deepEqual(res.json.value, { created: true, createdSessionId: 's-new-1', workspaceMatched: true });
+    assert.deepEqual(res.json.value, { created: true, createdSessionId: 's-new-1', workspaceMatched: true, archived: false }, '无归档能力时 archived 如实为 false');
     assert.deepEqual(creates, [{ workspaceId: 'w-novel' }], '必须带着匹配到的 workspaceId 建（新会话才落同一工作区）');
     rotateProbeResult = undefined;
 });
@@ -1136,6 +1136,24 @@ test('R-建会话-3 无 create 能力 → 501 带探测明细', async () => {
     assert.equal(res.statusCode, 501);
     assert.equal(res.json.error.code, 'SESSION_CREATE_UNSUPPORTED');
     assert.match(res.json.error.message, /手动新建/, '降级指路必须可见');
+    rotateProbeResult = undefined;
+});
+
+test('R-建会话-5 全能力（真控制器）→ 建+归档一次完成，archiveSession 收旧会话 id', async () => {
+    const archived = [];
+    rotateProbeResult = {
+        sessions: {
+            list: async () => ({ sessions: [{ id: 's1', workspaceId: 'w-novel' }] }),
+            create: async () => ({ sessionId: 'session-real-1' }),
+        },
+        workspace: { archiveSession: async (id) => { archived.push(id); } },
+        full: true,
+    };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1' } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json.value.archived, true, '全能力下必须顺手归档——一个按钮完成轮换');
+    assert.deepEqual(archived, ['s1']);
+    assert.equal(res.json.value.createdSessionId, 'session-real-1');
     rotateProbeResult = undefined;
 });
 

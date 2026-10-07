@@ -357,8 +357,11 @@ export function createProjectsController(ctx) {
 			if (handoff && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
 				navigator.clipboard.writeText(handoff).then(() => { state.copiedHandoff = true; notify(); }).catch(() => { /* 剪贴板不可用时交接摘要仍在横幅可手复制 */ });
 			}
+			const archive = value.archived
+				? '旧会话已归档'
+				: (value.archiveError ? `旧会话归档失败：${value.archiveError}` : '旧会话可在会话列表手动归档');
 			state.notice = value.createdSessionId
-				? `新会话已创建（${value.workspaceMatched ? '同工作区' : '宿主默认位置'}），交接摘要已复制——到会话列表打开新会话粘贴即续写；旧会话可在会话列表手动归档`
+				? `新会话已创建${value.workspaceMatched ? '（同工作区）' : ''}，交接摘要已复制——到会话列表打开新会话粘贴即续写；${archive}`
 				: '新会话已创建但未取得 id——请到会话列表查看';
 		} catch (error) { state.error = String(error?.message ?? error); }
 		finally { state.busy = false; notify(); }

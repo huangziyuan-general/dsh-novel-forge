@@ -48,10 +48,9 @@ function Segmented({ tab }) {
 }
 
 /** 会话疲劳横幅（0.15.1）：服务端按当前会话聚合的首稿趋势——退化时提醒换会话。
- *  动作是「复制交接摘要」：新会话粘一句即可续写（书的状态全在盘上，换会话零损失）。
- *  一键轮换按钮按服务端能力探测出现（session.rotate）：宿主暴露 create/archive 才渲染，
- *  探测不到只有「复制交接摘要」——不做假按钮。 */
-function SessionFatigueBanner({ session, copied, rotatePending }) {
+ *  唯一按钮「创建新会话并交接」（用户钦定 2026-10-08）：单击即建新会话（服务端有归档
+ *  能力就建+归档一起做），交接摘要自动进剪贴板、文本常驻横幅可手动复制。探测不到就不做假按钮。 */
+function SessionFatigueBanner({ session, copied }) {
 	if (!session?.warn) return null;
 	return h('div', {
 		style: {
@@ -67,20 +66,17 @@ function SessionFatigueBanner({ session, copied, rotatePending }) {
 		h('div', { style: { ...hintStyle, marginTop: space.xs } },
 			'对话历史堆积会稀释输出质量。书的状态全在盘上——换会话零损失。'),
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, marginTop: space.sm } },
-			h('button', {
-				'data-action': 'copy-handoff',
-				style: {
-					cursor: 'pointer', padding: `${space.xs}px ${space.md}px`, borderRadius: '7px',
-					border: `1px solid ${tint(color.warn, 34)}`, background: 'transparent',
-					color: 'inherit', fontFamily: 'inherit', fontSize: font.small,
-				},
-			}, copied ? '✓ 已复制——去 shell 新建会话后粘贴即可续写' : '复制交接摘要'),
-			// 创建新会话并交接：宿主 sessions.create 可用即亮（真机实证 create✓）；交接摘要自动进剪贴板
-			session.canCreate ? Btn({ action: 'session-create', variant: 'secondary', size: 'sm' }, '创建新会话并交接') : null,
-			// 一键轮换（create+archive 全有能力才亮；当前宿主 archive 被门禁封死，恒隐藏）
-			session.rotate ? Btn({ action: 'session-rotate', variant: 'secondary', size: 'sm' },
-				rotatePending ? '确认：归档本会话并开新会话' : '开新会话并归档本会话') : null,
+			// 唯一按钮（用户钦定 2026-10-08）：能建就建（服务端有归档能力就建+归档一起做）；
+			// 交接摘要自动进剪贴板，摘要文本同时常驻下方——剪贴板失败也有手动路。
+			session.canCreate ? Btn({ action: 'session-create', variant: 'secondary', size: 'sm' },
+				copied ? '✓ 已创建并复制——到会话列表打开新会话粘贴' : '创建新会话并交接') : null,
 		),
+		session.canCreate && session.handoff ? h('div', {
+			style: {
+				...hintStyle, marginTop: space.sm, whiteSpace: 'pre-wrap',
+				maxHeight: '7em', overflowY: 'auto', userSelect: 'text',
+			},
+		}, session.handoff) : null,
 	);
 }
 
