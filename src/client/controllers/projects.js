@@ -148,6 +148,7 @@ export function createProjectsController(ctx) {
 		state.deleteState = null; state.gateNotice = null; state.listDeleting = false;
 		state.proposals = []; state.proposalsError = null; state.proposalBusy = null; state.proposalDetail = null; // 展开的全文也属于上一本书
 		state.copiedHandoff = false; // 交接摘要的「已复制」反馈同样属于上一本书
+		state.rotatePending = false; // 轮换的两段确认同样属于上一本书
 		// 换书：体检结果与批量结果都属于「上一本书」，必须清掉（否则会把 A 书的红字
 		// 挂在 B 书头上——这类串台比不显示更糟）
 		state.continuity = null; state.continuityError = ''; state.batchResult = null; state.revising = null;
@@ -343,9 +344,25 @@ export function createProjectsController(ctx) {
 		} finally { state.batchBusy = false; notify(); }
 	};
 
+	// 会话疲劳一键轮换（真发请求在第二击，armed 判定在 events 控制器）：
+	// POST /session/rotate 由服务端探测宿主能力——探测不到返回 501，错误原文直接给面板。
+	const rotateSession = async () => {
+		if (!state.sessionId) { state.error = '缺会话 id（面板未挂在会话上）——无法轮换'; notify(); return; }
+		state.busy = true; notify();
+		try {
+			const value = await apiFetch('/session/rotate', {
+				method: 'POST', body: JSON.stringify({ session: state.sessionId }),
+			});
+			state.rotatePending = false;
+			state.notice = value.archived
+				? '已开新会话并归档旧会话——到会话列表打开新会话，点「复制交接摘要」粘一句即可续写'
+				: `新会话已创建，但旧会话归档失败${value.archiveError ? `：${value.archiveError}` : ''}——可在会话列表手动归档`;
+		} catch (error) { state.error = String(error?.message ?? error); }
+		finally { state.busy = false; notify(); }
+	};
 	return {
 		loadElements, loadChapterList, refreshProjects, claimProject, renameProject, cloneProject,
-		deleteListProject, openProject, createProject, deleteProject, goBack,
+		deleteListProject, openProject, createProject, deleteProject, goBack, rotateSession,
 		loadContinuity, loadDiagnosis, runRevision, writeSingleChapter, runBatch,
 	};
 }

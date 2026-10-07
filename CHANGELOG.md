@@ -2,6 +2,14 @@
 
 ## 未发布
 
+- **疲劳横幅一键轮换（服务端能力探测 + 降级）**：新增 `POST /session/rotate { session }`——
+  服务端对宿主会话/工作区控制器做**非阻塞属性直读探测**（候选服务名逐请求重读，绝不写进
+  inject 清单——cordis inject 未知名会挂死插件加载）：create + archiveSession 全有 → 开新
+  会话并归档指定会话（归档可逆、带准入门禁：归档会话恢复前不能跑模型步）；探测不到 →
+  结构化 501 `SESSION_ROTATE_UNSUPPORTED`，面板退回「复制交接摘要」。横幅第二按钮只在
+  详情块 `rotate:true` 时渲染，两段确认防手滑（第一击 arm、第二击才发）；create 成功而
+  archive 失败时 200 带 `archiveError` 不吞新会话。请求形状未静态实证（宿主包是打包产物），
+  create 按最小形状逐个尝试、失败原文进错误消息——重启验证时据此校准。
 - **会话疲劳进面板：横幅 + 复制交接摘要**：`GET /projects/:id?session=<id>` 按会话聚合首稿
   趋势（health.js sessionFatigue）并在详情响应里带 `session` 块；面板详情页渲染疲劳横幅
   （本会话章数 / 首稿均长 / 基线 + 警示文案），动作是**「复制交接摘要」**——新会话粘一句即可

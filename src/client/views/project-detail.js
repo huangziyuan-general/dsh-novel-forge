@@ -49,8 +49,9 @@ function Segmented({ tab }) {
 
 /** 会话疲劳横幅（0.15.1）：服务端按当前会话聚合的首稿趋势——退化时提醒换会话。
  *  动作是「复制交接摘要」：新会话粘一句即可续写（书的状态全在盘上，换会话零损失）。
- *  一键创建会话宿主未对第三方 client 暴露（0.15.x 复核过网关是读取向），不做假按钮。 */
-function SessionFatigueBanner({ session, copied }) {
+ *  一键轮换按钮按服务端能力探测出现（session.rotate）：宿主暴露 create/archive 才渲染，
+ *  探测不到只有「复制交接摘要」——不做假按钮。 */
+function SessionFatigueBanner({ session, copied, rotatePending }) {
 	if (!session?.warn) return null;
 	return h('div', {
 		style: {
@@ -74,6 +75,9 @@ function SessionFatigueBanner({ session, copied }) {
 					color: 'inherit', fontFamily: 'inherit', fontSize: font.small,
 				},
 			}, copied ? '✓ 已复制——去 shell 新建会话后粘贴即可续写' : '复制交接摘要'),
+			// 一键轮换：create+archive 全有能力时服务端才给 rotate 位；两段确认在控制器
+			session.rotate ? Btn({ action: 'session-rotate', variant: 'secondary', size: 'sm' },
+				rotatePending ? '确认：归档本会话并开新会话' : '开新会话并归档本会话') : null,
 		),
 	);
 }
@@ -479,7 +483,7 @@ h('span', { style: { flex: '1 1 auto' } }),
 
 	return h('div', { style: stackStyle(space.lg) },
 		crumb,
-		SessionFatigueBanner({ session: s.detail?.session, copied: s.copiedHandoff === true }),
+		SessionFatigueBanner({ session: s.detail?.session, copied: s.copiedHandoff === true, rotatePending: s.rotatePending === true }),
 		Segmented({ tab: s.detailTab }),
 		s.detailTab === 'chapters' ? ChapterListView({ state: s }) : infoView,
 	);
