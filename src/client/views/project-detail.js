@@ -75,7 +75,9 @@ function SessionFatigueBanner({ session, copied, rotatePending }) {
 					color: 'inherit', fontFamily: 'inherit', fontSize: font.small,
 				},
 			}, copied ? '✓ 已复制——去 shell 新建会话后粘贴即可续写' : '复制交接摘要'),
-			// 一键轮换：create+archive 全有能力时服务端才给 rotate 位；两段确认在控制器
+			// 创建新会话并交接：宿主 sessions.create 可用即亮（真机实证 create✓）；交接摘要自动进剪贴板
+			session.canCreate ? Btn({ action: 'session-create', variant: 'secondary', size: 'sm' }, '创建新会话并交接') : null,
+			// 一键轮换（create+archive 全有能力才亮；当前宿主 archive 被门禁封死，恒隐藏）
 			session.rotate ? Btn({ action: 'session-rotate', variant: 'secondary', size: 'sm' },
 				rotatePending ? '确认：归档本会话并开新会话' : '开新会话并归档本会话') : null,
 		),

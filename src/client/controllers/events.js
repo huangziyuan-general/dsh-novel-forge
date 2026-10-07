@@ -172,6 +172,10 @@ export function createEventsController(ctx) {
 				.catch((error) => { state.error = `复制失败：${error?.message ?? error}`; notify(); });
 			break;
 		}
+			case 'session-create':
+				// 创建新会话并交接（服务端 sessions.create；非破坏性，单击即发）
+				await ctx.createSession();
+				break;
 			case 'session-rotate': {
 				// 两段确认：归档的是「正在看面板的这个会话」，第一击 arm 防手滑，第二击才发。
 				if (!state.rotatePending) { state.rotatePending = true; notify(); break; }

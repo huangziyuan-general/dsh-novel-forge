@@ -69,6 +69,7 @@ const ROUTES = [
     { name: 'PUT /worldbook/:bookId/:entryId', method: 'PUT', url: `${PREFIX}/worldbook/护栏本/1` },
     { name: 'DELETE /worldbook/:bookId/:entryId', method: 'DELETE', url: `${PREFIX}/worldbook/护栏本/1` },
     { name: 'POST /session/rotate', method: 'POST', url: `${PREFIX}/session/rotate` },
+    { name: 'POST /session/create', method: 'POST', url: `${PREFIX}/session/create` },
 ];
 
 // ── 假 fs：覆盖临时目录，intent 语义镜像宿主 ─────────────────────────────
@@ -1090,6 +1091,68 @@ test('R-轮换-4 archive 失败不吞掉新会话 → 200 rotated:true + archive
     assert.equal(res.json.value.archived, false);
     assert.match(res.json.value.archiveError, /归档被拒/);
     rotateProbeResult = undefined; // 还原，不污染后续用例
+});
+
+// ── R-建会话：疲劳横幅「创建新会话并交接」（sessions.create 真机实证可用；归档另案）──
+
+test('R-建会话-1 create✓ → 同工作区优先（list 命中当前会话行）', async () => {
+    const creates = [];
+    rotateProbeResult = {
+        sessions: {
+            list: async () => ({ sessions: [{ id: 's1', workspaceId: 'w-novel' }] }),
+            create: async (req) => { creates.push(req); return { sessionId: 's-new-1' }; },
+        },
+        workspace: null,
+        full: false,
+    };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1' } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.deepEqual(res.json.value, { created: true, createdSessionId: 's-new-1', workspaceMatched: true });
+    assert.deepEqual(creates, [{ workspaceId: 'w-novel' }], '必须带着匹配到的 workspaceId 建（新会话才落同一工作区）');
+    rotateProbeResult = undefined;
+});
+
+test('R-建会话-2 list 失败 → 裸 create 兜底（不因匹配失败而整单失败）', async () => {
+    const creates = [];
+    rotateProbeResult = {
+        sessions: {
+            list: async () => { throw new Error('list 不存在'); },
+            create: async (req) => { creates.push(req); return { sessionId: 's-new-2' }; },
+        },
+        workspace: null,
+        full: false,
+    };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1' } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json.value.created, true);
+    assert.equal(res.json.value.workspaceMatched, false, '匹配不到就如实说，不谎报同工作区');
+    assert.deepEqual(creates, [{}], '兜底形状是空对象');
+    rotateProbeResult = undefined;
+});
+
+test('R-建会话-3 无 create 能力 → 501 带探测明细', async () => {
+    rotateProbeResult = { sessions: null, workspace: null, full: false };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1' } });
+    assert.equal(res.statusCode, 501);
+    assert.equal(res.json.error.code, 'SESSION_CREATE_UNSUPPORTED');
+    assert.match(res.json.error.message, /手动新建/, '降级指路必须可见');
+    rotateProbeResult = undefined;
+});
+
+test('R-建会话-4 create 各形状全失败 → 500 带错误原文', async () => {
+    rotateProbeResult = {
+        sessions: {
+            list: async () => ({ sessions: [] }),
+            create: async () => { throw new Error('形状不对'); },
+        },
+        workspace: null,
+        full: false,
+    };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1' } });
+    assert.equal(res.statusCode, 500);
+    assert.equal(res.json.error.code, 'SESSION_CREATE_FAILED');
+    assert.match(res.json.error.message, /形状不对/);
+    rotateProbeResult = undefined;
 });
 
 test('R-轮换-5 缺 session → 400 INVALID_FIELD（要归档哪个会话必须显式）', async () => {
