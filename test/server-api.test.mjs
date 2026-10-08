@@ -1158,6 +1158,22 @@ test('R-建会话-5 全能力（真控制器）→ 建+归档一次完成，arch
     rotateProbeResult = undefined;
 });
 
+test('R-建会话-7 原会话 cwd 优先于书根（用户钦定：新会话落原会话工作区）', async () => {
+    const creates = [];
+    rotateProbeResult = {
+        sessions: {
+            list: async () => ({ items: [{ sessionId: 's1', cwd: '/Users/x/other-workspace' }] }),
+            create: async (req) => { creates.push(req); return { sessionId: 's-pri-1' }; },
+        },
+        workspace: null,
+        full: false,
+    };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1', book: '疲劳检测' } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.deepEqual(creates, [{ cwd: '/Users/x/other-workspace' }], '原会话 cwd 赢书根——新会话与旧会话同分组可见');
+    rotateProbeResult = undefined;
+});
+
 test('R-建会话-6 带 book → 新会话 cwd 落书的工作区根（续写第一扫就见书）', async () => {
     const creates = [];
     rotateProbeResult = {
