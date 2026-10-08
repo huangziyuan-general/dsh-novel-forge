@@ -353,7 +353,7 @@ export function createProjectsController(ctx) {
 			const value = await apiFetch('/session/create', {
 				method: 'POST',
 				// book：服务端据此把新会话 cwd 落到书的工作区根——续写第一扫就见书
-				body: JSON.stringify({ session: state.sessionId, book: state.detail?.id ?? '' }),
+				body: JSON.stringify({ session: state.sessionId, book: state.detail?.id ?? '', bookTitle: state.detail?.title ?? '' }),
 			});
 			const handoff = state.detail?.session?.handoff ?? '';
 			if (handoff && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
@@ -363,7 +363,7 @@ export function createProjectsController(ctx) {
 				? '旧会话已归档'
 				: (value.archiveError ? `旧会话归档失败：${value.archiveError}` : '旧会话可在会话列表手动归档');
 			state.notice = value.createdSessionId
-				? `新会话已创建${value.workspaceMatched ? '，已落在原会话的工作区（列表不自动刷新，找空白新会话）' : ''}，交接摘要已复制——打开新会话粘贴即续写；${archive}`
+				? `新会话已创建${value.renamed ? '并已命名为《…》续写' : ''}${value.workspaceMatched ? '，落在原会话的工作区' : ''}——在会话列表按名字找它（列表不自动刷新就切一下工作区或刷新页面），交接摘要已复制，粘贴即续写；${archive}`
 				: '新会话已创建但未取得 id——请到会话列表查看';
 		} catch (error) { state.error = String(error?.message ?? error); }
 		finally { state.busy = false; notify(); }

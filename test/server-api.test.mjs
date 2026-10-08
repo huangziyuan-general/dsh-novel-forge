@@ -1158,6 +1158,41 @@ test('R-建会话-5 全能力（真控制器）→ 建+归档一次完成，arch
     rotateProbeResult = undefined;
 });
 
+test('R-建会话-8 建 → 命名《书名》续写（没名字的空会话在分组列表里找不到）', async () => {
+    const renames = [];
+    rotateProbeResult = {
+        sessions: {
+            list: async () => ({ items: [] }),
+            create: async () => ({ sessionId: 's-name-1' }),
+            rename: async (req) => { renames.push(req); },
+        },
+        workspace: null,
+        full: false,
+    };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1', book: '疲劳检测', bookTitle: '开局觉醒加特林' } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json.value.renamed, true);
+    assert.deepEqual(renames, [{ sessionId: 's-name-1', title: '《开局觉醒加特林》续写' }]);
+    rotateProbeResult = undefined;
+});
+
+test('R-建会话-8b rename 全形状失败 → 创建照旧成功，renamed:false 如实上报', async () => {
+    rotateProbeResult = {
+        sessions: {
+            list: async () => ({ items: [] }),
+            create: async () => ({ sessionId: 's-name-2' }),
+            rename: async () => { throw new Error('形状不对'); },
+        },
+        workspace: null,
+        full: false,
+    };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1', bookTitle: '某书' } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json.value.renamed, false, '命名失败不装成功');
+    assert.equal(res.json.value.created, true, '更不回滚创建');
+    rotateProbeResult = undefined;
+});
+
 test('R-建会话-7 原会话 cwd 优先于书根（用户钦定：新会话落原会话工作区）', async () => {
     const creates = [];
     rotateProbeResult = {
