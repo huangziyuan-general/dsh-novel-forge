@@ -362,8 +362,9 @@ test('★ 疲劳横幅「创建新会话并交接」：单击即 POST /session/c
     const post = seq.requests.find((r) => r.url.endsWith('/session/create'));
     assert.ok(post, '单击必须发创建请求');
     assert.equal(JSON.parse(post.init.body).session, 's1', '带当前会话 id 供工作区匹配');
-    assert.ok(controller.state.notice.includes('新会话已创建'), '成功提示要指路：去会话列表打开新会话');
+    assert.ok(controller.state.notice.includes('已创建'), '成功提示要指路：去会话列表按名字找新会话');
     assert.ok(controller.state.notice.includes('手动归档'), '归档不可自动——如实告知手动路径');
+    assert.ok(controller.state.notice.includes('原会话的工作区'), '落点要如实转述（用户钦定）');
 });
 
 test('★ 会话疲劳一键轮换：第一击只 arm 不发请求，第二击才 POST /session/rotate 并带会话 id', async () => {
