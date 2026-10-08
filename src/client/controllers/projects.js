@@ -362,8 +362,12 @@ export function createProjectsController(ctx) {
 			const archive = value.archived
 				? '旧会话已归档'
 				: (value.archiveError ? `旧会话归档失败：${value.archiveError}` : '旧会话可在会话列表手动归档');
+			const place = value.inserted
+				? '已插到原会话旁边'
+				: (value.insertError ? `，但登记到工作区列表失败：${value.insertError}` : '');
+			const named = value.renamed ? '《…》续写' : '（未命名）';
 			state.notice = value.createdSessionId
-				? `新会话已创建${value.renamed ? '并已命名为《…》续写' : ''}${value.workspaceMatched ? '，落在原会话的工作区' : ''}——在会话列表按名字找它（列表不自动刷新就切一下工作区或刷新页面），交接摘要已复制，粘贴即续写；${archive}`
+				? `新会话「${named}」已创建${value.workspaceMatched ? '，落在原会话的工作区' : ''}${place}——列表不自动刷新就刷新页面，按名字找它；交接摘要已复制，打开粘贴即续写；${archive}`
 				: '新会话已创建但未取得 id——请到会话列表查看';
 		} catch (error) { state.error = String(error?.message ?? error); }
 		finally { state.busy = false; notify(); }

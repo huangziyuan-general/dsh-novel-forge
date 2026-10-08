@@ -253,6 +253,7 @@ function walkFiles(dir, out = []) {
 /** 会话轮换能力桩：null = 无能力（其余既有测试全部走 501/false 形态，不受污染）。 */
 let rotateProbeResult;
 
+let registryFixturePath;
 before(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-rest-'));
     fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-home-'));
@@ -266,7 +267,12 @@ before(() => {
         effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
         webServer: { register: (def) => { registrations.push(def); return () => {}; } },
     };
-    registerServerApi(ctx, { workspaceRoot: root, scanTopK: 8 }, { homedir: fakeHome, sessionProbe: () => rotateProbeResult ?? { sessions: null, workspace: null, full: false } });
+    registerServerApi(ctx, { workspaceRoot: root, scanTopK: 8 }, {
+        homedir: fakeHome,
+        sessionProbe: () => rotateProbeResult ?? { sessions: null, workspace: null, full: false },
+        // R-建会话-9 用：getter 惰性读模块级变量，用例内换夹具不污染其他用例
+        get workspaceRegistryFile() { return registryFixturePath; },
+    });
     assert.equal(registrations.length, 1, 'registerServerApi 必须恰好注册一条 prefix 路由');
     assert.equal(registrations[0].kind, 'prefix');
     assert.equal(registrations[0].path, PREFIX);
@@ -1108,7 +1114,7 @@ test('R-建会话-1 create✓ → 同工作区优先（list 命中当前会话�
     };
     const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1' } });
     assert.equal(res.statusCode, 200, res.body);
-    assert.deepEqual(res.json.value, { created: true, createdSessionId: 's-new-1', workspaceMatched: true, archived: false, renamed: false }, '无归档/无书名时 archived、renamed 如实为 false');
+    assert.deepEqual(res.json.value, { created: true, createdSessionId: 's-new-1', workspaceMatched: true, archived: false, renamed: false, inserted: false }, '无归档/无书名/无注册表命中时三个标志如实为 false');
     assert.deepEqual(creates, [{ cwd: '/Users/x/novel' }], '必须带着匹配到的 cwd 建（新会话才落同一工作区）');
     rotateProbeResult = undefined;
 });
@@ -1155,6 +1161,49 @@ test('R-建会话-5 全能力（真控制器）→ 建+归档一次完成，arch
     assert.equal(res.json.value.archived, true, '全能力下必须顺手归档——一个按钮完成轮换');
     assert.deepEqual(archived, ['s1']);
     assert.equal(res.json.value.createdSessionId, 'session-real-1');
+    rotateProbeResult = undefined;
+});
+
+test('R-建会话-9 建 → insertSessionBefore 插到原会话旁边，且在归档之前（锚点还在）', async () => {
+    const calls = [];
+    const { writeFileSync: wfs, rmSync: rmf } = await import('node:fs');
+    registryFixturePath = `${root}/workspace-registry-fixture.json`;
+    wfs(registryFixturePath, JSON.stringify({ tables: { workspaces: { 'w-reg-1': { path: '/x/novel', sessionIds: ['s1'] } } } }));
+    rotateProbeResult = {
+        sessions: {
+            list: async () => ({ items: [] }),
+            create: async () => ({ sessionId: 's-reg-1' }),
+            rename: async () => {},
+        },
+        workspace: {
+            insertSessionBefore: async (req) => { calls.push(['insert', req]); },
+            archiveSession: async (req) => { calls.push(['archive', req]); },
+        },
+        full: true,
+    };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1', bookTitle: '某书' } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json.value.inserted, true, '登记进工作区视图=GUI 列表可见的前提');
+    assert.equal(res.json.value.archived, true);
+    const insertIdx = calls.findIndex((c) => c[0] === 'insert');
+    const archiveIdx = calls.findIndex((c) => c[0] === 'archive');
+    assert.ok(insertIdx >= 0 && insertIdx < archiveIdx, '插入必须在归档前——归档摘掉锚点就插不进去了');
+    assert.equal(calls[insertIdx][1].beforeSessionId, 's1', '插到原会话旁边（DOM-insertBefore 语义）');
+    registryFixturePath = undefined;
+    try { rmf(`${root}/workspace-registry-fixture.json`); } catch { /* 清理失败不碍事 */ }
+    rotateProbeResult = undefined;
+});
+
+test('R-建会话-10 注册表里找不到工作区 → inserted:false + insertError 可见（不装成功）', async () => {
+    rotateProbeResult = {
+        sessions: { list: async () => ({ items: [] }), create: async () => ({ sessionId: 's-reg-2' }) },
+        workspace: { insertSessionBefore: async () => { throw new Error('不该被调'); } },
+        full: true,
+    };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1' } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json.value.inserted, false);
+    assert.match(res.json.value.insertError, /注册表/, '失败原因要可见');
     rotateProbeResult = undefined;
 });
 
