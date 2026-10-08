@@ -1108,7 +1108,7 @@ test('R-建会话-1 create✓ → 同工作区优先（list 命中当前会话�
     };
     const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1' } });
     assert.equal(res.statusCode, 200, res.body);
-    assert.deepEqual(res.json.value, { created: true, createdSessionId: 's-new-1', workspaceMatched: true, archived: false }, '无归档能力时 archived 如实为 false');
+    assert.deepEqual(res.json.value, { created: true, createdSessionId: 's-new-1', workspaceMatched: true, archived: false, renamed: false }, '无归档/无书名时 archived、renamed 如实为 false');
     assert.deepEqual(creates, [{ cwd: '/Users/x/novel' }], '必须带着匹配到的 cwd 建（新会话才落同一工作区）');
     rotateProbeResult = undefined;
 });
