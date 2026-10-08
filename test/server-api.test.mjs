@@ -1099,7 +1099,8 @@ test('R-建会话-1 create✓ → 同工作区优先（list 命中当前会话�
     const creates = [];
     rotateProbeResult = {
         sessions: {
-            list: async () => ({ sessions: [{ id: 's1', workspaceId: 'w-novel' }] }),
+            // 真机实证形状：{ items: [{ sessionId, cwd, ... }] }
+            list: async () => ({ items: [{ sessionId: 's1', cwd: '/Users/x/novel' }] }),
             create: async (req) => { creates.push(req); return { sessionId: 's-new-1' }; },
         },
         workspace: null,
@@ -1108,7 +1109,7 @@ test('R-建会话-1 create✓ → 同工作区优先（list 命中当前会话�
     const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1' } });
     assert.equal(res.statusCode, 200, res.body);
     assert.deepEqual(res.json.value, { created: true, createdSessionId: 's-new-1', workspaceMatched: true, archived: false }, '无归档能力时 archived 如实为 false');
-    assert.deepEqual(creates, [{ workspaceId: 'w-novel' }], '必须带着匹配到的 workspaceId 建（新会话才落同一工作区）');
+    assert.deepEqual(creates, [{ cwd: '/Users/x/novel' }], '必须带着匹配到的 cwd 建（新会话才落同一工作区）');
     rotateProbeResult = undefined;
 });
 
@@ -1154,6 +1155,25 @@ test('R-建会话-5 全能力（真控制器）→ 建+归档一次完成，arch
     assert.equal(res.json.value.archived, true, '全能力下必须顺手归档——一个按钮完成轮换');
     assert.deepEqual(archived, ['s1']);
     assert.equal(res.json.value.createdSessionId, 'session-real-1');
+    rotateProbeResult = undefined;
+});
+
+test('R-建会话-6 带 book → 新会话 cwd 落书的工作区根（续写第一扫就见书）', async () => {
+    const creates = [];
+    rotateProbeResult = {
+        sessions: {
+            list: async () => ({ items: [] }),
+            create: async (req) => { creates.push(req); return { sessionId: 's-book-1' }; },
+        },
+        workspace: null,
+        full: false,
+    };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1', book: '疲劳检测' } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json.value.workspaceMatched, true);
+    assert.equal(creates.length, 1, '书根命中就不必再兜底');
+    assert.ok(creates[0].cwd && String(creates[0].cwd).includes('疲劳检测') === false, 'cwd 是工作区根不是书目录');
+    assert.equal(typeof creates[0].cwd, 'string');
     rotateProbeResult = undefined;
 });
 

@@ -351,7 +351,9 @@ export function createProjectsController(ctx) {
 		state.busy = true; notify();
 		try {
 			const value = await apiFetch('/session/create', {
-				method: 'POST', body: JSON.stringify({ session: state.sessionId }),
+				method: 'POST',
+				// book：服务端据此把新会话 cwd 落到书的工作区根——续写第一扫就见书
+				body: JSON.stringify({ session: state.sessionId, book: state.detail?.id ?? '' }),
 			});
 			const handoff = state.detail?.session?.handoff ?? '';
 			if (handoff && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
