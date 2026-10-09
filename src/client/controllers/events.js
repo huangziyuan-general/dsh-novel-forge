@@ -122,6 +122,7 @@ export function createEventsController(ctx) {
 			case 'proofread': await ctx.runRevision('proofread'); break;
 			case 'continuity': await ctx.loadContinuity(); break;
 			case 'draft-batch': await ctx.runBatch(); break;
+			case 'draft-batch-resume': await ctx.runBatch({ resume: true }); break;
 			case 'diagnose': await ctx.loadDiagnosis(); break;
 			case 'import-demo': case 'import-file': needsModel('请在会话中调用 novel_import 导入'); break;
 			case 'save': await ctx.saveChapter(); break;
@@ -242,7 +243,9 @@ export function createEventsController(ctx) {
 		else if (field === 'clone-value') { if (state.clone) state.clone.value = e.target.value; }
 		else if (field === 'chapterNo') {
 			const no = Number(e.target.value);
-			if (no > 0) {
+			// 只收正整数（CodeBuddy 审计 2026-10-09 L1）：'1.5'/'2e3' 此前会放行，
+			// 服务端 400 兜底但编辑器已经先切过去了
+			if (Number.isInteger(no) && no >= 1) {
 				// 有未保存草稿时换章会丢内容——先确认再切
 				if (state.draftModified) { state.discardPending = { kind: 'chapter', no }; notify(); }
 				else void ctx.loadChapter(no);
