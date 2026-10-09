@@ -380,15 +380,25 @@ export function createProjectsController(ctx) {
 			const archive = value.archived
 				? '旧会话已归档'
 				: (value.archiveError ? `旧会话归档失败：${value.archiveError}` : '旧会话可在会话列表手动归档');
-			const place = value.inserted
-				? '已插到原会话旁边'
+			const registered = value.accounted === true || value.inserted;
+			const place = registered
+				? (value.inserted ? '已插到原会话旁边' : '已登记进工作区列表')
 				: (value.insertError || value.attachError
 					? `，但登记到工作区列表失败：${value.insertError ?? value.attachError}`
 					: '，且未登记进工作区列表（宿主未暴露工作区面）——到会话列表按名字找');
-			const named = value.renamed ? '《…》续写' : '（未命名）';
+			const named = value.title ?? (value.renamed ? '（已创建，名未取得）' : '（未命名）');
 			state.notice = value.createdSessionId
-				? `新会话「${named}」已创建${value.workspaceMatched ? '，落在原会话的工作区' : ''}${place}——列表不自动刷新就刷新页面，按名字找它；交接摘要已复制，打开粘贴即续写；${archive}`
+				? `新会话「${named}」已创建${value.workspaceMatched ? '，落在原会话的工作区' : ''}${place}${value.accounted === false ? '；侧栏暂未登记（可刷新页面或到全部会话找）' : ''}——打开它粘贴交接摘要即续写；${archive}`
 				: '新会话已创建但未取得 id——请到会话列表查看';
+			// 直接跳进新会话（用户钦定 2026-10-09：点完按钮就落在新会话里，不落在
+			// 「选择工作区」空白页）。宿主 uiWorkspace.openSession(sessionId)——
+			// 导航失败不吞创建成功的事实（notice 已给出会话名，可手动打开）。
+			try {
+				if (value.createdSessionId && typeof ctx.openSession === 'function') {
+					ctx.openSession(value.createdSessionId);
+					state.notice = `已切到新会话「${named}」——交接摘要已复制，粘贴即从下一章续写；${archive}`;
+				}
+			} catch { /* 导航失败保持原通知 */ }
 		} catch (error) { state.error = String(error?.message ?? error); }
 		finally { state.busy = false; notify(); }
 	};

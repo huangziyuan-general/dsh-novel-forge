@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.16.1 (2026-10-09)
+
+### 会话交接真机修复（2026-10-09，403 用例全绿）
+
+- **命名（用户钦定）**：新会话 `《书名》续写` → **`书名-YYMMDD`**（如 `开局觉醒加特林-261009`）——归属一眼可见，按名称排序即按时间排序。
+- **创建时直接带 `workspaceId`**（types.d.ts 实证 `SessionCreateRequest = { workspaceId?, cwd?, … }`）：注册表命中工作区时，首个 create 形状为 `{ workspaceId, cwd }`——**宿主在创建时就完成工作区登记**，绕开事后 attachSession 的两个真机失败点（新会话 header cwd 校验、持久化滞后）。此前「创建后插到原会话旁边」的链路依赖创建后的 cwd 正确，任何一环失败侧栏就看不见。
+- **建完直接跳进新会话**（用户钦定：点完按钮就落在新会话里，不落在「选择工作区」空白页）：经宿主 `uiWorkspace.openSession` 导航；导航失败不吞创建成功的事实（notice 仍给出会话名，可手动打开）。
+- **登记终验**：响应新增 `accounted`（重读注册表确认新会话真的进了某个工作区分组——GUI 侧栏可见的唯一判据）与 `title`（真实命名结果）；面板通知直接显示会话名，`accounted:false` 时明示「侧栏暂未登记」。
+- 新增 R-建会话-11（workspaceId 优先形状）+ 命名断言更新。
+
+### 0.16.0 复核跟进
+
+- MCP 通道补 `readBytes`（createNodeFsBackend）：docx 导入此前在 MCP 直连必炸
+  `ctx.fs.readBytes is not a function`（宿主 dsh-fs 有该原语、node 后端漏了）。与宿主
+  契约同语义：maxBytes 必传、先 stat 校大小超限 FS_TOO_LARGE 拒绝而非截断。补两条
+  用例：字节逐个一致 + 超限拒绝；novel_import .docx 经 MCP 通道 preview 全链。
+- docx 数字实体越界码点（`&#x110000;`）原样保留，不再抛 RangeError（负数此前已被
+  正则挡住）；合法数字实体（`&#x41;`/`&#66;`）照常还原，有单测钉住。
+- 批量 resume 防双跑：检查点 `status === 'running'` 且 startedAt 距今 10 分钟内 →
+  409 BATCH_RUNNING（面板按钮按 status !== 'done' 就显示，双跑会对同章各落一版、
+  白烧配额）；startedAt 缺失/损坏或超过 10 分钟（web 重启残留）放行。
+- 面板 chapterNo 注释校准：'1.5' 已拦，'2e3'（=2000）仍是整数会放行、由服务端 404
+  兜底——原注释过claim。
+
 ## 0.16.0 (2026-10-09)
 
 ### 批量起草断点续跑

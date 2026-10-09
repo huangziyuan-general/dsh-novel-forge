@@ -243,8 +243,9 @@ export function createEventsController(ctx) {
 		else if (field === 'clone-value') { if (state.clone) state.clone.value = e.target.value; }
 		else if (field === 'chapterNo') {
 			const no = Number(e.target.value);
-			// 只收正整数（CodeBuddy 审计 2026-10-09 L1）：'1.5'/'2e3' 此前会放行，
-			// 服务端 400 兜底但编辑器已经先切过去了
+			// 只收正整数（CodeBuddy 审计 2026-10-09 L1）：'1.5' 这类非整数此前会放行，
+			// 服务端 400 兜底但编辑器已经先切过去了。注意 '2e3'（=2000）仍是整数、
+			// 此处照样放行——穷举写法不值当，不存在的章号由服务端 404 兜底。
 			if (Number.isInteger(no) && no >= 1) {
 				// 有未保存草稿时换章会丢内容——先确认再切
 				if (state.draftModified) { state.discardPending = { kind: 'chapter', no }; notify(); }
