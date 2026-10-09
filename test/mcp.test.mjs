@@ -113,6 +113,35 @@ test('standalone: novel_project init 在纯 node:fs 通道可用', async () => {
     assert.ok(fs.existsSync(path.join(root, '甲编', 'novel.json')));
 });
 
+test('standalone: 后端 readBytes——字节通路可用，超限 FS_TOO_LARGE 拒绝（宿主契约）', async () => {
+    if (!hasSdk) return;
+    const backend = createNodeFsBackend(root);
+    const target = await backend.resolve('bytes.bin', { cwd: root });
+    const raw = Buffer.from([0x50, 0x4b, 0x00, 0xff, 0xfe, 0x03]);
+    fs.writeFileSync(path.join(root, 'bytes.bin'), raw); // 直写二进制（writeText 是 utf8 通道会解坏）
+    const bytes = await backend.readBytes(target, undefined, 64 * 1024 * 1024);
+    assert.ok(Buffer.isBuffer(bytes), 'readBytes 返回 Buffer/字节');
+    assert.deepEqual([...bytes], [...raw], '字节逐个一致（utf8 通道会解坏二进制）');
+    await assert.rejects(
+        () => backend.readBytes(target, undefined, 3),
+        (e) => e.code === 'FS_TOO_LARGE',
+        '超过 maxBytes 必须 FS_TOO_LARGE 拒绝，不是截断',
+    );
+});
+
+test('standalone: novel_import 的 .docx 通路在 MCP 通道可用（readBytes 补齐前的 TypeError 回归）', async () => {
+    if (!hasSdk) return;
+    const { buildZip } = await import('./helpers/zip.mjs');
+    const xml = `<?xml version="1.0"?><w:document xmlns:w="x"><w:body>`
+        + '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>第一章 铁轨</w:t></w:r></w:p>'
+        + '<w:p><w:r><w:t>列车停在荒原。信号灯灭了。</w:t></w:r></w:p>'
+        + '</w:body></w:document>';
+    fs.writeFileSync(path.join(root, '原稿.docx'), buildZip([{ name: 'word/document.xml', data: Buffer.from(xml) }]));
+    const r = await standalone.call('novel_import', { action: 'preview', book: '轨行', file: '原稿.docx' });
+    assert.ok(r.chapters >= 1, 'docx 经 MCP 通道能切出章节（readBytes 缺失时这里是 TypeError）');
+    assert.match(r.previews[0].title, /铁轨|第一章/);
+});
+
 test('stdio server: initialize → tools/list → tools/call 全链', async () => {
     if (!hasSdk) return;
     const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-mcp-ws-'));

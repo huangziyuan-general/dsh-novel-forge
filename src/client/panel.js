@@ -71,7 +71,7 @@ const ForgeBoundary = typeof Component === 'function'
  * @param {string|null} [opts.sessionId] 当前会话（slot inject 工厂给的）
  * @param {Function} [opts.onChange] 需要重渲染时的回调
  */
-export function createForgeController({ sessionId = null, resolveSessionId = null, onChange = () => {} } = {}) {
+export function createForgeController({ sessionId = null, resolveSessionId = null, onChange = () => {}, openSession = null } = {}) {
 	const state = initialState();
 	state.sessionId = sessionId ?? null;
 
@@ -125,7 +125,8 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 
 	// 共享上下文：各子控制器往这里挂自己的动作；跨域调用（如 openProject 要拉提案）
 	// 在装配完成后才发生，晚绑定天然解环。
-	const ctx = { state, notify, syncSession, withSession, seq, player };
+	// openSession = 宿主客户端导航面（index.js 递进来的 props，可为 null）。
+	const ctx = { state, notify, syncSession, withSession, seq, player, openSession };
 	Object.assign(ctx, createChaptersController(ctx));
 	Object.assign(ctx, createLoreController(ctx));
 	Object.assign(ctx, createProposalsController(ctx));

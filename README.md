@@ -30,6 +30,8 @@ AI 长篇写作的通病不是玄学，每一个都有对应的工程解法。�
 | 踩平台红线 | 敏感自查七类，命中给行号与改法 | `novel_audit censor` |
 | 内部工序占满主对话 | 旁路直调：润色/校对/打标/起草走独立流，不占主对话、不写会话记录；结果只出提案 | `lib/engine.js` |
 | 批量起草绕过门禁 | 并发生成、**串行提交**：每章仍过同一道门禁，单章失败不回滚整批 | `draft-batch` |
+| 批量起草中途断了 | 断点检查点：每章提交后落盘 `.novel/batch-checkpoint.json`，`resume:true` 从断点续跑——已落盘章自动跳过、只重试未完成的 | `draft-batch resume` |
+| 同一会话连写越写越短 | 会话疲劳检测：首稿字数低于全书基线 70% 或同会话连写 ≥8 章即警示；「创建新会话并交接」一键建新会话（有归档能力就建+归档一次完成），交接摘要自动进剪贴板 | 面板疲劳横幅 |
 | 写到百章后"看不见前文" | 本地检索索引：按**记忆碎片**把段落找回来（中文手工二元切分，零依赖） | `novel_search` |
 
 ## 界面一览
@@ -48,11 +50,11 @@ AI 长篇写作的通病不是玄学，每一个都有对应的工程解法。�
 **第 1 步 · 安装插件**（任选其一）：
 
 ```bash
-# 从插件商店（GitHub 公开仓库，推荐）
-dsh plugin --profile web add github:huangziyuan-general/dsh-novel-forge
+# 从 npm（0.16.0 起已发布；安装量计入 dshmarket「Most installed」榜）
+dsh plugin --profile web add npm:dsh-novel-forge
 
-# 从 npm（发包后启用——当前未发布，此路暂不可用）
-# dsh plugin --profile web add npm:@huangziyuan-general/dsh-novel-forge
+# 从 GitHub 公开仓库
+dsh plugin --profile web add github:huangziyuan-general/dsh-novel-forge
 
 # 本地开发（符号链接，改码即生效）
 dsh plugin --profile web add link:/path/to/dsh-novel-forge
@@ -75,7 +77,7 @@ dsh plugin --profile web add link:/path/to/dsh-novel-forge
 ## 会话与面板的分工
 
 - **会话里（模型 + `novel_*` 工具）**：一切创作动作——建书、大纲、细纲、写章、账本、审计。写章必须走会话（简报 + 多道落盘门禁是多轮闭环）。
-- **面板（右侧栏「锻炉」）**：阅读与听书、润色/校对（旁路引擎，产物为提案）、全书体检、黄金三章诊断、批量起草、提案审批（应用/丢弃）、书卡管理（改名/删除/克隆）。
+- **面板（右侧栏「锻炉」）**：阅读与听书、润色/校对（旁路引擎，产物为提案）、全书体检、黄金三章诊断、批量起草（含断点续跑）、提案审批（应用/丢弃）、书卡管理（改名/删除/克隆）、会话疲劳监测与一键交接。
 
 典型会话流：
 
@@ -103,7 +105,8 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 | 一键润色 / 机械校对 | 章节 | 走旁路引擎，产物是**提案**，不直接改正文；校对守卫更严（篇幅上限 1.06） |
 | 全书体检 | 详情页 | 死人复活/账本矛盾/伏笔超期/章号断档/人物卡缺失，零 token |
 | 黄金三章诊断 | 基本信息卡 | 钩子/开场/冲突/灌输四维数字 + 总评，纯词表零 token |
-| 批量起草 | 详情页 | 并发生成、串行提交；逐章成败摊开；并发上限 4、默认 1 |
+| 批量起草 | 详情页 | 并发生成、串行提交；逐章成败摊开；并发上限 4、默认 1；中断后「继续上次批量（第a–b章，已落N）」从断点续跑 |
+| 会话疲劳与交接 | 详情页横幅 | 首稿字数低于全书基线 70% 或同会话连写 ≥8 章即警示（写章进度卡带会话状态行）；「创建新会话并交接」一键建新会话+归档旧会话，交接摘要自动进剪贴板，粘到新会话即可无缝续写 |
 | 提案审批 | 详情页 | 查看提案全文 → 应用（生成新版本）/ 丢弃；旧版永不覆盖 |
 
 ## 20 个工具
@@ -122,7 +125,7 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 | `novel_audit` | 确定性章节审计 + 契约指标 + `continuity` 全书一致性 + `voice` 语言基因核对 + `platform` **起点/番茄双平台审稿** + `censor` **敏感自查七类** | 机审证据；平台体检表给出可执行改法 |
 | `novel_style` | 文笔六维基线（μ±σ 带）+ **氛围光谱 12 轴**：build 建基线 / check 对照（含主导氛围漂移） | 纯本地零费用；只报数不贴标签 |
 | `novel_propose` | 提案 / 列表 | 修订走提案，用户在面板应用；旧版永不覆盖 |
-| `novel_import` | 本地书籍导入（preview/import/**backfill 门禁回补**） | 纯函数切分章节；建书+版本化落盘 |
+| `novel_import` | 本地书籍导入（preview/import/**backfill 门禁回补**；file 支持 `.md`/`.txt`/`.docx`——docx 按 Word 标题样式与「第N章」规则切分） | 纯函数切分章节；建书+版本化落盘；docx 走 `readBytes` 字节通道（文本通道会解坏二进制），拒 zip64、48MB 解压上限 |
 | `novel_export` | 导出整本（md/txt + stats） | 按版本顺序拼装，写 `导出/` |
 | `novel_diagnose` | 黄金三章四维诊断（钩子/开场/冲突/灌输） | 确定性数字，机审与模型审分离 |
 | `novel_polish` | 段落级病灶定位 + 润色提案提交 | 润色也走提案制，永不覆盖旧稿 |
@@ -151,6 +154,7 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 ├─ 账本/伏笔.json          # [{id, setup, chapter, plan, payoffChapter}]
 └─ .novel/
    ├─ audit.jsonl         # 全动作审计（谁在哪章做了什么、何时被拒）
+   ├─ batch-checkpoint.json # 批量起草断点（每章提交/被拦后更新，status: running→done|partial）
    ├─ index.db            # 检索索引（派生物：删了重跑 novel_search build 即得）
    └─ proposals/P3-xxx.json
 ```
@@ -198,7 +202,7 @@ Claude Desktop / Cursor 等任意 MCP 客户端——工作区根取 `NOVEL_FORG
 ```
 
 零依赖实现（原生 JSON-RPC 2.0 over stdio）；宿主外的 fs 后端带同样的
-containment 与版本守卫语义。
+containment 与版本守卫语义（含 `readBytes` 字节原语——`.docx` 导入在 MCP 通道同样可用）。
 
 ## 排障 FAQ
 
@@ -215,6 +219,8 @@ containment 与版本守卫语义。
 | 机审说「对话占比 0」 | 正文对话请用中文弯引号 ""，直角引号不识别 |
 | 细纲覆盖率 0% 但场景写了 | 覆盖率按细纲「必写场景」标题词面匹配（启发式），把场景标题措辞对齐细纲条目即可 |
 | 「一键写章」按钮 501 | 设计如此：写章要走 briefing + 多道落盘门禁，只能在会话里做 |
+| 「继续上次批量」报 409 `BATCH_RUNNING` | 上次批量可能还在跑：等它结束，或启动已超过 10 分钟再续（防双跑守卫；web 重启残留的检查点超时后自动放行） |
+| 面板报 403 `FORBIDDEN_HOST` | 访问地址不是本机（用了局域网 IP 或域名）——面板 API 只限 localhost/127.0.0.1/[::1]，用本机地址打开 DSH web（安全模型见「已知边界」） |
 
 ## 开发与测试
 
