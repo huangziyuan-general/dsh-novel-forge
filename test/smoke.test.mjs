@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createFsio, auditLine } from '../lib/fsio.js';
 import * as proposals from '../lib/proposals.js';
+import { buildZip } from './helpers/zip.mjs';
 
 const hasSdk = fs.existsSync(path.join(import.meta.dirname, '..', 'node_modules', '@deepseek-ai', 'dsh-tools'));
 
@@ -53,6 +54,16 @@ before(async () => {
         async readText(target) {
             const abs = target.targetKey.slice(4);
             return fs.readFileSync(abs, 'utf8');
+        },
+        async readBytes(target, _signal, maxBytes) {
+            const abs = target.targetKey.slice(4);
+            const buf = fs.readFileSync(abs);
+            if (maxBytes !== undefined && buf.length > maxBytes) {
+                const error = new Error(`FS_TOO_LARGE: ${abs} 超过 ${maxBytes} 字节上限`);
+                error.code = 'FS_TOO_LARGE';
+                throw error;
+            }
+            return new Uint8Array(buf);
         },
         async listDir(target) {
             const abs = target.targetKey.slice(4);
@@ -497,6 +508,34 @@ test('维护通道：世界书 update 保 id / set_stage 可回退 / propose pru
     assert.ok(pruned.removed >= 1, `应清理已终态提案，实际 ${pruned.removed}`);
     assert.equal(pruned.proposals.length, 0, '清完后不应再引用已终态提案');
     assert.ok(!pruned.proposals.some((x) => x.id === p.id), '被 apply 的提案索引已清');
+});
+
+test('novel_import 的 .docx 通路：readBytes 取源 → 抽取切分 → 落盘', async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>`
+        + '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>第一章 香炉</w:t></w:r></w:p>'
+        + '<w:p><w:r><w:t>林晚在香炉前醒来。</w:t></w:r></w:p>'
+        + '<w:p><w:pPr><w:pStyle w:val="1"/></w:pPr><w:r><w:t>第二章 布鞋</w:t></w:r></w:p>'
+        + '<w:p><w:r><w:t>门前一只湿布鞋。</w:t></w:r></w:p>'
+        + '</w:body></w:document>';
+    fs.writeFileSync(path.join(root, '词稿.docx'), buildZip([{ name: 'word/document.xml', data: Buffer.from(xml) }]));
+
+    const pv = await tool('novel_import').execute({ action: 'preview', book: '词稿书', file: '词稿.docx' }, exec);
+    assert.equal(pv.chapters, 2, 'docx 两处标题样式应切出 2 章');
+    assert.equal(pv.previews[0].title, '香炉');
+
+    const im = await tool('novel_import').execute({ action: 'import', book: '词稿书', title: '词稿书', file: '词稿.docx' }, exec);
+    assert.equal(im.chapters, 2);
+    assert.ok(fs.existsSync(path.join(root, '词稿书', 'novel.json')));
+    const ch1 = fs.readFileSync(path.join(root, '词稿书', '正文', `第1章-香炉-v1.md`), 'utf8');
+    assert.match(ch1, /林晚在香炉前醒来/);
+
+    // 假 docx（改后缀的纯文本）→ 明确报错，不落半截书
+    fs.writeFileSync(path.join(root, '假词稿.docx'), '根本不是 zip');
+    await assert.rejects(
+        tool('novel_import').execute({ action: 'preview', book: '假词稿书', file: '假词稿.docx' }, exec),
+        /word\/document\.xml|中央目录/,
+    );
 });
 
 test('资产/评审工具端到端：import → diagnose → export → glossary → polish → clone', async () => {
@@ -1766,4 +1805,44 @@ test('★ registerNovelSkill：有 skills.register 就注册；服务缺席/抛�
     const warns = [];
     assert.equal(registerNovelSkill({ skills: { register: () => { throw new Error('boom'); } }, logger: { warn: (m, d) => warns.push(`${m} ${d ?? ''}`) } }), false, '注册抛错 → false 不抛');
     assert.ok(warns.join('').includes('boom'), '失败要 warn 留痕');
+});
+
+// ── 安全跟进项①：污染索引的越书路径——工具面拒读、repair 清账 ────────────────
+
+test('★ 路径收口：rec.path 指向书目录外时工具面拒读，repair 把越书文件对账清出（跟进项①）', async () => {
+    assert.equal(hasSdk, true, '缺宿主 SDK symlink：先 npm run setup-dev');
+    // 书目录外的「机密」文件（仍在工作区内——fsio 读沙箱的根是工作区根）
+    fs.mkdirSync(path.join(root, '外部'), { recursive: true });
+    const secretPath = path.join(root, '外部', 'secret.txt');
+    fs.writeFileSync(secretPath, '机密内容-绝不应出现在任何工具输出里');
+
+    // 一本被污染的书：rec.path / files[].file 都指向书目录之外
+    const B = '污染书';
+    const metaPath = path.join(root, B, 'novel.json');
+    fs.mkdirSync(path.join(root, B, '正文'), { recursive: true });
+    fs.writeFileSync(path.join(root, B, '正文', '第1章-旧版-v1.md'), '正常版本文件也在，证明拒的不是「文件不在」。');
+    fs.writeFileSync(metaPath, `${JSON.stringify({
+        title: B, stage: 'chapter', cast: [], proposals: [], gateFailures: {},
+        chapters: { 1: { title: '第一版', versions: [1], latest: 1, chars: 4, summary: '',
+            files: [{ version: 1, file: '污染书/正文/第1章-旧版-v1.md' }, { version: 2, file: '外部/secret.txt' }],
+            path: '外部/secret.txt' } },
+    }, null, 2)}\n`);
+
+    // ① 工具面：noai_scan 遇越书路径 → 可行动错误（不是把机密当正文扫，也不是「文件缺失」）
+    await assert.rejects(
+        () => tool('novel_noai_scan').execute({ book: B, chapter: 1 }, exec),
+        /越出书目录/,
+    );
+
+    // ② repair：越书文件按「不可达」进 missing 清出索引；机密内容不得出现在输出里
+    const rep = await tool('novel_project').execute({ action: 'repair', book: B }, exec);
+    const repText = JSON.stringify(rep);
+    assert.ok(!repText.includes('机密内容'), '越界文件内容不得泄漏进工具输出');
+    assert.ok(rep.missing.includes('外部/secret.txt'), '越书文件必须进 missing 清单（对账可见）');
+    const after = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    assert.deepEqual(after.chapters['1'].files.map((f) => f.file),
+        ['污染书/正文/第1章-旧版-v1.md'], '★ 越书版本被对账清出，书内版本原样保留');
+    assert.equal(after.chapters['1'].path, '污染书/正文/第1章-旧版-v1.md', '当前正文回落到书内最后一个可达版本');
+    assert.ok(fs.existsSync(secretPath), '对账清的是索引引用，不碰别人的文件');
+    assert.equal(fs.readFileSync(secretPath, 'utf8'), '机密内容-绝不应出现在任何工具输出里');
 });

@@ -269,10 +269,14 @@ export function createProjectsController(ctx) {
 
 	const runRevision = async (mode) => {
 		if (!state.selected || state.revising) return;
+		// 跨书竞态守卫（CodeBuddy 审计 2026-10-09）：润色/校对请求最长可等数分钟，
+		// 期间切书后迟到的写回会把 A 书的 notice / 提案队列挂到 B 书头上。
+		const bookId = state.selected;
+		const chapterNo = state.chapterNo;
 		state.revising = mode; state.error = ''; state.notice = ''; notify();
 		try {
 			const value = await apiFetch(
-				`/projects/${encodeURIComponent(state.selected)}/chapters/${state.chapterNo}/${mode}`,
+				`/projects/${encodeURIComponent(bookId)}/chapters/${chapterNo}/${mode}`,
 				{
 					method: 'POST', timeoutMs: REVISION_TIMEOUT_MS,
 					// session = 面板锚定的会话 id：服务端拿它找活的父 agent 起子代理
@@ -280,11 +284,12 @@ export function createProjectsController(ctx) {
 					body: JSON.stringify({ session: state.sessionId ?? undefined }),
 				},
 			);
+			if (state.selected !== bookId) return; // 已切书：结果作废
 			const what = mode === 'proofread' ? '校对' : '润色';
 			const delta = Number(value?.deltaChars ?? 0);
 			state.notice = `${what}完成：提案 ${value.proposalId}（${value.chars} 字，改动 ${delta >= 0 ? '+' : ''}${delta}）—— 到「待批准提案」里点应用才生效`;
-			await ctx.loadProposals(state.selected);
-		} catch (error) { state.error = revisionErrorText(error, mode); }
+			await ctx.loadProposals(bookId);
+		} catch (error) { if (state.selected === bookId) state.error = revisionErrorText(error, mode); }
 		finally { state.revising = null; notify(); }
 	};
 
@@ -305,42 +310,55 @@ export function createProjectsController(ctx) {
 		await runBatch();
 	};
 
-	const runBatch = async () => {
+	const runBatch = async (opts = {}) => {
 		if (!state.selected || state.batchBusy) return;
+		// 跨书竞态守卫（CodeBuddy 审计 2026-10-09）：批量最长 15 分钟，期间切书后
+		// 迟到的写回会把 A 书的结果/notice 挂到 B 书详情页。表单值也在发起时快照——
+		// await 之后重读会拿到用户此刻改的值（M15 重载判断就错位了）。
+		const bookId = state.selected;
+		const batchFrom = Number(state.batchFrom) || 1;
+		const batchCount = Number(state.batchCount) || 1;
 		state.batchBusy = true; state.error = ''; state.notice = ''; state.batchResult = null; notify();
 		try {
-			state.batchResult = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/draft-batch`, {
+			state.batchResult = await apiFetch(`/projects/${encodeURIComponent(bookId)}/draft-batch`, {
 				method: 'POST',
 				timeoutMs: 900_000,
 				body: JSON.stringify({
-					from: Number(state.batchFrom) || 1,
-					count: Number(state.batchCount) || 1,
+					from: batchFrom,
+					count: batchCount,
 					concurrency: Number(state.batchConcurrency) || 1,
 					force: state.batchForce === true,
 					session: state.sessionId ?? undefined,
+					// 断点续跑：参数由服务端从 .novel/batch-checkpoint.json 恢复
+					...(opts.resume === true ? { resume: true } : {}),
 				}),
 			});
+			if (state.selected !== bookId) return; // 已切书：结果作废，不污染新书状态
 			const st = state.batchResult?.stats ?? {};
-			state.notice = `批量起草完成：落盘 ${st.committed ?? 0} 章，被拦 ${st.failed ?? 0} 章`;
+			state.notice = `${state.batchResult?.resumed === true ? '断点续跑：' : ''}批量起草完成：落盘 ${st.committed ?? 0} 章，被拦 ${st.failed ?? 0} 章`;
+			// 检查点状态同步：全落盘 → done（「继续上次批量」按钮退场），有被拦 → partial
+			if (state.detail?.batchCheckpoint) {
+				state.detail = { ...state.detail, batchCheckpoint: { ...state.detail.batchCheckpoint, status: (st.failed ?? 0) === 0 ? 'done' : 'partial' } };
+			}
 			// 新章会改变账本与提案队列；同时体检结果作废（它按章算的）
-			await Promise.all([loadChapterList(state.selected), ctx.loadProposals(state.selected)]);
+			await Promise.all([loadChapterList(bookId), ctx.loadProposals(bookId)]);
+			if (state.selected !== bookId) return;
 			state.continuity = null;
 			state.diagnosis = null; // 批量可能覆盖前三章（force 时），诊断同样作废
 			// M15 修复：正被编辑的章若在本次批量范围内（且真的落了盘），重拉正文——
 			// 否则编辑器里还是旧稿，用户一点「保存」就把旧内容盖回成新版本
-			const batchFrom = Number(state.batchFrom) || 1;
-			const batchCount = Number(state.batchCount) || 1;
 			if ((st.committed ?? 0) > 0
-				&& state.selected !== null
 				&& state.chapterNo >= batchFrom && state.chapterNo < batchFrom + batchCount) {
 				await ctx.loadChapter(state.chapterNo);
 				state.notice += `；第 ${state.chapterNo} 章已在编辑器里重载为最新版本`;
 			}
 		} catch (error) {
-			const raw = String(error?.message ?? error);
-			state.error = /ENGINE_UNAVAILABLE|引擎未就绪/.test(raw)
-				? '批量起草需要模型服务：本进程还没有可用的模型路由。'
-				: raw;
+			if (state.selected === bookId) {
+				const raw = String(error?.message ?? error);
+				state.error = /ENGINE_UNAVAILABLE|引擎未就绪/.test(raw)
+					? '批量起草需要模型服务：本进程还没有可用的模型路由。'
+					: raw;
+			}
 		} finally { state.batchBusy = false; notify(); }
 	};
 
@@ -364,7 +382,9 @@ export function createProjectsController(ctx) {
 				: (value.archiveError ? `旧会话归档失败：${value.archiveError}` : '旧会话可在会话列表手动归档');
 			const place = value.inserted
 				? '已插到原会话旁边'
-				: (value.insertError ? `，但登记到工作区列表失败：${value.insertError}` : '');
+				: (value.insertError || value.attachError
+					? `，但登记到工作区列表失败：${value.insertError ?? value.attachError}`
+					: '，且未登记进工作区列表（宿主未暴露工作区面）——到会话列表按名字找');
 			const named = value.renamed ? '《…》续写' : '（未命名）';
 			state.notice = value.createdSessionId
 				? `新会话「${named}」已创建${value.workspaceMatched ? '，落在原会话的工作区' : ''}${place}——列表不自动刷新就刷新页面，按名字找它；交接摘要已复制，打开粘贴即续写；${archive}`
