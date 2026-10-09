@@ -28,7 +28,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { registerServerApi } from '../lib/server-api.js';
-import { probeSessionCapabilities } from '../lib/server-routes/session.js';
+import { probeSessionCapabilities, resetSessionRateLimit } from '../lib/server-routes/session.js';
 import { createServerFsio } from '../lib/fsio.js';
 
 const PREFIX = '/api/novel-forge';
@@ -211,9 +211,13 @@ let backend;
 let ctx;
 let handler;
 
-/** 驱动一次请求；fence 默认带（R1 用 fence:false 关掉）。返回 FakeRes。 */
+/** 驱动一次请求；fence 默认带（R1 用 fence:false 关掉）。返回 FakeRes。
+ *  Host 默认 localhost:3080——真实 HTTP/1.1 请求必带 Host，入口校验（DNS rebinding 防线）按它放行；
+ *  要测跨 Host 拒绝，显式传 headers.host。
+ *  会话路由节流窗口默认每请求清空（全局状态不能在用例间累积）；要测节流本身传 rateReset:false。 */
 async function drive(opts) {
-    const headers = { ...(opts.headers ?? {}) };
+    if (opts.rateReset !== false) resetSessionRateLimit();
+    const headers = { host: 'localhost:3080', ...(opts.headers ?? {}) };
     if (opts.fence !== false) headers[FENCE] = '1';
     const req = new FakeReq({ method: opts.method, url: opts.url, headers, body: opts.body });
     const res = new FakeRes();
@@ -604,6 +608,26 @@ test('R1 fence 全覆盖：27 条路由逐个不带 fence 头 → 403 FORBIDDEN'
         assert.equal(res.json.error?.code, 'FORBIDDEN', `${r.name}：错误码应为 FORBIDDEN，实际 ${JSON.stringify(res.json)}`);
         assert.equal(res.json.ok, false);
     }
+});
+
+// 拆分回归（04e377a）：polish/proofread 分支曾 `return runChapterRevision(...)`——
+// 该函数经 writeJson/fail 收口返回 undefined → dispatch 落到 404 二次写响应
+// （FakeRes 直接抛 ERR_HTTP_HEADERS_SENT）。fence:false 只走到 403 分支，抓不住它；
+// 必须带 fence 真正进入分支收口处。
+test('R1+ 润色/校对分支自己收口响应（engine 缺席 → 503，不落 404 双写）', async () => {
+    for (const mode of ['polish', 'proofread']) {
+        const res = await drive({ method: 'POST', url: `${PREFIX}/projects/护栏本/chapters/1/${mode}`, body: {} });
+        assert.equal(res.statusCode, 503, `${mode}：engine 缺席应 503 由本分支收口，实际 ${res.statusCode}：${res.body}`);
+        assert.equal(res.json.error?.code, 'ENGINE_UNAVAILABLE', `${mode}：错误码 ${JSON.stringify(res.json.error)}`);
+        assert.equal(res.json.ok, false);
+    }
+});
+
+test('R1+ draft-batch resume：无检查点 → 400 NO_CHECKPOINT（请求形状校验先于引擎 503）', async () => {
+    await createBook('护栏本'); // 本文件内首个用到真实书目的请求——先建再验 resume 分支
+    const res = await drive({ method: 'POST', url: `${PREFIX}/projects/护栏本/draft-batch`, body: { resume: true } });
+    assert.equal(res.statusCode, 400, `无检查点应 400，实际 ${res.statusCode}：${res.body}`);
+    assert.equal(res.json.error?.code, 'NO_CHECKPOINT');
 });
 
 // ── R2：workspace 白名单（H4 修复）+ 非法书名 ──────────────────────────
@@ -1114,7 +1138,7 @@ test('R-建会话-1 create✓ → 同工作区优先（list 命中当前会话�
     };
     const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1' } });
     assert.equal(res.statusCode, 200, res.body);
-    assert.deepEqual(res.json.value, { created: true, createdSessionId: 's-new-1', workspaceMatched: true, archived: false, renamed: false, inserted: false }, '无归档/无书名/无注册表命中时三个标志如实为 false');
+    assert.deepEqual(res.json.value, { created: true, createdSessionId: 's-new-1', workspaceMatched: true, archived: false, renamed: false, attached: false, inserted: false }, '无归档/无书名/无注册表命中时四个标志如实为 false');
     assert.deepEqual(creates, [{ cwd: '/Users/x/novel' }], '必须带着匹配到的 cwd 建（新会话才落同一工作区）');
     rotateProbeResult = undefined;
 });
@@ -1164,11 +1188,17 @@ test('R-建会话-5 全能力（真控制器）→ 建+归档一次完成，arch
     rotateProbeResult = undefined;
 });
 
-test('R-建会话-9 建 → insertSessionBefore 插到原会话旁边，且在归档之前（锚点还在）', async () => {
+test('R-建会话-9 建 → attach 登记 + insertSessionBefore 位置参数插到原会话旁边，且在归档之前（锚点还在）', async () => {
     const calls = [];
     const { writeFileSync: wfs, rmSync: rmf } = await import('node:fs');
     registryFixturePath = `${root}/workspace-registry-fixture.json`;
     wfs(registryFixturePath, JSON.stringify({ tables: { workspaces: { 'w-reg-1': { path: '/x/novel', sessionIds: ['s1'] } } } }));
+    // 真机形状（宿主 dsh-workspace 实证）：控制器.get(workspaceId) → 实体；
+    // 实体.attachSession(sessionId) 登记；实体.insertSessionBefore(sessionId, beforeSessionId) 位置参数。
+    const entity = {
+        attachSession: async (sid) => { calls.push(['attach', sid]); },
+        insertSessionBefore: async (sid, before) => { calls.push(['insert', sid, before]); },
+    };
     rotateProbeResult = {
         sessions: {
             list: async () => ({ items: [] }),
@@ -1176,21 +1206,50 @@ test('R-建会话-9 建 → insertSessionBefore 插到原会话旁边，且在�
             rename: async () => {},
         },
         workspace: {
-            insertSessionBefore: async (req) => { calls.push(['insert', req]); },
+            get: (id) => (id === 'w-reg-1' ? entity : null),
             archiveSession: async (req) => { calls.push(['archive', req]); },
         },
         full: true,
     };
     const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1', bookTitle: '某书' } });
     assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json.value.attached, true, 'attach 登记=insertSessionBefore 的前置（否则 not accounted）');
     assert.equal(res.json.value.inserted, true, '登记进工作区视图=GUI 列表可见的前提');
     assert.equal(res.json.value.archived, true);
+    const attachIdx = calls.findIndex((c) => c[0] === 'attach');
     const insertIdx = calls.findIndex((c) => c[0] === 'insert');
     const archiveIdx = calls.findIndex((c) => c[0] === 'archive');
+    assert.ok(attachIdx >= 0 && attachIdx < insertIdx, 'attach 必须在 insert 前');
     assert.ok(insertIdx >= 0 && insertIdx < archiveIdx, '插入必须在归档前——归档摘掉锚点就插不进去了');
-    assert.equal(calls[insertIdx][1].beforeSessionId, 's1', '插到原会话旁边（DOM-insertBefore 语义）');
+    assert.equal(calls[insertIdx][1], 's-reg-1', '第一个位置参数=新会话 id（位置参数，不是对象）');
+    assert.equal(calls[insertIdx][2], 's1', '第二个位置参数=锚点（插到原会话旁边）');
     registryFixturePath = undefined;
     try { rmf(`${root}/workspace-registry-fixture.json`); } catch { /* 清理失败不碍事 */ }
+    rotateProbeResult = undefined;
+});
+
+test('R-建会话-9b attach 失败 → attached:false + attachError 可见，insert 照试不中断', async () => {
+    const { writeFileSync: wfs, rmSync: rmf } = await import('node:fs');
+    registryFixturePath = `${root}/workspace-registry-fixture-9b.json`;
+    wfs(registryFixturePath, JSON.stringify({ tables: { workspaces: { 'w-reg-9b': { path: '/x/novel', sessionIds: ['s1'] } } } }));
+    // 真机上的典型 attach 失败：新会话 cwd 与工作区 path 不一致（cwd 落到了书子目录）
+    const entity = {
+        attachSession: async () => { throw new Error("cannot attach session 's-9b' to workspace '/x/novel': its cwd resolves to '/x/novel/书'"); },
+        insertSessionBefore: async () => { throw new Error("cannot move session 's-9b' in workspace '/x/novel': the session is not accounted"); },
+    };
+    rotateProbeResult = {
+        sessions: { list: async () => ({ items: [] }), create: async () => ({ sessionId: 's-9b' }) },
+        workspace: { get: () => entity },
+        full: true,
+    };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1' } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json.value.attached, false);
+    assert.match(res.json.value.attachError, /cwd resolves/, 'attach 失败原因原文可见（cwd 落点是排障抓手）');
+    assert.equal(res.json.value.inserted, false);
+    assert.match(res.json.value.insertError, /not accounted/, 'insert 失败原因原文可见');
+    registryFixturePath = undefined;
+    try { rmf(`${root}/workspace-registry-fixture-9b.json`); } catch { /* 清理失败不碍事 */ }
     rotateProbeResult = undefined;
 });
 
@@ -1205,6 +1264,46 @@ test('R-建会话-10 注册表里找不到工作区 → inserted:false + insertE
     assert.equal(res.json.value.inserted, false);
     assert.match(res.json.value.insertError, /注册表/, '失败原因要可见');
     rotateProbeResult = undefined;
+});
+
+// ── 安全加固（CodeBuddy 审计 2026-10-09）─────────────────────────────────────
+
+test('S-1 Host 白名单：非本机 Host → 403（DNS rebinding 防线）', async () => {
+    for (const host of ['evil.com', 'evil.com:3080', '[2001:db8::1]:3080', 'localhoost:3080']) {
+        const res = await drive({ method: 'GET', url: `${PREFIX}/projects`, headers: { host } });
+        assert.equal(res.statusCode, 403, `Host=${host} 应被拒`);
+        assert.equal(res.json.error.code, 'FORBIDDEN_HOST');
+    }
+    for (const host of ['localhost:3080', '127.0.0.1:3080', '[::1]:3080', 'LOCALHOST:3080']) {
+        const res = await drive({ method: 'GET', url: `${PREFIX}/projects`, headers: { host } });
+        assert.notEqual(res.statusCode, 403, `本机 Host=${host} 不应被 Host 校验拒绝`);
+    }
+});
+
+test('S-2 Origin 存在时必须本机；畸形 Origin 拒绝', async () => {
+    const bad = await drive({ method: 'GET', url: `${PREFIX}/projects`, headers: { origin: 'http://evil.com' } });
+    assert.equal(bad.statusCode, 403);
+    assert.equal(bad.json.error.code, 'FORBIDDEN_ORIGIN');
+    const weird = await drive({ method: 'GET', url: `${PREFIX}/projects`, headers: { origin: 'not-a-url' } });
+    assert.equal(weird.statusCode, 403);
+    const good = await drive({ method: 'GET', url: `${PREFIX}/projects`, headers: { origin: 'http://127.0.0.1:3080' } });
+    assert.notEqual(good.statusCode, 403, '本机 Origin 放行');
+});
+
+test('S-3 session/rotate 节流：窗口内超限 → 429（rateReset:false 不清窗口）', async () => {
+    let last = null;
+    for (let i = 0; i < 7; i += 1) {
+        last = await drive({ method: 'POST', url: `${PREFIX}/session/rotate`, body: { session: 's-x' }, rateReset: false });
+    }
+    assert.equal(last.statusCode, 429, `第 7 次应 429，实际 ${last.statusCode}：${last.body}`);
+    assert.equal(last.json.error.code, 'RATE_LIMITED');
+    resetSessionRateLimit(); // 还原，不污染后续用例
+});
+
+test('S-4 rotate 的 session id 形状校验：结构性怪值 400', async () => {
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/rotate`, body: { session: 'bad id with spaces' } });
+    assert.equal(res.statusCode, 400, res.body);
+    assert.equal(res.json.error.code, 'INVALID_FIELD');
 });
 
 test('R-建会话-8 建 → 命名《书名》续写（没名字的空会话在分组列表里找不到）', async () => {

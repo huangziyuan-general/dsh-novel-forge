@@ -1,6 +1,111 @@
 # Changelog
 
-## 未发布
+## 0.16.0 (2026-10-09)
+
+### 批量起草断点续跑
+
+- 批量起草全程写检查点 `.novel/batch-checkpoint.json`（机器状态；每章提交/被拦后更新，
+  状态 running→done|partial）。REST `draft-batch` 新增 `resume:true`：参数从检查点恢复，
+  已落盘章由 planDraftBatch 自动挡掉、只重试未完成的；无检查点 400 NO_CHECKPOINT、
+  已完成 409 BATCH_DONE。请求形状校验先于引擎 503（4xx 不被 503 抢答）。
+- 面板：书详情携带 batchCheckpoint，批量区出现「继续上次批量（第a–b章，已落N）」按钮
+  （partial 时可见）；续跑后 notice 带「断点续跑：」前缀。检查点写失败不阻断批量
+  （正确性靠 plan 对已落盘章的自动拦截，重跑同范围天然续跑）。
+
+### novel_import 支持 .docx（Word 稿直接导入）
+
+- `novel_import` 的 `file` 参数接受 `.docx`：经宿主 `ctx.fs.readBytes` 取原始字节（不走
+  文本通道，避免二进制解坏），`lib/docx.js` 纯函数抽取——手写 ZIP 读（STORED/DEFLATE、
+  拒 zip64，48MB 解压上限防炸弹）+ OOXML 段落解析（Heading1-9/1-9/标题N 样式 → md 标题，
+  「第N章」正则兜底；w:t 实体/tab/br 按序保留）。找不到 `word/document.xml`（.doc/改后缀）
+  明确报错，不静默半截导入。txt/md 通路不变。
+
+### npm 首发 + 两个拆分回归修复（387 用例全绿）
+
+- **npm 首发占名**：`dsh-novel-forge` 首次发布到 npm（此前仅 GitHub 安装，dshmarket
+  "Most installed" 榜按 npm 周下载排名，缺席即永久榜外）。
+- **润色/校对 REST 双写修复**（`server-routes/chapters.js`，04e377a 拆分回归）：
+  polish/proofread 分支曾 `return runChapterRevision(...)`——该函数经 writeJson/fail
+  收口返回 undefined → dispatch 落到 404 二次写响应（ERR_HTTP_HEADERS_SENT），
+  真机症状是面板只收到半截错。改为显式 `await …; return true`；R1+ 回归用例
+  （带 fence 真进分支收口处）补上 fence:false 抓不住的盲区。
+- **engine resume 句柄解包**（`engine.js anchorParent`）：宿主契约是
+  `(await agents.resume(...)).agent`（发布句柄 {agent, signal, publish, dispose}），
+  此前把句柄当 parent 直传 subagents.start——宿主在 parent.options 处 TypeError。
+  现解包 .agent 后再传；batch5 替身改为镜像宿主真机形状（替身镜像自己实现的第三次学费，
+  断言原文「物化出的 handle 直接当 parent」一并纠正）。
+
+### 安全审计修复（CodeBuddy 双路审计 2026-10-09，383 用例全绿）
+
+高危：
+
+- **REST 入口 Host/Origin 白名单**（`server-api.js`）：fence header 不是秘密（写死在面板 JS），
+  只挡普通跨域；DNS rebinding 下攻击页与 127.0.0.1「同源」可自由带 fence 调全部 API。
+  现在 Host 必须是 `localhost/127.0.0.1/[::1]`，Origin 存在时同样校验，畸形 Origin 拒绝。
+- **novel.json 路径字段收口**（`store.js containedBookPath`）：`chapterRelPath` 支持 bookId
+  收口——必须以书名开头、无空段/./.. 段，不合式按缺文件处理（REST 章节读、诊断、导出、
+  repair 五个调用点全部接入）。此前被污染的索引可越出书目录**任意读**（fsio 沙箱只护写）。
+  提案 id 同样白名单化（`validProposalId`，alnum/_- 限长 64），list/read/apply 三处接入。
+- **批量起草陈旧快照回写**（`chapter-commit.js saveBookMerged`）：批量从计划到提交可达几十
+  分钟，整批结束后拿启动快照整体 saveBook 会把并发期间的改名/提案应用/驳回计数**整份抹掉**
+  （熔断计数清零）。改为 updateJson 版本重放：在最新文档上只合入本次三类增量（本章
+  gateFailures 两条键、真正改写的章节记录、advanceStage 只前进语义重放），驳回路径不碰
+  chapters/stage。顺带补 `write_chapter/breaker_forced` 审计（force 绕熔断此前零留痕）。
+
+中危：
+
+- engine 流式 abort 后 pending `next()` 接住 rejection（裸 rejection 在宿主是 fatal）。
+- search build 全程 try/finally 关 sqlite 句柄（此前中途抛错即泄漏，annotate 早有此纪律）。
+- 客户端跨书竞态三处守卫（applyProposal / runBatch / runRevision）：快照 bookId + 迟到写回
+  丢弃 + 表单值发起时快照（M15 重载判断不再被中途改表单带偏）。
+- `/session/rotate|create` 全局节流（6 次/分 → 429）+ session id 形状校验；测试经
+  `resetSessionRateLimit` 隔离。
+- `fail()` 统一路径脱敏：错误消息里家目录→`~`、cwd→`.`（FS_SANDBOX_DENIED 原文带绝对路径）。
+- 书库索引 import/delete 改 updateJson 版本重放（并发导入不再互相抹条目）。
+- projcache 单文件读取加 24MB 上限：超限跳过该形态（目录态/反推仍在），不再可能数秒冻结
+  web 事件循环；跳过事实进扫描根诊断行。
+- REST `validBookId` 对齐工具面 `assertBookName`（限长 64、拒前导点）；create 书名超长仍 400
+  （R2c 契约），rename title 截 64。
+
+低危：章号输入只收正整数；`setSession` bump 序号作废在途响应；`anchorParent` 重试检查
+abort signal；`readJsonBody` 拒绝后不再拼残余 chunk。测试 383 全绿（新增 S-1..S-4 安全
+用例 + containedBookPath/validProposalId 单测）。
+
+### 安全审计跟进项（2026-10-09 复核后收尾，与上批同源）
+
+- **工具层读路径全部收口**（跟进项①）：上批只收了面板侧五个读点，`novel_search`
+  build/degrade、`novel_style`、`novel_noai_scan`、`novel_audit`（本章+重复窗口）、
+  `novel_polish`（analyze/守卫原文/重复窗口）、`novel_diagnose`、`novel_import` 回补、
+  `novel_library` 并排分析、`chapter-commit` 重复窗口、`novel_briefing` 锚段样本、
+  `novel_project` 一致性体检（stat+正文读，经 `pathsFor` 新增的 `bookName` 随行书名，
+  免去五个调用点层层加参）、`novel_export` 全版本拼装共 17 处仍裸读索引里的 `rec.path`
+  /`files[].file`。现全部走 `chapterRelPath(rec, book)`/`containedBookPath(book, file)`：
+  越书路径按缺章跳过（窗口/导出/体检类）或给可行动错误「越出书目录（先 novel_project
+  repair 对账）」（单章类）；`novel_polish` submit 守卫原文读不到直接拒绝提交（空原文
+  会让保守守卫形同虚设）；`novel_project repair` 把越书文件按「不可达」进 missing 随
+  对账清出索引。新增 smoke 用例：污染索引 + 书外「机密」文件 → 工具拒读、repair 清账、
+  机密内容零泄漏。
+- **Host 白名单小写归一**（跟进项②）：Host 是 case-insensitive 头，浏览器恒小写但
+  本地工具可能大写——先 `toLowerCase()` 再比白名单。S-1 补 `LOCALHOST:3080` 放行断言。
+  本机限定的行为变化（LAN IP 访问将 403）已写入 README「已知边界」。
+- **驳回计数改增量合入**（跟进项③）：`saveBookMerged` 此前拿快照的 gateFailures
+  绝对值覆盖 latest 同章键——并发期间同章被别处驳回的递增会被抹掉。现在捕获提交起点
+  计数（prevCount），合入时只加本次递增（`latest + (快照 - prevCount)`）；`:last` 仍
+  快照覆盖；成功路径删键归零语义不变；updateJson 版本冲突重放每次从最新 latest 重算，
+  不会双记。新增 batch5 两条用例：驳回合入撞冲突重放后计数 = 7（6+1，旧的绝对值覆盖
+  会写成 1）、成功合入后并发提案/别章计数存活且越书路径不进重复窗口（内容与正文完全
+  相同的越书「上一章」作为金丝雀——读了必被重复率拦下，收口生效才落得了盘）。
+
+- **修复「创建新会话后侧栏不显示」**（真机 2026-10-08）：旧实现对宿主工作区服务调
+  `insertSessionBefore({workspaceId, sessionId, ...})` ——**对象参数形状在宿主上根本不存在**
+  （宿主 `dsh-workspace` 实证：控制器 `get(workspaceId)` → 每工作区实体，
+  `entity.attachSession(sessionId)` 先登记，`entity.insertSessionBefore(sessionId, beforeSessionId)`
+  是**位置参数**且只重排已登记会话，未登记直接抛 "the session is not accounted"）。
+  旧实现连登记（attach）都没做，插入在真机上从未成功过——测试假探针也按对象形状写，
+  等于给错误背书。现改为：get 实体 → attachSession 登记（两种参数形状逐试）→
+  位置参数 insertSessionBefore 排位（锚点=原会话），响应补 `attached/attachError`，
+  面板通知区分「已插到原会话旁边 / 登记失败（原文可见）/ 宿主未暴露工作区面」三态。
+  测试假探针同步改真形状 + 新增 attach 失败可见性用例（cwd 落点不匹配场景）。
 
 - **疲劳横幅一键轮换（服务端能力探测 + 降级）**：新增 `POST /session/rotate { session }`——
   服务端对宿主会话/工作区控制器做**非阻塞属性直读探测**（候选服务名逐请求重读，绝不写进

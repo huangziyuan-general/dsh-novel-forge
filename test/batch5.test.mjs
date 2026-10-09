@@ -922,7 +922,9 @@ test('engine: 候选会话未驻留时经 agents.resume 按需物化 parent—�
     const resumeCalls = [];
     const agents = {
         get: () => undefined,
-        resume: async (opts) => { resumeCalls.push(opts); return parent; },
+        // 镜像宿主真机契约（dsh-api-session-controller 实证）：resume 返回发布句柄，
+        // Agent 本体在 .agent 上——替身绝不许镜像自己的实现（0.4.2/0.4.3 两次学费）。
+        resume: async (opts) => { resumeCalls.push(opts); return { agent: parent }; },
     };
     let gotParent;
     const engine = createEngine({
@@ -937,7 +939,8 @@ test('engine: 候选会话未驻留时经 agents.resume 按需物化 parent—�
     assert.equal(r.ok, true, 'resume 物化成功 → 调用放行');
     assert.equal(r.text, '润色稿');
     assert.deepEqual(resumeCalls[0], { resumeSessionId: 'sess-9' }, '按 resumeSessionId 拉起持久化会话');
-    assert.equal(gotParent, parent, '物化出的 handle 直接当 parent');
+    assert.equal(gotParent, parent, '宿主句柄必须解包 .agent 后当 parent（句柄直传会让宿主在 parent.options 处 TypeError）');
+    assert.notEqual(gotParent?.agent, parent, '传给宿主的必须是 Agent 本体，不是 {agent} 句柄');
 });
 
 test('engine: resume 故障（缺 persistence 等）回退 currentInitiator，不炸', async () => {
@@ -960,7 +963,7 @@ test('engine: 候选会话已驻留（get 命中）时绝不触发 resume——�
     const engine = createEngine({
         ctx: {
             subagents: { start: () => ({ result: Promise.resolve({ stopReason: 'completed', output: [{ type: 'text', text: 'ok' }] }) }) },
-            agents: { get: (id) => (id === 'sess-1' ? parent : undefined), resume: async () => { resumeCalled = true; return parent; } },
+            agents: { get: (id) => (id === 'sess-1' ? parent : undefined), resume: async () => { resumeCalled = true; return { agent: parent }; } },
             agentDefaultModel: { provider: 'p1', model: 'm1' },
         },
         config: {}, sleep: noSleep,
@@ -1234,4 +1237,96 @@ test('★ rememberSession：只重放归属增量，不许拿调用方手上的�
     assert.deepEqual(onDisk.proposals.map((x) => x.id), ['PANEL-1'],
         '★ 旧快照整体回写会把面板刚登记的提案抹掉（幽灵提案的另一条成因）——只能重放增量');
     assert.deepEqual(stale.sessions, ['sess-9'], '调用方手上的对象也要同步归属，免得它随后 saveBook 又把它写丢');
+});
+
+// ── 安全跟进项③：commitChapter 合入走增量（驳回计数不丢并发递增）─────────────
+
+test('★ commitChapter 驳回合入：计数键走增量，撞版本冲突重放也不双记（跟进项③）', async () => {
+    const { commitChapter } = await import('../lib/chapter-commit.js');
+    const book = '增量合入书';
+    const meta = `${book}/novel.json`;
+    // 盘上 latest 带着「并发写入」：第 7 章已被别的通道驳回 5 次、别章有计数、有一条待批提案
+    const io = memIo({
+        [meta]: JSON.stringify({
+            title: book, genre: '仙侠', logline: '', stage: 'chapter', phases: {},
+            approvals: { outline: { 7: true } },
+            chapters: {}, cast: [],
+            proposals: [{ id: 'P9-x-y', chapter: 9, status: 'pending', createdAt: 't' }],
+            gateFailures: { 7: 5, 9: 1, '9:last': { code: 'audit', detail: '别章', at: 't0' } },
+        }),
+        [`${book}/大纲/细纲/第7章.md`]: '# 第7章 试探\n\n- 对峙：来客与林晚僵持。',
+    });
+    const p = pathsFor(book);
+    // 调用方快照：并发写入发生**之前**读的——第 7 章还没有计数
+    const novel = JSON.parse(io.files.get(meta));
+    novel.gateFailures = {};
+    novel.proposals = [];
+
+    // 第一刀：合入写回前，并发通道又给第 7 章 +1（latest 5→6）并登记一条提案
+    const realWriteAt = io.writeJsonAtVersion.bind(io);
+    let injected = false;
+    io.writeJsonAtVersion = async (fp, value, version) => {
+        if (!injected && fp === meta) {
+            injected = true;
+            const cur = JSON.parse(io.files.get(meta));
+            cur.gateFailures['7'] = (Number(cur.gateFailures['7']) || 0) + 1;
+            cur.proposals.push({ id: 'PANEL-7', chapter: 7, status: 'pending', createdAt: 't1' });
+            await io.writeJson(meta, cur);
+        }
+        return realWriteAt(fp, value, version);
+    };
+
+    await assert.rejects(
+        () => commitChapter({ config: TEST_CFG, io, p, book, novel, n: 7, title: '试探', content: '太短', summary: 's' }),
+        /机审未通过/,
+    );
+    assert.ok(injected, '前置：确实撞上一次版本冲突并重放');
+
+    const saved = JSON.parse(io.files.get(meta));
+    assert.equal(saved.gateFailures['7'], 7,
+        '★ latest 6 + 本次递增 1 = 7；旧的绝对值覆盖会写成 1（丢 5），重放再跑一遍也不能双记');
+    assert.equal(saved.gateFailures['9'], 1, '别章计数原样保留');
+    assert.deepEqual(saved.proposals.map((x) => x.id), ['P9-x-y', 'PANEL-7'],
+        '并发期间的提案登记不被驳回路径的合入抹掉');
+    assert.equal(saved.chapters?.['7'], undefined, '驳回路径不写章节记录');
+});
+
+test('★ commitChapter 成功合入：本章计数清零、并发字段存活；越书路径不进重复窗口（跟进项①③）', async () => {
+    const { commitChapter } = await import('../lib/chapter-commit.js');
+    const book = '成功合入书';
+    const meta = `${book}/novel.json`;
+    // 盘上已有一章但其路径越书（污染索引）——文件内容与本章正文完全相同：
+    // 若收口失效，它会作为「上一章」进重复检测 → 重复率 100% → 机审必拒；
+    // 收口生效 → 按缺章跳过 → 成功落盘。用成败差异把「读没读越界文件」变成可断言行为。
+    const polluted = {
+        title: book, genre: '仙侠', logline: '', stage: 'chapter', phases: {},
+        approvals: { outline: { 7: true } },
+        chapters: {
+            3: { title: '旧章', versions: [1], files: [{ version: 1, file: '别的书/正文/第3章-v1.md' }],
+                latest: 1, path: '别的书/正文/第3章-v1.md', chars: 100, summary: '' },
+        },
+        cast: [], proposals: [{ id: 'P9-x-y', chapter: 9, status: 'pending', createdAt: 't' }],
+        gateFailures: { 7: 5, 9: 1 },
+    };
+    const io = memIo({
+        [meta]: JSON.stringify(polluted),
+        [`${book}/大纲/细纲/第7章.md`]: '# 第7章 试探\n\n- 对峙。',
+        ['别的书/正文/第3章-v1.md']: CHAPTER_TEXTS[1],
+    });
+    const p = pathsFor(book);
+    // 调用方快照：并发驳回计数发生**之前**读的（否则熔断闸先拦——快照 count 5 ≥ 阈值 3）
+    const novel = JSON.parse(io.files.get(meta));
+    novel.gateFailures = {};
+
+    const out = await commitChapter({
+        config: TEST_CFG, io, p, book, novel, n: 7, title: '试探',
+        content: CHAPTER_TEXTS[1], summary: '试探之章',
+    });
+    const saved = JSON.parse(io.files.get(meta));
+    assert.equal(saved.gateFailures['7'], undefined, '成功落盘 → 本章计数清零（即使并发期间被抬到 5）');
+    assert.equal(saved.gateFailures['9'], 1, '别章计数保留');
+    assert.deepEqual(saved.proposals.map((x) => x.id), ['P9-x-y'], '并发提案存活');
+    assert.equal(saved.chapters['7'].path, out.path, '本章记录合入最新文档');
+    assert.ok(io.files.has(out.path), '正文文件已落盘');
+    assert.equal(saved.stage, 'writing', '成功路径才推进阶段');
 });

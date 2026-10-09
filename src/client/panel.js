@@ -145,6 +145,9 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 		const id = next ?? null;
 		if (state.sessionId === id) return;
 		state.sessionId = id;
+		// 序号作废（CodeBuddy 审计 2026-10-09 L2）：切换瞬间在途的 loadChapter/
+		// openProject 响应若仍算「有效」，会把旧会话旧书的正文写进 draft/baseline。
+		seq.open += 1; seq.chapter += 1;
 		player.stop();
 		state.selected = null; state.detail = null; state.view = 'projects'; state.chapterList = [];
 		state.rename = null; state.listDeleteId = null; state.clone = null;

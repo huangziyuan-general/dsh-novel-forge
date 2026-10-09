@@ -27,9 +27,13 @@ export function createProposalsController(ctx) {
 	/** 应用提案：生成新版本（旧版保留），审计 actor 记 'user'。 */
 	const applyProposalAction = async (proposalId) => {
 		if (!state.selected || !proposalId) return;
+		// 跨书竞态守卫（CodeBuddy 审计 2026-10-09）：应用请求可能很慢，期间用户切书，
+		// 迟到的写回会把 A 书的 notice/gateNotice/编辑器状态挂到 B 书头上。
+		const bookId = state.selected;
 		state.proposalBusy = proposalId; state.error = ''; notify();
 		try {
-			const value = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/proposals/${encodeURIComponent(proposalId)}/apply`, { method: 'POST' });
+			const value = await apiFetch(`/projects/${encodeURIComponent(bookId)}/proposals/${encodeURIComponent(proposalId)}/apply`, { method: 'POST' });
+			if (state.selected !== bookId) return; // 已切书：结果作废，不污染新书状态
 			state.notice = `已应用提案 ${proposalId}：第${value.chapter}章 v${value.version}（旧版保留）`;
 			// 服务端已把这版正文过了一遍内容门禁（lib/proposals.js）：应用是用户主权不拦，
 			// 但「改出了死人复活/隐藏人物泄底」必须当场看见。gate 为 null = 门禁输入读不到，跳过。
@@ -41,7 +45,8 @@ export function createProposalsController(ctx) {
 				const bits = [...(state.gateNotice.blocking ?? []), ...(state.gateNotice.warnings ?? [])];
 				state.notice += ` ⚠ 门禁提示 ${bits.length} 条（详见下方）`;
 			}
-			await Promise.all([loadProposals(state.selected), ctx.loadChapterList(state.selected)]);
+			await Promise.all([loadProposals(bookId), ctx.loadChapterList(bookId)]);
+			if (state.selected !== bookId) return;
 			// 提示与正文必须对齐：应用的是第 N 章，编辑器却停在第一章，会出现
 			// 「本章编辑」区挂着第 N 章的提示、下面却是第 1 章的怪相。故把编辑器切到被改的那一章：
 			//   · 正开着该章 → 重新载入取新版本（旧分支行为不变）；
@@ -61,7 +66,7 @@ export function createProposalsController(ctx) {
 				await ctx.loadChapter(targetChapter);
 				state.notice += `；已切到第 ${targetChapter} 章`;
 			}
-		} catch (error) { state.error = String(error?.message ?? error); }
+		} catch (error) { if (state.selected === bookId) state.error = String(error?.message ?? error); }
 		finally { state.proposalBusy = null; notify(); }
 	};
 

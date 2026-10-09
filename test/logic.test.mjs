@@ -16,7 +16,8 @@ import { computeAudit, auditVerdict, paragraphCharProfile, chapterCharTarget, th
 import { detectHookKind, stripEmphasis } from '../lib/hook.js';
 import { sceneCapacityShortfall, SCENE_CAPACITY_CHARS } from '../lib/gate-metrics.js';
 import { matchWorldEntries, buildContextPack, renderPack, declaredCoverageTerms } from '../lib/contextpack.js';
-import { pathsFor, defaultNovel, chapterRecord, normalizeWorldEntry, bookInSession, isUnclaimed, addBookSession, nextWorldEntryId, sameEntryId, migrateNovel, SCHEMA_VERSION } from '../lib/store.js';
+import { pathsFor, defaultNovel, chapterRecord, normalizeWorldEntry, bookInSession, isUnclaimed, addBookSession, nextWorldEntryId, sameEntryId, migrateNovel, SCHEMA_VERSION, containedBookPath } from '../lib/store.js';
+import { validProposalId } from '../lib/proposals.js';
 import { scanAiFlavor } from '../lib/noai.js';
 import { roughOutline, splitIntoChapters, isChapterHeading } from '../lib/import.js';
 import { diagnoseIntro, computeChapterDiagnosis } from '../lib/diagnose.js';
@@ -2173,4 +2174,27 @@ test('health: 会话疲劳——无基线/空会话不警示，bookCharBaseline 
     assert.equal(sessionFatigue(JSON.stringify({ session: 's1', action: 'write_chapter/saved', chapter: 1, chars: 1900 }), 's1', 0).warn, null, '无基线不判退化');
     assert.equal(bookCharBaseline({ chapters: { 1: { chars: 2000 }, 2: { chars: 2200 }, 3: { chars: null } } }), 2100, 'NaN→null 残留被滤掉');
     assert.equal(bookCharBaseline({ chapters: {} }), 0);
+});
+
+// ── 安全加固纯函数（CodeBuddy 审计 2026-10-09）────────────────────────────────
+
+test('security: containedBookPath 收口——只放行书内、无空洞段的相对路径', () => {
+    assert.equal(containedBookPath('书名', '书名/正文/第1章-v1.md'), '书名/正文/第1章-v1.md');
+    assert.equal(containedBookPath('书名', '别的书/novel.json'), null, '跨书拒绝');
+    assert.equal(containedBookPath('书名', '../家目录/secret'), null, '穿越拒绝');
+    assert.equal(containedBookPath('书名', '书名/../../etc/passwd'), null, '段内 .. 拒绝');
+    assert.equal(containedBookPath('书名', '/etc/passwd'), null, '绝对路径拒绝（首段非书名）');
+    assert.equal(containedBookPath('书名', '书名//x'), null, '空段拒绝');
+    assert.equal(containedBookPath('书名', ''), null);
+    assert.equal(containedBookPath('', '书名/x'), null);
+});
+
+test('security: validProposalId 白名单——合式 id 过，路径类怪值拒', () => {
+    assert.equal(validProposalId('P12-lx3k9-ab01'), true);
+    assert.equal(validProposalId('P1-k-me'), true);
+    assert.equal(validProposalId('../escape'), false);
+    assert.equal(validProposalId('a/b'), false);
+    assert.equal(validProposalId(''), false);
+    assert.equal(validProposalId(undefined), false);
+    assert.equal(validProposalId('x'.repeat(65)), false, '限长 64');
 });

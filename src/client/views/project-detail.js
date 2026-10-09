@@ -446,9 +446,15 @@ h('span', { style: { flex: '1 1 auto' } }),
 				defaultChecked: s.batchForce === true,
 			}),
 			'强制：跳过「细纲未批准 / 熔断计数」两道（内容门禁不跳）'),
-		h('div', { style: { marginTop: space.md } },
+		h('div', { style: { marginTop: space.md, display: 'flex', gap: space.sm, flexWrap: 'wrap', alignItems: 'center' } },
 			Btn({ variant: 'primary', action: 'draft-batch', disabled: s.batchBusy },
 				s.batchBusy ? '起草中…（可能几分钟）' : '开始批量起草'),
+			(() => {
+				const ck = s.detail?.batchCheckpoint;
+				if (!ck || ck.status === 'done' || s.batchBusy) return null;
+				return Btn({ variant: 'ghost', action: 'draft-batch-resume' },
+					`继续上次批量（第${ck.from}–${Number(ck.from) + Number(ck.count) - 1} 章，已落 ${Array.isArray(ck.completed) ? ck.completed.length : 0}）`);
+			})(),
 		),
 
 		batch
