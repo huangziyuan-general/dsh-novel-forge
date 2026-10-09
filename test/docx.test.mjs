@@ -44,6 +44,14 @@ test('docx: 实体/tab/br——&amp; 还原、制表与软换行保留', () => {
     assert.equal(docxToMarkdown(zip).trim(), 'A&B\tC中');
 });
 
+test('docx: 数字实体——合法码点还原，越界码点原样保留不抛 RangeError', () => {
+    // &#x41; = 'A'（合法）；&#x110000; 越界——fromCodePoint 会抛 RangeError，
+    // 畸形/敌意文档要的是原样保留，不是难看的崩溃（负数被正则 [0-9a-fA-F]+ 挡住）。
+    const xml = docxXml('<w:p><w:r><w:t>&#x41;&#66;&#x110000;&#xFFFFFFFF;</w:t></w:r></w:p>');
+    const zip = buildZip([{ name: 'word/document.xml', data: Buffer.from(xml) }]);
+    assert.equal(docxToMarkdown(zip).trim(), 'AB&#x110000;&#xFFFFFFFF;');
+});
+
 test('docx: 没有 word/document.xml（.doc/改后缀）→ 明确报错，不静默空正文', () => {
     const zip = buildZip([{ name: 'word/other.xml', data: Buffer.from('<x/>') }]);
     assert.throws(() => docxToMarkdown(zip), /word\/document\.xml/);

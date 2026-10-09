@@ -630,6 +630,34 @@ test('R1+ draft-batch resume：无检查点 → 400 NO_CHECKPOINT（请求形状
     assert.equal(res.json.error?.code, 'NO_CHECKPOINT');
 });
 
+test('R1+ draft-batch resume：运行中 409 BATCH_RUNNING 防双跑；过期 running 放行', async () => {
+    await createBook('防重入本');
+    const ckPath = path.join(root, '防重入本', '.novel', 'batch-checkpoint.json');
+    fs.mkdirSync(path.dirname(ckPath), { recursive: true });
+    const writeCk = (startedAt) => fs.writeFileSync(ckPath, JSON.stringify({
+        book: '防重入本', from: 1, count: 3, concurrency: 1, force: false,
+        status: 'running', startedAt, completed: [], failed: [],
+    }));
+    // 正在跑（10 分钟内启动）→ 409，不给续跑（两个 runDraftBatch 并发会白烧配额）
+    writeCk(new Date().toISOString());
+    const fresh = await drive({ method: 'POST', url: `${PREFIX}/projects/防重入本/draft-batch`, body: { resume: true } });
+    assert.equal(fresh.statusCode, 409, `运行中应 409，实际 ${fresh.statusCode}：${fresh.body}`);
+    assert.equal(fresh.json.error?.code, 'BATCH_RUNNING');
+    // startedAt 损坏 → 按过期放行（便利设施不拦正路）→ 走到引擎检查（无引擎 503）
+    writeCk('不是时间戳');
+    const broken = await drive({ method: 'POST', url: `${PREFIX}/projects/防重入本/draft-batch`, body: { resume: true } });
+    assert.equal(broken.statusCode, 503, `损坏 startedAt 应放行到引擎检查，实际 ${broken.statusCode}：${broken.body}`);
+    assert.equal(broken.json.error?.code, 'ENGINE_UNAVAILABLE');
+    // 未来时间戳（垃圾/时钟漂移）→ 同样放行——守卫宁可漏放，不可永锁
+    writeCk('9999-01-01T00:00:00.000Z');
+    const future = await drive({ method: 'POST', url: `${PREFIX}/projects/防重入本/draft-batch`, body: { resume: true } });
+    assert.equal(future.statusCode, 503, `未来时间戳应放行到引擎检查，实际 ${future.statusCode}：${future.body}`);
+    // 超过 10 分钟的 running（web 重启残留）→ 放行
+    writeCk(new Date(Date.now() - 11 * 60_000).toISOString());
+    const stale = await drive({ method: 'POST', url: `${PREFIX}/projects/防重入本/draft-batch`, body: { resume: true } });
+    assert.equal(stale.statusCode, 503, `过期的 running 应放行到引擎检查，实际 ${stale.statusCode}：${stale.body}`);
+});
+
 // ── R2：workspace 白名单（H4 修复）+ 非法书名 ──────────────────────────
 
 test('R2a workspace 不在受控根集合 → 403 WORKSPACE_FORBIDDEN 且盘上无落点', async () => {
@@ -1138,7 +1166,7 @@ test('R-建会话-1 create✓ → 同工作区优先（list 命中当前会话�
     };
     const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1' } });
     assert.equal(res.statusCode, 200, res.body);
-    assert.deepEqual(res.json.value, { created: true, createdSessionId: 's-new-1', workspaceMatched: true, archived: false, renamed: false, attached: false, inserted: false }, '无归档/无书名/无注册表命中时四个标志如实为 false');
+    assert.deepEqual(res.json.value, { created: true, createdSessionId: 's-new-1', workspaceMatched: true, archived: false, renamed: false, attached: false, inserted: false, accounted: false }, '无归档/无书名/无注册表命中时各标志如实为 false');
     assert.deepEqual(creates, [{ cwd: '/Users/x/novel' }], '必须带着匹配到的 cwd 建（新会话才落同一工作区）');
     rotateProbeResult = undefined;
 });
@@ -1188,21 +1216,29 @@ test('R-建会话-5 全能力（真控制器）→ 建+归档一次完成，arch
     rotateProbeResult = undefined;
 });
 
-test('R-建会话-9 建 → attach 登记 + insertSessionBefore 位置参数插到原会话旁边，且在归档之前（锚点还在）', async () => {
+test('R-建会话-9 注册表命中 → create 带 workspaceId（宿主创建即登记），兜底 attach/insert 跳过，归档仍执行', async () => {
     const calls = [];
     const { writeFileSync: wfs, rmSync: rmf } = await import('node:fs');
     registryFixturePath = `${root}/workspace-registry-fixture.json`;
     wfs(registryFixturePath, JSON.stringify({ tables: { workspaces: { 'w-reg-1': { path: '/x/novel', sessionIds: ['s1'] } } } }));
-    // 真机形状（宿主 dsh-workspace 实证）：控制器.get(workspaceId) → 实体；
-    // 实体.attachSession(sessionId) 登记；实体.insertSessionBefore(sessionId, beforeSessionId) 位置参数。
     const entity = {
         attachSession: async (sid) => { calls.push(['attach', sid]); },
         insertSessionBefore: async (sid, before) => { calls.push(['insert', sid, before]); },
     };
     rotateProbeResult = {
         sessions: {
-            list: async () => ({ items: [] }),
-            create: async () => ({ sessionId: 's-reg-1' }),
+            list: async () => ({ items: [{ sessionId: 's1', cwd: '/x/novel' }] }),
+            create: async (req) => {
+                calls.push(['create', req]);
+                // 模拟宿主在 create 时持久化登记（真机实证：workspaceId 创建 → 注册表即时落盘）；
+                // 不写的话 accounted 终验读夹具必然 false，断言就失去了意义
+                try {
+                    const reg = JSON.parse(fs.readFileSync(registryFixturePath, 'utf8'));
+                    reg.tables.workspaces['w-reg-1'].sessionIds.unshift('s-reg-1');
+                    fs.writeFileSync(registryFixturePath, JSON.stringify(reg));
+                } catch { /* 假体尽力而为 */ }
+                return { sessionId: 's-reg-1' };
+            },
             rename: async () => {},
         },
         workspace: {
@@ -1213,18 +1249,55 @@ test('R-建会话-9 建 → attach 登记 + insertSessionBefore 位置参数插�
     };
     const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1', bookTitle: '某书' } });
     assert.equal(res.statusCode, 200, res.body);
-    assert.equal(res.json.value.attached, true, 'attach 登记=insertSessionBefore 的前置（否则 not accounted）');
-    assert.equal(res.json.value.inserted, true, '登记进工作区视图=GUI 列表可见的前提');
+    const createReq = calls.find((c) => c[0] === 'create')?.[1];
+    assert.deepEqual(createReq, { workspaceId: 'w-reg-1', cwd: '/x/novel' }, '首选 create 形状=workspaceId+cwd（types.d.ts 实证）');
+    assert.equal(calls.some((c) => c[0] === 'attach'), false, '创建即登记成功 → 兜底 attach 不该跑（跑了只会产生噪声错误）');
+    assert.equal(calls.some((c) => c[0] === 'insert'), false, '兜底 insert 同样不跑');
+    assert.ok(calls.some((c) => c[0] === 'archive'), '归档仍执行');
+    assert.equal(res.json.value.accounted, true, '兜底跳过时 accounted 终验必须兜住可见性结论');
+    registryFixturePath = undefined;
+    try { rmf(`${root}/workspace-registry-fixture.json`); } catch { /* 清理失败不碍事 */ }
+    rotateProbeResult = undefined;
+});
+
+test('R-建会话-9c 旧宿主不认 workspaceId → 回退 cwd 形状 + attach 登记 + insertSessionBefore 位置参数，且在归档之前', async () => {
+    const calls = [];
+    const { writeFileSync: wfs, rmSync: rmf } = await import('node:fs');
+    registryFixturePath = `${root}/workspace-registry-fixture-9c.json`;
+    wfs(registryFixturePath, JSON.stringify({ tables: { workspaces: { 'w-reg-1': { path: '/x/novel', sessionIds: ['s1'] } } } }));
+    const entity = {
+        attachSession: async (sid) => { calls.push(['attach', sid]); },
+        insertSessionBefore: async (sid, before) => { calls.push(['insert', sid, before]); },
+    };
+    rotateProbeResult = {
+        sessions: {
+            list: async () => ({ items: [{ sessionId: 's1', cwd: '/x/novel' }] }),
+            create: async (req) => {
+                calls.push(['create', req]);
+                if ('workspaceId' in req) throw new Error('unsupported create shape');
+                return { sessionId: 's-reg-1c' };
+            },
+            rename: async () => {},
+        },
+        workspace: {
+            get: (id) => (id === 'w-reg-1' ? entity : null),
+            archiveSession: async (req) => { calls.push(['archive', req]); },
+        },
+        full: true,
+    };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1', bookTitle: '某书' } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json.value.inserted, true, '回退路径兜底登记=GUI 列表可见的前提');
     assert.equal(res.json.value.archived, true);
     const attachIdx = calls.findIndex((c) => c[0] === 'attach');
     const insertIdx = calls.findIndex((c) => c[0] === 'insert');
     const archiveIdx = calls.findIndex((c) => c[0] === 'archive');
     assert.ok(attachIdx >= 0 && attachIdx < insertIdx, 'attach 必须在 insert 前');
     assert.ok(insertIdx >= 0 && insertIdx < archiveIdx, '插入必须在归档前——归档摘掉锚点就插不进去了');
-    assert.equal(calls[insertIdx][1], 's-reg-1', '第一个位置参数=新会话 id（位置参数，不是对象）');
+    assert.equal(calls[insertIdx][1], 's-reg-1c', '第一个位置参数=新会话 id（位置参数，不是对象）');
     assert.equal(calls[insertIdx][2], 's1', '第二个位置参数=锚点（插到原会话旁边）');
     registryFixturePath = undefined;
-    try { rmf(`${root}/workspace-registry-fixture.json`); } catch { /* 清理失败不碍事 */ }
+    try { rmf(`${root}/workspace-registry-fixture-9c.json`); } catch { /* 清理失败不碍事 */ }
     rotateProbeResult = undefined;
 });
 
@@ -1238,7 +1311,8 @@ test('R-建会话-9b attach 失败 → attached:false + attachError 可见，ins
         insertSessionBefore: async () => { throw new Error("cannot move session 's-9b' in workspace '/x/novel': the session is not accounted"); },
     };
     rotateProbeResult = {
-        sessions: { list: async () => ({ items: [] }), create: async () => ({ sessionId: 's-9b' }) },
+        // create 拒绝 workspaceId 形状 = 模拟旧宿主，让兜底 attach/insert 链被触发
+        sessions: { list: async () => ({ items: [] }), create: async (req) => { if ('workspaceId' in req) throw new Error('unsupported'); return { sessionId: 's-9b' }; } },
         workspace: { get: () => entity },
         full: true,
     };
@@ -1306,7 +1380,7 @@ test('S-4 rotate 的 session id 形状校验：结构性怪值 400', async () =>
     assert.equal(res.json.error.code, 'INVALID_FIELD');
 });
 
-test('R-建会话-8 建 → 命名《书名》续写（没名字的空会话在分组列表里找不到）', async () => {
+test('R-建会话-8 建 → 命名「书名-YYMMDD」（用户钦定 2026-10-09；没名字的空会话在分组列表里找不到）', async () => {
     const renames = [];
     rotateProbeResult = {
         sessions: {
@@ -1320,7 +1394,32 @@ test('R-建会话-8 建 → 命名《书名》续写（没名字的空会话在�
     const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1', book: '疲劳检测', bookTitle: '开局觉醒加特林' } });
     assert.equal(res.statusCode, 200, res.body);
     assert.equal(res.json.value.renamed, true);
-    assert.deepEqual(renames, [{ sessionId: 's-name-1', title: '《开局觉醒加特林》续写' }]);
+    const now = new Date();   // 与服务端同进程同时区，日期串同源计算
+    const expected = `开局觉醒加特林-${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    assert.deepEqual(renames, [{ sessionId: 's-name-1', title: expected }], '命名=书名-YYMMDD（本地时区）');
+    rotateProbeResult = undefined;
+});
+
+test('R-建会话-11 注册表命中工作区 → create 优先带 workspaceId（宿主创建时自己登记）', async () => {
+    const { writeFileSync: wfs, rmSync: rmf } = await import('node:fs');
+    registryFixturePath = `${root}/workspace-registry-fixture-11.json`;
+    wfs(registryFixturePath, JSON.stringify({ tables: { workspaces: { 'w-11': { path: '/x/novel', sessionIds: ['s1'] } } } }));
+    const creates = [];
+    rotateProbeResult = {
+        sessions: {
+            list: async () => ({ items: [{ sessionId: 's1', cwd: '/x/novel' }] }),
+            create: async (req) => { creates.push(req); return { sessionId: 's-11' }; },
+            rename: async () => {},
+        },
+        workspace: { get: () => ({ attachSession: async () => { throw new Error('创建时应已登记，不该走到 attach'); } }), archiveSession: async () => {} },
+        full: true,
+    };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1', bookTitle: '某书' } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.deepEqual(creates[0], { workspaceId: 'w-11', cwd: '/x/novel' }, '首个 create 形状=workspaceId+cwd（types.d.ts 实证）');
+    assert.equal(res.json.value.workspaceMatched, true);
+    registryFixturePath = undefined;
+    try { rmf(`${root}/workspace-registry-fixture-11.json`); } catch { /* 清理失败不碍事 */ }
     rotateProbeResult = undefined;
 });
 

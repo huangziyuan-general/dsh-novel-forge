@@ -31,7 +31,7 @@ import { SettingsView } from './views/settings.js';
 
 // 版本号：必须与 package.json 的 version 一致。
 // build-client.mjs 会把它与 package.json 对账，不一致直接构建失败（防发行漂移）。
-const PLUGIN_VERSION = '0.16.0';
+const PLUGIN_VERSION = '0.16.1';
 
 // 供视图头部徽标读取 —— 让视图层不必反向 import 入口（避免循环依赖）。
 window.__NOVEL_FORGE_VERSION__ = PLUGIN_VERSION;
@@ -61,6 +61,10 @@ function apply(ctx) {
 		registerForgeTab(ctx, (props) => ForgePanel({
 			...props,
 			resolveSessionId: () => currentSessionId(ctx),
+			// 宿主客户端导航面（dsh-client-ui-workspace，宿主 UI 插件同款用法）：
+			// 「创建新会话并交接」成功后直接跳进新会话，不落在「选择工作区」空白页。
+			// 面不存在（旧宿主/服务未装载）时为 null，面板退化为提示手动打开。
+			openSession: (id) => ctx.uiWorkspace?.openSession?.(id),
 		}));
 	} catch (error) {
 		console.error('[novel-forge] 右侧栏 tab 注册失败（可从右侧栏 guide 页手动进入）', error);
