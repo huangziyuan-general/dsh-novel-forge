@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.16.2 (2026-10-10)
+
+### 会话交接全自动 + 真机验证（realboot S10 新增 11 项检查，29/29 全绿）
+
+- **交接摘要直发**（用户钦定）：创建新会话后由服务端直接把交接摘要 prompt 进新会话
+  （mode:queue，点开即写，不手动粘贴）；prompt 失败不吞创建结果（promptError 如实上报，
+  剪贴板兜底只在未 prompt 时生效）。
+- **延迟归档**（用户钦定）：`deferArchive` 跳过 create 内联归档——客户端先跳进新会话，
+  再调新增的 `POST /session/archive` 补归档，躲开「归档当前会话 → 宿主 clearMain 踢回
+  首页」的竞态（真机实证）；归档路由带 fence/形状校验/全局限流，宿主无 archive 能力 501 指路手动。
+- **自动认领书**：create 带 book 时把新会话 id 写进 novel.json.sessions（locateBook→
+  updateJson→addBookSession，幂等）——跳进新会话面板立即见书，不用先跑一次工具触发补录。
+- **跳转前先渲染反馈**：openSession 之前先 notify 落 notice（面板随即卸载，同步赋值
+  来不及渲染，真机 2026-10-09 表现为「点了没反应」）。
+- **prompt 直发真机修复**：宿主 typert host 面 `prompt(request, signal)` 的 **signal 是必传
+  第二参**（真机实现裸调 `signal.throwIfAborted()`，不传 = TypeError "reading
+  'throwIfAborted'"，交接摘要直发整条链静默降级成复制粘贴）。补 `new AbortController().signal`
+  （queue-and-forget 无取消方，给常驻未 abort 信号）；单测桩按 AGENTS「替身镜像真机」补第二参
+  并断言 `instanceof AbortSignal && !aborted`。
+- realboot web 层新增 S10 会话交接全自动链：create+handoff+deferArchive 真容器端到端
+  （命名 书名-YYMMDD / prompted / claimed / accounted / novel.json 磁盘对账 / 新会话面板立即
+  见书 / /session/archive 真机归档成功 / 归档不存在会话不假成功）。
+
 ## 0.16.1 (2026-10-09)
 
 ### 会话交接真机修复（2026-10-09，403 用例全绿）

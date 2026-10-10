@@ -362,24 +362,40 @@ export function createProjectsController(ctx) {
 		} finally { state.batchBusy = false; notify(); }
 	};
 
-	// 会话疲劳「创建新会话并交接」：服务端 sessions.create（同工作区优先），交接摘要自动
-	// 进剪贴板；归档通道宿主门禁封死——提示手动归档，不说做不到就装没这回事。
+	// 会话疲劳「创建新会话并交接」（全自动版，用户钦定 2026-10-10）：
+	// 交接摘要由服务端直接 prompt 进新会话（点开即写，不手动粘贴）；
+	// 归档走 deferArchive——先跳进新会话再补归档，躲开「归档当前会话 → 宿主 clearMain
+	// 把人踢回『选择工作区』首页」的竞态（真机实证 2026-10-10）。
 	const createSession = async () => {
 		if (!state.sessionId) { state.error = '缺会话 id（面板未挂在会话上）——无法创建新会话'; notify(); return; }
+		const oldSessionId = state.sessionId;
+		const handoff = state.detail?.session?.handoff ?? '';
+		const canJump = typeof ctx.openSession === 'function';
 		state.busy = true; notify();
 		try {
 			const value = await apiFetch('/session/create', {
 				method: 'POST',
-				// book：服务端据此把新会话 cwd 落到书的工作区根——续写第一扫就见书
-				body: JSON.stringify({ session: state.sessionId, book: state.detail?.id ?? '', bookTitle: state.detail?.title ?? '' }),
+				// book：服务端据此把新会话 cwd 落到书的工作区根 + 顺手认领（面板跳进即见书）；
+				// handoff：服务端 prompt 进新会话（能跳才直发——不能跳时用户还得靠剪贴板，
+				// 但直发不冲突：queue 模式下消息就在新会话里等着，粘贴只是多一条）；
+				// deferArchive：能跳就延迟归档（先跳后归档，躲开 clearMain 竞态）。
+				body: JSON.stringify({
+					session: oldSessionId,
+					book: state.detail?.id ?? '',
+					bookTitle: state.detail?.title ?? '',
+					...(handoff ? { handoff } : {}),
+					...(canJump ? { deferArchive: true } : {}),
+				}),
 			});
-			const handoff = state.detail?.session?.handoff ?? '';
-			if (handoff && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+			// 剪贴板兜底保留：prompt 直发失败时（promptError）用户仍能手动粘贴
+			if (handoff && !value.prompted && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
 				navigator.clipboard.writeText(handoff).then(() => { state.copiedHandoff = true; notify(); }).catch(() => { /* 剪贴板不可用时交接摘要仍在横幅可手复制 */ });
 			}
-			const archive = value.archived
-				? '旧会话已归档'
-				: (value.archiveError ? `旧会话归档失败：${value.archiveError}` : '旧会话可在会话列表手动归档');
+			const archive = canJump
+				? '' // 跳转后补归档，结果到那时才知道
+				: (value.archived
+					? '旧会话已归档'
+					: (value.archiveError ? `旧会话归档失败：${value.archiveError}` : '旧会话可在会话列表手动归档'));
 			const registered = value.accounted === true || value.inserted;
 			const place = registered
 				? (value.inserted ? '已插到原会话旁边' : '已登记进工作区列表')
@@ -387,18 +403,40 @@ export function createProjectsController(ctx) {
 					? `，但登记到工作区列表失败：${value.insertError ?? value.attachError}`
 					: '，且未登记进工作区列表（宿主未暴露工作区面）——到会话列表按名字找');
 			const named = value.title ?? (value.renamed ? '（已创建，名未取得）' : '（未命名）');
+			const claim = value.claimed ? '，已认领这本书' : (value.claimError ? `，认领失败：${value.claimError}` : '');
+			const delivery = value.prompted
+				? '交接摘要已自动发进新会话——它正在开写'
+				: (value.promptError ? `摘要直发失败（${value.promptError}），已复制到剪贴板——打开新会话粘贴即续写` : '打开它粘贴交接摘要即续写');
 			state.notice = value.createdSessionId
-				? `新会话「${named}」已创建${value.workspaceMatched ? '，落在原会话的工作区' : ''}${place}${value.accounted === false ? '；侧栏暂未登记（可刷新页面或到全部会话找）' : ''}——打开它粘贴交接摘要即续写；${archive}`
+				? `新会话「${named}」已创建${value.workspaceMatched ? '，落在原会话的工作区' : ''}${claim}${place}${value.accounted === false ? '；侧栏暂未登记（可刷新页面或到全部会话找）' : ''}——${delivery}${archive ? `；${archive}` : ''}`
 				: '新会话已创建但未取得 id——请到会话列表查看';
-			// 直接跳进新会话（用户钦定 2026-10-09：点完按钮就落在新会话里，不落在
-			// 「选择工作区」空白页）。宿主 uiWorkspace.openSession(sessionId)——
-			// 导航失败不吞创建成功的事实（notice 已给出会话名，可手动打开）。
-			try {
-				if (value.createdSessionId && typeof ctx.openSession === 'function') {
-					ctx.openSession(value.createdSessionId);
-					state.notice = `已切到新会话「${named}」——交接摘要已复制，粘贴即从下一章续写；${archive}`;
-				}
-			} catch { /* 导航失败保持原通知 */ }
+			// 先 notify 渲染反馈再延迟跳转：openSession 一调用面板就卸载了，
+			// 同步赋 notice 来不及渲染——用户看到「没反应」（真机 2026-10-09）。
+			if (value.createdSessionId && canJump) {
+				notify();
+				const newId = value.createdSessionId;
+				const archiveOld = () => apiFetch('/session/archive', { method: 'POST', body: JSON.stringify({ session: oldSessionId }) })
+					.catch((error) => console.warn('[novel-forge] 旧会话延迟归档失败（可在会话列表手动归档）：', error?.message ?? error));
+				// 归档时机不猜时间猜状态（CodeBuddy 审查 2026-10-10）：openSession 同步返回、
+				// 异步完成导航——固定 60ms 在慢渲染下会「归档先到、main 还是旧会话」，
+				// clearMain 照样踢人。轮询 syncSession（读宿主 sessions.list 的 current）
+				// 等 main 真的切到新会话再归档，上限 ~4s；openSession 抛错则立即归档
+				//（退化为旧行为：被踢到首页也能从列表进新会话）。面板卸载不影响归档
+				// fetch（模块级请求）；超时也归档——旧会话总要收掉，用户在首页找得到新会话。
+				let tries = 0;
+				const waitMainThenArchive = () => {
+					try { ctx.syncSession(); } catch { /* 会话面缺失：按超时路径走 */ }
+					if (state.sessionId === newId || tries >= 40) { archiveOld(); return; }
+					tries += 1;
+					setTimeout(waitMainThenArchive, 100);
+				};
+				setTimeout(() => {
+					try {
+						ctx.openSession(newId);
+						waitMainThenArchive();
+					} catch { archiveOld(); }
+				}, 60);
+			}
 		} catch (error) { state.error = String(error?.message ?? error); }
 		finally { state.busy = false; notify(); }
 	};

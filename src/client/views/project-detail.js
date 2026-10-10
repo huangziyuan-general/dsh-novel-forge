@@ -69,7 +69,7 @@ function SessionFatigueBanner({ session, copied }) {
 			// 唯一按钮（用户钦定 2026-10-08）：能建就建（服务端有归档能力就建+归档一起做）；
 			// 交接摘要自动进剪贴板，摘要文本同时常驻下方——剪贴板失败也有手动路。
 			session.canCreate ? Btn({ action: 'session-create', variant: 'secondary', size: 'sm' },
-				copied ? '✓ 已创建并复制——到会话列表打开新会话粘贴' : '创建新会话并交接') : null,
+				copied ? '✓ 已创建——摘要已复制，可手动粘贴' : '创建新会话并交接') : null,
 		),
 		session.canCreate && session.handoff ? h('div', {
 			style: {
