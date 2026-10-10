@@ -70,6 +70,7 @@ const ROUTES = [
     { name: 'DELETE /worldbook/:bookId/:entryId', method: 'DELETE', url: `${PREFIX}/worldbook/护栏本/1` },
     { name: 'POST /session/rotate', method: 'POST', url: `${PREFIX}/session/rotate` },
     { name: 'POST /session/create', method: 'POST', url: `${PREFIX}/session/create` },
+    { name: 'POST /session/archive', method: 'POST', url: `${PREFIX}/session/archive` },
 ];
 
 // ── 假 fs：覆盖临时目录，intent 语义镜像宿主 ─────────────────────────────
@@ -1166,7 +1167,7 @@ test('R-建会话-1 create✓ → 同工作区优先（list 命中当前会话�
     };
     const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1' } });
     assert.equal(res.statusCode, 200, res.body);
-    assert.deepEqual(res.json.value, { created: true, createdSessionId: 's-new-1', workspaceMatched: true, archived: false, renamed: false, attached: false, inserted: false, accounted: false }, '无归档/无书名/无注册表命中时各标志如实为 false');
+    assert.deepEqual(res.json.value, { created: true, createdSessionId: 's-new-1', workspaceMatched: true, archived: false, renamed: false, attached: false, inserted: false, accounted: false, claimed: false, prompted: false }, '无归档/无书名/无注册表命中时各标志如实为 false');
     assert.deepEqual(creates, [{ cwd: '/Users/x/novel' }], '必须带着匹配到的 cwd 建（新会话才落同一工作区）');
     rotateProbeResult = undefined;
 });
@@ -1213,6 +1214,109 @@ test('R-建会话-5 全能力（真控制器）→ 建+归档一次完成，arch
     assert.equal(res.json.value.archived, true, '全能力下必须顺手归档——一个按钮完成轮换');
     assert.deepEqual(archived, ['s1']);
     assert.equal(res.json.value.createdSessionId, 'session-real-1');
+    rotateProbeResult = undefined;
+});
+
+test('R-建会话-10 带 book → 新会话自动认领书（novel.json.sessions 落盘），面板跳进即见书', async () => {
+    await createBook('认领书');
+    rotateProbeResult = {
+        sessions: {
+            list: async () => ({ items: [{ sessionId: 's1', cwd: root }] }),
+            create: async () => ({ sessionId: 's-claim-1' }),
+            rename: async () => {},
+        },
+        workspace: null,
+        full: false,
+    };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1', book: '认领书', bookTitle: '认领书' } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json.value.claimed, true, `创建成功且带了 book → 必须顺手认领（实际响应：${JSON.stringify(res.json.value)}）`);
+    const saved = JSON.parse(fs.readFileSync(path.join(root, '认领书', 'novel.json'), 'utf8'));
+    assert.ok(saved.sessions.includes('s-claim-1'), 'novel.json.sessions 必须有新会话 id——否则面板按会话过滤看不到书');
+    // 幂等：桩复用同一会话 id 再建一次——已归属 → addBookSession 返回 false → claimed:false，归属集不重复
+    const res2 = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1', book: '认领书', bookTitle: '认领书' } });
+    assert.equal(res2.json.value.claimed, false, '已归属的会话重复认领 → claimed 如实为 false（addBookSession 幂等）');
+    const saved2 = JSON.parse(fs.readFileSync(path.join(root, '认领书', 'novel.json'), 'utf8'));
+    assert.equal(saved2.sessions.filter((s) => s === 's-claim-1').length, 1, '同一会话 id 不得重复进归属集');
+    rotateProbeResult = undefined;
+});
+
+test('R-建会话-11 handoff → 服务端 prompt 直发新会话（用户钦定 2026-10-10：点开即写，不手动粘贴）', async () => {
+    const prompts = [];
+    const promptSignals = [];
+    rotateProbeResult = {
+        sessions: {
+            list: async () => ({ items: [{ sessionId: 's1', cwd: '/Users/x/novel' }] }),
+            create: async () => ({ sessionId: 's-new-p1' }),
+            // 替身镜像真机（真机 2026-10-10：typert host 面 prompt(request, signal) 的 signal
+            // 必传，实现裸调 signal.throwIfAborted()）——第二参不 mirror 就防不住回归。
+            prompt: async (req, signal) => { prompts.push(req); promptSignals.push(signal); return { accepted: true }; },
+        },
+        workspace: null,
+        full: false,
+    };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1', handoff: '写第97章，先 novel_briefing' } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json.value.prompted, true, 'handoff 必须直发进新会话');
+    assert.equal(prompts.length, 1);
+    assert.equal(prompts[0].sessionId, 's-new-p1', 'prompt 目标必须是新会话');
+    assert.equal(prompts[0].mode, 'queue', '全新会话用 queue 模式（排队即启动）');
+    assert.deepEqual(prompts[0].content, [{ type: 'text', text: '写第97章，先 novel_briefing' }]);
+    assert.ok(typeof prompts[0].requestId === 'string' && prompts[0].requestId !== '', 'requestId 必须铸出（宿主用它对账乐观消息）');
+    assert.ok(promptSignals[0] instanceof AbortSignal, 'prompt 必须带 AbortSignal 第二参（真机裸调 throwIfAborted，缺了 TypeError）');
+    assert.equal(promptSignals[0].aborted, false, 'queue-and-forget 语义：signal 必须是未取消的常驻信号');
+    rotateProbeResult = undefined;
+});
+
+test('R-建会话-12 prompt 失败不吞创建：prompted:false + promptError 可见；服务无 prompt 面同样如实', async () => {
+    rotateProbeResult = {
+        sessions: {
+            create: async () => ({ sessionId: 's-new-p2' }),
+            prompt: async () => { throw new Error('agent 未驻留'); },
+        },
+        workspace: null,
+        full: false,
+    };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1', handoff: '摘要' } });
+    assert.equal(res.statusCode, 200, res.body, 'prompt 失败不许拖垮创建');
+    assert.equal(res.json.value.prompted, false);
+    assert.match(res.json.value.promptError, /agent 未驻留/);
+    // 无 prompt 面
+    rotateProbeResult = { sessions: { create: async () => ({ sessionId: 's-new-p3' }) }, workspace: null, full: false };
+    const res2 = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1', handoff: '摘要' } });
+    assert.equal(res2.json.value.prompted, false);
+    assert.match(res2.json.value.promptError, /没有 prompt 面/);
+    rotateProbeResult = undefined;
+});
+
+test('R-建会话-13 deferArchive：create 不归档，/session/archive 跳转后补归档（躲 clearMain 竞态）', async () => {
+    const archived = [];
+    rotateProbeResult = {
+        sessions: { create: async () => ({ sessionId: 's-new-d1' }) },
+        workspace: { archiveSession: async (req) => { archived.push(req?.sessionId ?? req); } },
+        full: true,
+    };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1', deferArchive: true } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json.value.archived, false, 'deferArchive 时不许顺手归档');
+    assert.deepEqual(archived, [], '归档一次都不许发生');
+    // 客户端跳转后补调 /session/archive
+    const res2 = await drive({ method: 'POST', url: `${PREFIX}/session/archive`, body: { session: 's1' } });
+    assert.equal(res2.statusCode, 200, res2.body);
+    assert.equal(res2.json.value.archived, true);
+    assert.deepEqual(archived, ['s1'], '归档的必须是旧会话');
+    rotateProbeResult = undefined;
+});
+
+test('R-建会话-14 /session/archive：无工作区能力 → 501 指路手动；缺 session → 400', async () => {
+    rotateProbeResult = { sessions: { create: async () => ({ sessionId: 'x' }) }, workspace: null, full: false };
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/archive`, body: { session: 's1' } });
+    assert.equal(res.statusCode, 501, res.body);
+    assert.equal(res.json.error.code, 'SESSION_ARCHIVE_UNSUPPORTED');
+    assert.match(res.json.error.message, /手动归档/);
+    rotateProbeResult = { sessions: null, workspace: { archiveSession: async () => ({}) }, full: false };
+    const res2 = await drive({ method: 'POST', url: `${PREFIX}/session/archive`, body: {} });
+    assert.equal(res2.statusCode, 400);
     rotateProbeResult = undefined;
 });
 

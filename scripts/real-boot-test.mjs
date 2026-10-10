@@ -182,6 +182,35 @@ async function layerWeb() {
         // S9（软）插件的扫描根诊断行进了宿主 stdout：三源计数肉眼可查
         const rootsLine = (buf.match(/\[novel-forge\] 扫描根[^\n]*/g) ?? []).pop();
         soft('S9 扫描根诊断行', Boolean(rootsLine), rootsLine ? rootsLine.slice(0, 160) : '未在 stdout 捕获（可能被宿主日志层吞掉，不判负）');
+
+        // S10 会话交接全自动链（0.16.1 后：prompt 直发 + 延迟归档 + 自动认领）——全是真宿主会话服务。
+        // 限流预算：本节 4 次会话路由调用 < 6 次/分。
+        const handoffText = '真机冒烟交接摘要：请用 novel_briefing 拿上下文包，然后写第 2 章。';
+        const sc = await req('POST', q('session/create'), { body: { session: 'realboot-1', book: '真机冒烟书', bookTitle: '真机冒烟书', handoff: handoffText, deferArchive: true } });
+        const v = sc.json?.value ?? {};
+        check('S10a /session/create 200（prompt 直发不拖垮创建）', sc.status === 200 && v.created === true, `status=${sc.status} body=${sc.text.slice(0, 200)}`);
+        check('S10b 新会话命名 书名-YYMMDD', /^真机冒烟书-\d{6}$/.test(v.title ?? ''), JSON.stringify({ title: v.title, id: v.createdSessionId }));
+        check('S10c 交接摘要直发被真宿主接受（prompted:true；queue 形状真机成立）', v.prompted === true, v.promptError ?? '（无错误）');
+        check('S10d 自动认领 claimed:true（locateBook→updateJson→addBookSession 真机链）', v.claimed === true, v.claimError ?? '（无错误）');
+        check('S10e deferArchive 生效：内联归档被跳过（archived:false 且无 archiveError）', v.archived === false && v.archiveError === undefined, JSON.stringify({ archived: v.archived, archiveError: v.archiveError }));
+        check('S10f 工作区登记 accounted 如实上报（布尔）', typeof v.accounted === 'boolean', JSON.stringify({ accounted: v.accounted }));
+        const novelAfter = JSON.parse(fs.readFileSync(novelPath, 'utf8'));
+        check('S10g 真磁盘对账：novel.json.sessions 落了新会话 id', (novelAfter.sessions ?? []).includes(v.createdSessionId), JSON.stringify(novelAfter.sessions));
+        const mineNew = await req('GET', q('projects') + `?session=${encodeURIComponent(v.createdSessionId)}`);
+        check('S10h 面板视角：新会话立即见书（认领→bookInSession 闭环）', mineNew.status === 200 && (mineNew.json?.value ?? []).some((b) => b.name === '真机冒烟书'), `status=${mineNew.status} body=${mineNew.text.slice(0, 120)}`);
+        // 延迟归档闭环：再开一个最小草稿会话（无书无摘要——不产生 agent/认领），用 /session/archive 归档它，
+        // 验证宿主 archiveSession 形状链（对象→裸值）真机成立；不动刚 prompt 过的会话（agent 可能在跑）。
+        const sc2 = await req('POST', q('session/create'), { body: { session: 'realboot-1' } });
+        const tmpId = sc2.json?.value?.createdSessionId ?? null;
+        check('S10i 最小草稿会话创建（归档靶子）', sc2.status === 200 && Boolean(tmpId), `status=${sc2.status}`);
+        if (tmpId) {
+            const arch = await req('POST', q('session/archive'), { body: { session: tmpId } });
+            check('S10j /session/archive 真机归档成功（archived:true）', arch.status === 200 && arch.json?.value?.archived === true, arch.json?.value?.archiveError ?? `status=${arch.status}`);
+        }
+        const archBad = await req('POST', q('session/archive'), { body: { session: 'realboot-nonexistent-1' } });
+        check('S10k 归档不存在的会话：archived:false + 错误原文如实（不假成功）',
+            archBad.status === 200 && archBad.json?.value?.archived === false && typeof archBad.json?.value?.archiveError === 'string' && archBad.json.value.archiveError !== '',
+            `status=${archBad.status} body=${archBad.text.slice(0, 200)}`);
     } finally {
         child.kill('SIGTERM');
         await new Promise((r) => { const t = setTimeout(() => { child.kill('SIGKILL'); r(); }, 4000); child.on('exit', () => { clearTimeout(t); r(); }); });
