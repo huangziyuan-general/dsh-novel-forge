@@ -2408,3 +2408,27 @@ test('security: validProposalId 白名单——合式 id 过，路径类怪值�
     assert.equal(validProposalId(undefined), false);
     assert.equal(validProposalId('x'.repeat(65)), false, '限长 64');
 });
+
+// 数值铸造曾经三处各自为战（style normalizeZero / retrieval finiteOr / library round 半守卫），
+// 同一颗 -0/NaN 雷在三个地方分别咬过真机。0.16.3 后统一收编进 lib/json-numbers.js：
+// 铸造点全走 finiteOr，测试与审计用 jsonSafeIssues 兜底扫输出——类风险靠它钉住，
+// 而不是等宿主整次拒收后回来逐个排雷。
+test('★ 数值铸造统一：finiteOr 收 NaN/±Infinity/-0，jsonSafeIssues 兜底扫输出', async () => {
+    const { finiteOr, jsonSafeIssues } = await import('../lib/json-numbers.js');
+    assert.equal(finiteOr(-0.0004, 3), 0, '-0 必须归一（String(-0) 是 "0"、isFinite 是 true，只有 Object.is 能抓）');
+    assert.equal(finiteOr(Number.NaN), 0);
+    assert.equal(finiteOr(Number.POSITIVE_INFINITY, 3), 0);
+    assert.equal(finiteOr(1.23456, 3), 1.235);
+    assert.equal(finiteOr(0, 3), 0);
+    // walker：四类不安全各自被抓到，路径可定位
+    assert.deepEqual(jsonSafeIssues({ a: Number.NaN }), ['$.a: NaN']);
+    assert.ok(jsonSafeIssues({ a: [1, -0] })[0].endsWith(': -0'), '-0 也要被抓（路径含下标）');
+    assert.ok(jsonSafeIssues({ a: { b: Number.POSITIVE_INFINITY } })[0].includes('Infinity'));
+    assert.ok(jsonSafeIssues({ a: [undefined] })[0].includes('undefined'));
+    assert.deepEqual(jsonSafeIssues({ ok: 1, list: [1.5, 'x', null, { deep: true }] }), []);
+    // 收编点①②：style 与 library 的纯函数出口在退化输入下也必须 JSON 安全
+    const { measureStyleMetrics } = await import('../lib/style.js');
+    assert.deepEqual(jsonSafeIssues(measureStyleMetrics('')), [], '空文本的 style 指标必须 JSON 安全');
+    const { chapterMetrics } = await import('../lib/library.js');
+    assert.deepEqual(jsonSafeIssues(chapterMetrics('第1章 试\n他说："来。"')), [], 'library 章指标必须 JSON 安全（round 曾是半颗雷）');
+});
