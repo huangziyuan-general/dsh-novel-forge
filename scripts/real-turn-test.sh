@@ -34,25 +34,15 @@ dsh --profile headless --patch "$REPO/scripts/arkc-headless.patch.yml" --json \
   > "$OUT" 2> "$ERR"
 echo "[done] exit=$? 事件 $(wc -l < "$OUT") 行 / stderr $(wc -l < "$ERR") 行 → $OUT"
 
-# ── 用量与行为读取 ────────────────────────────────────────────────────────
+# ── 用量与行为读取 + 真机门禁 ────────────────────────────────────────────────
 # 数据源就是本次的 --json 事件流（step_end 带 usage、tool_call/tool_result 带工具轨迹），
 # 不去猜 ~/.dsh/sessions 下哪个分组是本次的（猜错就采样 0 条、把成功的跑读成空表）。
 # 要看**未截断**的工具出入参（事件流对大结果打 truncated:true，简报正文只剩前 ~3k 字），
 # 走会话持久化取证：node scripts/read-turn-usage.mjs ~/.dsh/sessions/<cwd 分组>
-node -e "
-import('node:fs').then(({default:fs})=>{
-  const evs=fs.readFileSync(process.argv[1],'utf8').trim().split('\n').map(l=>{try{return JSON.parse(l)}catch{return null}}).filter(Boolean);
-  const u=evs.filter(e=>e.phase==='step_end').map(e=>e.usage).filter(Boolean);
-  const ctx=(x)=>(x.cacheReadTokens??0)+(x.inputTokens??0);
-  const reads=evs.filter(e=>['read','grep','glob'].includes(e.tool)).length;
-  const rej=evs.filter(e=>String(e.result??'').includes('invalid output')).length;
-  const search=evs.filter(e=>e.tool==='novel_search').length;
-  console.log('[usage] 步数 '+u.length
-    +' | 峰值上下文 '+(u.length?Math.max(...u.map(ctx)):'-')
-    +' | completion 峰值 '+(u.length?Math.max(...u.map(x=>x.outputTokens??0)):'-'));
-  console.log('[行为] 宿主 read/grep/glob '+reads+' 次（0 = 没退回去捞原文） | 检索调用 '+search+' 次 | 工具被宿主拒收 '+rej+' 次');
-  const w=evs.filter(e=>e.tool==='novel_write_chapter').length;
-  console.log('[落盘] novel_write_chapter 尝试 '+w+' 次');
-});
-" "$OUT"
+# 门禁（--assert）：峰值上下文 ≤ 120k（健康 ~87k / 死亡螺旋 183k）、退路读取 = 0、
+# 宿主拒收 = 0、步数 > 0——任何一项越线 exit 1。**不许失败后改阈值硬压**，先修因；
+# 确需调阈值（比如换了更大的上下文模型），连同理由改这里的注释。
+node "$REPO/scripts/read-turn-usage.mjs" --events "$OUT" --assert || {
+  echo "✘ 真机门禁未过：拒绝/退路读取/峰值超限，先按事件流定位成因再重跑"; exit 1;
+}
 
