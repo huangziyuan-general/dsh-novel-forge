@@ -91,18 +91,21 @@ before(async () => {
     const registered = [];
     const sections = [];
     const effects = [];
+    const injects = [];
     ctx = {
         fs: backend,
         emit() {},
         logger: { info() {} },
         tools: { register: (t) => registered.push(t) },
         systemPrompt: { section: (s) => sections.push(s) },
-        inject: (deps, fn) => { fn(ctx); },
+        // cordis 语义：数组 inject 建独立 fiber 等依赖；这里立即回调（服务在场）。
+        inject: (deps, fn) => { injects.push([...deps]); fn(ctx); },
         effect: (fn) => { effects.push(fn); fn(); },
         webServer: { register: () => () => {} },
         _registered: registered,
         _sections: sections,
         _effects: effects,
+        _injects: injects,
     };
     // 会话身份：工具层用它做「书 → 会话」归属（面板按会话过滤项目列表）
     exec = { signal: new AbortController().signal, agent: { session: { header: { cwd: root, id: 'sess-A' } } } };
@@ -743,6 +746,40 @@ test('节奏铁律（融合 F2）：preset 与工具描述都写死「一次只�
     assert.ok(idx.includes('节奏铁律'), 'systemPrompt 纪律清单应含节奏铁律');
 });
 
+// 回合预算纪律为什么必须在 systemPrompt，而不是只在 SKILL.md / 简报里：
+// 技能正文是**按需加载**的（宿主 dsh-tool-skill 常驻只有目录里的 name+description，
+// 模型要先调 skill 工具才拿到正文），而写前简报要等 novel_briefing 返回才进上下文——
+// 两者都晚于「回合开头先写一大段前置说明」这个病发时刻。只有常驻段拦得住第一个动作。
+// 与「节奏铁律」三处同步（smoke:731）同一族纪律：多面投放要有人钉，掉了不会有人发现。
+test('★ 回合预算纪律常驻：systemPrompt 清单必须管住「回合第一个动作之前」', () => {
+    const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'lib', 'index.js'), 'utf8');
+    assert.ok(src.includes('回合预算纪律'), 'systemPrompt 纪律清单必须有这条');
+    assert.ok(src.includes('直接发起第一个 novel_* 调用'), '必须给出可执行动作：开头直接调工具');
+    assert.ok(src.includes('不要整章 read 正文'), '必须点名禁止整章 read（in_tok 爆掉的来源）');
+    assert.ok(/第 21 条/.test(src) || src.includes("            '21."), '这条必须是清单里的第 21 条（编号断号=被覆盖过）');
+});
+
+// ── headless 挂载事故（真机 2026-10-12）回归钉 ─────────────────────────────
+// 真名服务（sessionController/workspaceController）写进顶层 inject，cordis 数组 inject
+// 没有可选语义：headless profile 没有它们 ⇒ 整个插件永远 pending，20 个工具 + 面板整块
+// 消失。修法 = 真名走 apply() 里的数组 ctx.inject 独立 fiber（缺席只有那条回调不触发），
+// 与 'skills' 同一课（skill-registration.js）。这层用进程内装配钉住两条结构事实。
+test('plugin inject: 宿主缺席的控制器绝不进顶层 inject，必须走 ctx.inject 独立 fiber', async () => {
+    const mod = await import('../lib/index.js');
+    // ① 顶层声明是「缺席即全灭」的开关——真名不许回来
+    assert.ok(!mod.inject.includes('sessionController') && !mod.inject.includes('workspaceController'),
+        `inject = [${(mod.inject ?? []).join(', ')}]——真名回顶层，headless 会再挂一次`);
+    // ② apply 必须为两个真名**各建一条** fiber（合并成一条 = 宿主只提供其一时两段全灭），
+    //    且返回值绝不当作 Disposable 释放（cordis ctx.inject 返回 Disposable，误释放 =
+    //    插件退出时连 fiber 一起没——虽然现在还没人用 using，把路堵死）。
+    const flat = (ctx._injects ?? []).map((n) => n.join(','));
+    assert.ok(flat.includes('sessionController'), `要为 sessionController 建独立 fiber，实得 [${flat.join(' / ')}]`);
+    assert.ok(flat.includes('workspaceController'), '要为 workspaceController 建独立 fiber');
+    assert.ok(!flat.some((n) => n.includes(',')), '每个控制器单独声明，不许合并成一条数组（全有或全无）');
+    const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'lib', 'index.js'), 'utf8');
+    assert.doesNotMatch(src, /using\s+[^;]*ctx\.inject|const\s+\w+\s*=\s*ctx\.inject/, 'ctx.inject 的返回值（Disposable）不得接住——接了迟早被 using/释放');
+});
+
 test('审计 actor：默认 agent，用户通道显式传 user', () => {
     // 默认值必须是 agent（工具路径无需逐个改），显式传参要能覆盖。
     const line = auditLine('propose/apply', { id: 'P1-abc' });
@@ -1275,6 +1312,81 @@ test('★ G1 长篇检索：build 建索引 → query 按记忆碎片找回 → 
     assert.equal(st.chunks, before);
 });
 
+// ── 索引自动续建（建议#4）：把「回溯用摘录」的前提变成代码强制 ──────────────
+// 纪律让模型「用 novel_search 摘录代替整章 read」，但这句只在索引跟得上时成立：
+// 索引缺章 → 召不回 → 模型退回捞正文（真机 in_tok 13 万级就是这么来的）。
+// 所以写章落盘后自动增量建索引，简报再把「落后多少章」如实说出来。
+// 本用例只造自己的书，不碰「星海拾骨」的累积账本状态。
+test('★ 索引自动续建：落盘后不 build 就能召回；索引被删时简报警告、build 后自愈', async () => {
+    const project = tool('novel_project');
+    const outline = tool('novel_outline');
+    const write = tool('novel_write_chapter');
+    const search = tool('novel_search');
+    const briefing = tool('novel_briefing');
+
+    const BOOK = '自动索引书';
+    await project.execute({ action: 'init', book: BOOK, title: BOOK }, exec);
+    await outline.execute({ action: 'save_chapter', book: BOOK, chapter: 1, outline: '## 本章必写场景\n1. 石阶上的斗笠\n' }, exec);
+    await outline.execute({ action: 'approve', book: BOOK, chapter: 1 }, exec);
+    const CH = [
+        '周砚把斗笠的系带解开，随手搁在码头的石阶上。风灯在桅杆之间摇晃，把江面照成一条条抖动的碎金。他数着远处的更鼓，一声，两声，直到夜风把他的衣角掀起来，又落下。',
+        '他等的人没有来。倒是江心有艘乌篷船悄悄靠了岸，船头立着个戴斗笠的身影，一动不动地望了他许久，像是在确认什么。岸上的纤夫收工了，绳索在石桩上勒出细响。',
+        '「你是周砚？」那人终于开口。周砚没有应声，只是把袖中的短刃往里收了半寸。脚下的石阶被夜露浸得发滑，他退半步，靴底碾过一粒碎石。',
+        '远处有狗吠，吠了两声，很快又停了。他忽然想起师父临走前那句没头没尾的话：这一带的水底下埋着不该埋的东西。那时他只当是醉话。',
+        '如今站在码头上，他才觉出江风里那股散不去的腥气是从哪里来的——上游船坞新补的船板在滴桐油，而桐油底下压着的是别的什么。',
+    ].join('\n\n');
+
+    const saved = await write.execute({ book: BOOK, chapter: 1, title: '码头', content: CH, summary: '周砚夜会斗笠人', cast: '周砚' }, exec);
+    // ① 落盘回执必须把索引实况说出来（成功与降级都不许沉默）
+    assert.ok(typeof saved.indexNote === 'string' && saved.indexNote !== '', 'indexNote 必须可见（静默失败=检索悄悄断掉）');
+    // 只允许**运行时能力**这一种早退（没有 node:sqlite / 后端不给真实路径）。
+    // 绝不能写成「凡未更新就 return」——那会把「自动续建根本没跑」也吞成绿（红绿验证时抓到过）。
+    if (/sqlite|真实路径|目录创建失败/i.test(saved.indexNote)) {
+        assert.ok(saved.indexNote.includes('novel_search build'), '降级时要指路 build');
+        return;
+    }
+    assert.ok(saved.indexNote.includes('已续建'), `落盘后必须自动续建索引，实得：${saved.indexNote}`);
+
+    // ② 没手动 build 过也能召回（这才是「不必靠自觉」的证据）
+    const hit = await search.execute({ action: 'query', book: BOOK, q: '戴斗笠的身影' }, exec);
+    assert.equal(hit.degraded, false);
+    assert.ok(hit.hits.some((h) => h.chapter === 1), '新章必须立刻可检索（自动续建没生效）');
+
+    // ③ 索引在场 → 简报不许有落后告警
+    const fresh = await briefing.execute({ book: BOOK, chapter: 2 }, exec);
+    assert.ok(!fresh.warnings.some((w) => w.includes('检索索引')), `索引新鲜时不该告警，实得：${fresh.warnings.join('；')}`);
+
+    // ④ 索引被删（派生物，用户随时可删）→ 简报必须点名，且给的是 build 而不是整章读
+    fs.unlinkSync(path.join(root, BOOK, '.novel', 'index.db'));
+    const stale = await briefing.execute({ book: BOOK, chapter: 2 }, exec);
+    const warn = stale.warnings.find((w) => w.includes('检索索引'));
+    assert.ok(warn, '索引缺失/落后必须告警——否则模型只会自己去整章读');
+    assert.ok(warn.includes('build'), '告警要给出可操作出口（先 build 再摘录）');
+
+    // ⑤ 手动 build 后自愈
+    const rebuilt = await search.execute({ action: 'build', book: BOOK }, exec);
+    assert.equal(rebuilt.degraded, false);
+    const healed = await briefing.execute({ book: BOOK, chapter: 2 }, exec);
+    assert.ok(!healed.warnings.some((w) => w.includes('检索索引')), 'build 之后告警必须消失');
+
+    // ⑥ 增量不许误伤别章：只收第 2 章，第 1 章的块必须还在
+    await outline.execute({ action: 'save_chapter', book: BOOK, chapter: 2, outline: '## 本章必写场景\n1. 义庄清点\n' }, exec);
+    await outline.execute({ action: 'approve', book: BOOK, chapter: 2 }, exec);
+    const CH2 = [
+        '天亮时雾散了，义庄的后墙塌了个角。周砚蹲在被雨水泡软的泥土里，翻出三口空棺材，棺盖上的漆皮一碰就掉，露出底下发黑的木纹。',
+        '棺底刻着同样的记号——一枚被划掉的铜钱。这记号他见过，在三年前师父失踪的那一夜，也在师父留下的那本残卷的最后一页。',
+        '他把记号描在纸上，折好塞进衣襟。远处传来更鼓，一声闷响，惊起满树的寒鸦，扑棱棱地掠过青灰的屋顶，落向西边的乱葬岗。',
+        '义庄的门框上还挂着去年的白幡，布边烂成流苏。周砚站起身拍了拍膝上的泥，回头望了一眼那三口棺材，心里那点疑惑像水渍一样慢慢洇开。',
+        '他把那页纸对着天光又看了一遍。笔迹是他自己的，可他怎么也想不起来是什么时候描下的——昨夜他分明早早睡下了，连窗纸都没揭过，更不曾点灯。',
+    ].join('\n\n');
+    const saved2 = await write.execute({ book: BOOK, chapter: 2, title: '义庄', content: CH2, summary: '空棺记号', cast: '周砚' }, exec);
+    assert.ok(saved2.indexNote.includes('第2章'), '回执要点名本次续建的是哪一章');
+    const st2 = await search.execute({ action: 'status', book: BOOK }, exec);
+    assert.equal(st2.chapters, 2, '增量续建后两章都应在库（只收本章不得清掉别章）');
+    const back1 = await search.execute({ action: 'query', book: BOOK, q: '乌篷船 斗笠' }, exec);
+    assert.ok(back1.hits.some((h) => h.chapter === 1), '第 1 章的块必须还在——增量不许变成全量清理');
+});
+
 // ⚠️ 下面两条依赖前面用例累积的账本状态（「星海拾骨」第1章 城南义庄 → 第2章 城西），
 //    所以必须留在文件末尾；在中间插用例会改掉它们的输入。
 
@@ -1791,6 +1903,10 @@ test('★ novelSkillDefinition：从插件包内 SKILL.md 组装宿主可校验�
     assert.ok(d.description.length > 0 && d.description.length <= 300, 'description 非空且不超 300');
     assert.ok(d.content.includes('小说锻炉'), '正文来自插件包内 SKILL.md');
     assert.ok(d.content.includes('禁止 present'), 'SKILL.md 必须带收尾交付纪律（standard 预设会话靠技能/工具输出拿到纪律）');
+    // 输出预算两条（0.16.2 后新增）：SKILL.md 是 standard 预设会话唯一能稳定拿到的纪律文本，
+    // 掉了不会有人发现——所以逐条钉住，别只钉 present。
+    assert.ok(d.content.includes('工具回合零前置说明'), 'SKILL.md 必须带「工具回合零前置说明」（防写章回合被前置说明挤爆输出预算）');
+    assert.ok(d.content.includes('回溯用摘录不整章读'), 'SKILL.md 必须带「回溯用摘录不整章读」（防整章 read 把 in_tok 堆高）');
     assert.match(d.source, /^plugin:/);
     assert.ok(d.path.endsWith('skills/novel/SKILL.md'));
 });

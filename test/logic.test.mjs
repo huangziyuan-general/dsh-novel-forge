@@ -1452,6 +1452,170 @@ test('★ 交付纪律：写前简报带「收尾怎么走」段——收尾=纯
     assert.ok(sec.content.includes('纯文字') || sec.content.includes('纯文本'), '必须给替代出口：纯文字汇报');
 });
 
+test('★ 输出预算纪律：写前简报带「回合怎么开」段——零前置说明、回溯用摘录不整章读（防输出预算挤爆）', async () => {
+    const { buildBriefing } = await import('../lib/briefing.js');
+    const io = { readText: async () => '', readJson: async () => null, listDir: async () => [] };
+    const base = { minChapterChars: 2000, maxChapterChars: 4000, contextBudgetChars: 6000 };
+    const pack = await buildBriefing({
+        config: base, io, book: '测试书',
+        novel: { title: '测试书', cast: [], proposals: [] }, n: 1,
+    });
+    const idx = pack.sections.findIndex((s) => s.name === '输出预算纪律（回合怎么开）');
+    assert.ok(idx !== -1, '简报必须有「输出预算纪律」段——200 章大书的输出预算挤爆要在计划成形时刻拦');
+    const sec = pack.sections[idx];
+    assert.ok(sec.content.includes('回合开头直接调工具'), '必须明说：回合零前置说明，开头直接调工具');
+    assert.ok(sec.content.includes('novel_search') && sec.content.includes('status_at'), '必须给出替代回溯通道（search 摘录 / ledger 时点值，不是幻觉工具名）');
+    assert.ok(sec.content.includes('不要整章 read'), '必须明说禁止整章 read 正文');
+    // 计入 totalChars 的回归护栏：本段必须在预算统计（reduce）之前 push——
+    // 若被挪到统计点之后，sections 有它而 totalChars 没它，两侧重算即不等。
+    const recomputed = pack.sections.reduce((acc, s) => acc + s.content.length + s.name.length + 4, 0);
+    assert.equal(pack.totalChars, recomputed, 'totalChars 必须包含本段（统计点在全部 push 之后）');
+});
+
+// ── 前文摘要窗口（0.16.2 及以前的真机病根）────────────────────────────────
+// 旧实现 `summaries.slice(0, 10)` 取的是升序数组的**前** 10 条 = 只注入第 1–10 章：
+// 写第 60 章时模型看不见第 59 章发生过什么，只能自己整章 read 找回前文
+// （真机 97 章新会话第一回合 in_tok 13 万级）。这条窗口必须钉住，两种回归都要抓：
+// ① 又退回只看开头的章号窗口；② 同名区块逐行 push（header 重复 + 预算耗尽时丢掉最近那几章）。
+
+test('★ 前文摘要窗口：开篇 + 最近（60 章的书，第 59 章必须在场）', async () => {
+    const { buildBriefing } = await import('../lib/briefing.js');
+    const book = '测试书';
+    const chapters = {};
+    for (let k = 1; k <= 60; k += 1) {
+        chapters[String(k)] = { title: `章${k}`, summary: `S${k}情节`, path: `${book}/正文/第${k}章-章${k}-v1.md` };
+    }
+    const io = {
+        readText: async (rel) => {
+            if (rel.includes('/大纲/细纲/')) return '本章细纲：一场戏。';
+            if (rel.startsWith(`${book}/正文/`)) return '那是一段足够长的叙述样本，用来当锚段。'.repeat(3);
+            return '';
+        },
+        readJson: async () => null,
+        listDir: async () => [],
+    };
+    const b = await buildBriefing({
+        config: { minChapterChars: 2000, maxChapterChars: 4000, contextBudgetChars: 6000 },
+        io, book, novel: { title: book, cast: [], chapters, proposals: [] }, n: 60,
+    });
+    const secs = b.sections.filter((s) => String(s.name).startsWith('前文章节摘要'));
+    assert.equal(secs.length, 1, `摘要必须合成一个区块，实得 ${secs.length} 个（逐行 push = 同名 header 重复十遍，且裁的是数组尾部）`);
+    const body = secs[0].content;
+    assert.ok(body.includes('第1章'), '开篇要留（人物与世界的第一印象）');
+    assert.ok(body.includes('第2章《章2》'), '开篇窗口留 2 章');
+    assert.ok(body.includes('第59章《章59》'), '★ 上一章必须在场——续写衔接全靠最近这几章，旧实现一条不给');
+    assert.ok(body.includes('第52章'), '最近窗口给足 8 章（第 52–59 章）');
+    assert.ok(!body.includes('第30章'), '中间章节不该挤占窗口');
+    assert.ok(!body.includes('第60章'), '本章还没写，不许把自己的摘要当前文');
+    assert.match(body, /novel_search/, '窗口外的章要给找回通道（指向检索，而不是整章读）');
+});
+
+test('★ 摘要区块装不下时从头部淘汰：最近一章绝不许掉队（旧实现丢的正是尾部）', async () => {
+    const { buildContextPack } = await import('../lib/contextpack.js');
+    const summaries = Array.from({ length: 60 }, (_, i) => `第${i + 1}章《章${i + 1}》：${'摘要内容'.repeat(40)}`); // 单条 >140 → 就地截断
+    const pack = buildContextPack({ chapter: 60, summaries, budget: 900 });
+    const sec = pack.sections.find((s) => String(s.name).startsWith('前文章节摘要'));
+    assert.ok(sec, '900 的预算够放摘要区块（没有别的区块争）');
+    assert.ok(sec.content.length <= 900, `区块不得超出预算：${sec.content.length}`);
+    assert.ok(sec.content.includes('第59章'), '被挤掉的必须是最早的开篇，最近一章优先保住');
+    assert.ok(!sec.content.includes('第1章《'), '空间不足时开篇先让位');
+    assert.ok(!sec.content.includes('\n\n'), '单条摘要是独立一行：不许把换行符截进章号中间');
+    // 预算紧到放不下任何一行 → 整块进 dropped，不许只留半截
+    const tight = buildContextPack({ chapter: 60, summaries, budget: 30 });
+    assert.ok(tight.dropped.some((d) => String(d).startsWith('前文章节摘要')), '放不下时要如实记进 dropped');
+    assert.equal(tight.sections.find((s) => String(s.name).startsWith('前文章节摘要')), undefined);
+});
+
+test('★ 摘要窗口必须是单行制：CRLF / 多行梗概 / 空梗概 三种真机形状都不许散进行里', async () => {
+    const { buildContextPack } = await import('../lib/contextpack.js');
+    const summaries = [
+        '第1章《a》：\r\n她接过那枚当票\r\n',                                  // Windows 读盘 + 模型自己写的多行梗概
+        '第2章《b》：\r',                                                      // 只有一个裸 CR 的畸形行
+        '',                                                                    // 缺梗概的书（空条目）
+        ...Array.from({ length: 10 }, (_, i) => `第${i + 3}章《c${i + 3}》：${'很长'.repeat(120)}`), // 逐条超长
+        '第20章《z》：\r\n\r\n井底那本账终于对上了\r\n',
+    ];
+    const pack = buildContextPack({ chapter: 21, summaries, budget: 6000 });
+    const sec = pack.sections.find((s) => String(s.name).startsWith('前文章节摘要'));
+    assert.ok(sec, '窗口必须存在');
+    // CR 是本项目的老病：present 参数夹带连续 CR → 单步 32K 空白输出判 max-tokens；
+    // 简报文本走的是同一条宿主 JSON 通道，不许把 \r 带进去。
+    assert.ok(!sec.content.includes('\r'), '区块里不许残留 \\r');
+    const lines = sec.content.split('\n');
+    assert.ok(lines.every((l) => l.trim() !== ''), '空梗概不许留下空行');
+    const chapterLines = lines.filter((l) => /^第\d+章《/.test(l));
+    assert.equal(lines.length - chapterLines.length, 1, '除省略标记外每一行都必须是一条章号开头的梗概（一条散成多行=窗口与淘汰全乱）');
+    assert.ok(chapterLines.length <= 10, `窗口最多 10 条，实得 ${chapterLines.length}`);
+    assert.ok(sec.content.includes('第20章'), '含换行的那条压平后仍须留在窗口里（不许因为散行被挤出）');
+    assert.ok(lines.every((l) => l.length <= 150), '单条就地截断：不许一条撑爆整块');
+    assert.ok(!sec.content.includes('\n\n'), '区块内不许出现空行（真机旧形：截断把换行截进章号中间）');
+});
+
+test('真机数据探针：磁盘上的书包里有含换行的梗概时，压平必须生效（没有这些书就跳过）', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const os = await import('node:os');
+    const { buildContextPack } = await import('../lib/contextpack.js');
+    const roots = [path.join(os.homedir(), 'Documents', 'novel'), path.join(os.homedir(), 'Documents', 'other')];
+    const found = [];
+    for (const root of roots) {
+        let dirs = [];
+        try { dirs = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name); } catch { continue; }
+        for (const d of dirs) {
+            const meta = path.join(root, d, 'novel.json');
+            if (!fs.existsSync(meta)) continue;
+            found.push(meta);
+            if (found.length >= 8) break;
+        }
+    }
+    if (found.length === 0) { console.log('  （本机没有书，跳过真机探针）'); return; }
+    let withNewline = 0;
+    let checked = 0;
+    for (const meta of found) {
+        let novel = null;
+        try { novel = JSON.parse(fs.readFileSync(meta, 'utf8')); } catch { continue; }
+        const chapters = Object.entries(novel.chapters ?? {});
+        if (chapters.length === 0) continue;
+        const summaries = chapters.map(([k, c]) => `第${k}章《${c?.title ?? ''}》：${c?.summary ?? ''}`);
+        if (summaries.some((s) => /[\r\n]/.test(s))) withNewline += 1;
+        const sec = buildContextPack({ chapter: Number(Math.max(...chapters.map(([k]) => Number(k)))) + 1, summaries, budget: 6000 })
+            .sections.find((s) => String(s.name).startsWith('前文章节摘要'));
+        checked += 1;
+        assert.ok(!sec || !sec.content.includes('\r'), `${novel.title ?? meta}：真机梗概进窗口后不许残留 \\r`);
+        assert.ok(!/\n{2,}/.test(sec?.content ?? ''), `${novel.title ?? meta}：不许出现空行`);
+    }
+    console.log(`  （真机探针：${checked} 本书，其中 ${withNewline} 本的梗概含换行）`);
+});
+
+test('★ 会话纪律段只给会话，不给批量起草（受众门控）', async () => {
+    const { buildBriefing } = await import('../lib/briefing.js');
+    const io = { readText: async () => '', readJson: async () => null, listDir: async () => [] };
+    const base = { minChapterChars: 2000, maxChapterChars: 4000, contextBudgetChars: 6000 };
+    const novel = { title: '测试书', cast: [], proposals: [{ id: 'P60-a', chapter: 60, status: 'pending' }] };
+    const DISCIPLINE = ['待批提案（唯一真相）', '交付纪律（收尾怎么走）', '输出预算纪律（回合怎么开）'];
+    const namesOf = (b) => b.sections.map((s) => s.name);
+
+    const session = await buildBriefing({ config: base, io, book: '测试书', novel, n: 60 });
+    for (const name of DISCIPLINE) {
+        assert.ok(namesOf(session).includes(name), `会话简报必须带「${name}」段`);
+    }
+
+    const batch = await buildBriefing({ config: base, io, book: '测试书', novel, n: 60, audience: 'batch' });
+    for (const name of DISCIPLINE) {
+        assert.ok(!namesOf(batch).includes(name), `「${name}」是给会话执笔人的，不该进旁路起草引擎的提示词`);
+    }
+    // 但写作规格与上下文实质内容一条不许少：门控只关「怎么开会话/怎么收尾」，不关写什么
+    assert.ok(namesOf(batch).includes('本章字数目标'), '字数与段落规格对批量起草同样有效（draftSystem 之外还要在简报里）');
+    assert.deepEqual(batch.warnings, session.warnings, '门控不得改变上下文包的实质判定（告警一致）');
+    assert.ok(batch.totalChars < session.totalChars, '省下的就是每章白烧的输入');
+    // 受众值写错必须炸，不许静默退化成「没有纪律段」
+    await assert.rejects(
+        () => buildBriefing({ config: base, io, book: '测试书', novel, n: 60, audience: 'sesion' }),
+        /audience/,
+        '拼错的 audience 要报错——静默降级等于把纪律段弄丢',
+    );
+});
+
 test('★ 提案队列实况：写前简报带「待批提案（唯一真相）」段，防交付里复述过期的「N 枚待审」', async () => {
     const { buildBriefing } = await import('../lib/briefing.js');
     const io = { readText: async () => '', readJson: async () => null, listDir: async () => [] };
