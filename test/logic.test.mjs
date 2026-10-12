@@ -2432,3 +2432,808 @@ test('★ 数值铸造统一：finiteOr 收 NaN/±Infinity/-0，jsonSafeIssues �
     const { chapterMetrics } = await import('../lib/library.js');
     assert.deepEqual(jsonSafeIssues(chapterMetrics('第1章 试\n他说："来。"')), [], 'library 章指标必须 JSON 安全（round 曾是半颗雷）');
 });
+
+// 丢弃登记只是坦白；修前真机事故里模型对「因预算丢弃：上一章结尾」的反应是去
+// grep/read 整章捞前文（上下文 1.7 万 → 10 万+）。所以衔接两件套被丢时，包里必须
+// 带上**恢复路径**（novel_search 摘录 / read 尾部 40 行），并明确排除整章 read。
+// 指令走 briefing 的 warnings，不占包预算。
+test('★ 衔接找回指令：衔接被丢时包里给路，丢弃不许变成逼模型自救的信号', async () => {
+    const { buildContextPack } = await import('../lib/contextpack.js');
+    // 复刻 ② 的角落：硬需求自己吃满预算（保留额只拦弹性区块，拦不住这个）
+    const pack = buildContextPack({
+        chapter: 102,
+        chapterOutline: '细'.repeat(1200),
+        promise: '诺'.repeat(800),
+        factsDigest: Array.from({ length: 40 }, (_, i) => `实体${i}·键: 值（第${i + 1}章起）`),
+        prevTail: '尾'.repeat(400),
+        summaries: ['第101章《x》：' + '梗概'.repeat(30)],
+        budget: 2400,
+    });
+    assert.ok(pack.dropped.some((d) => d.startsWith('上一章结尾')), '前置：硬需求挤压下衔接确实被丢（保留额防不住的角落）');
+    assert.equal(pack.recoveryNotes.length, 1, '被丢时必须给找回指令');
+    assert.ok(pack.recoveryNotes[0].includes('novel_search'), '指令给摘录路线');
+    assert.ok(pack.recoveryNotes[0].includes('第 101 章'), '指令指到具体章号（chapter-1）');
+    assert.ok(pack.recoveryNotes[0].includes('整章 read'), '指令明确点名整章 read 是禁路');
+    // 衔接在场时不许多嘴
+    const ok = buildContextPack({
+        chapter: 3, prevTail: '尾'.repeat(50),
+        summaries: ['第2章《b》：二'], budget: 3000,
+    });
+    assert.deepEqual(ok.recoveryNotes, [], '衔接在场时不生成找回指令（元信息不许变成噪声）');
+});
+
+test('★ 会话纪律段只给会话，不给批量起草（受众门控）', async () => {
+    const { buildBriefing } = await import('../lib/briefing.js');
+    const io = { readText: async () => '', readJson: async () => null, listDir: async () => [] };
+    const base = { minChapterChars: 2000, maxChapterChars: 4000, contextBudgetChars: 6000 };
+    const novel = { title: '测试书', cast: [], proposals: [{ id: 'P60-a', chapter: 60, status: 'pending' }] };
+    const DISCIPLINE = ['待批提案（唯一真相）', '交付纪律（收尾怎么走）', '输出预算纪律（回合怎么开）'];
+    const namesOf = (b) => b.sections.map((s) => s.name);
+
+    const session = await buildBriefing({ config: base, io, book: '测试书', novel, n: 60 });
+    for (const name of DISCIPLINE) {
+        assert.ok(namesOf(session).includes(name), `会话简报必须带「${name}」段`);
+    }
+
+    const batch = await buildBriefing({ config: base, io, book: '测试书', novel, n: 60, audience: 'batch' });
+    for (const name of DISCIPLINE) {
+        assert.ok(!namesOf(batch).includes(name), `「${name}」是给会话执笔人的，不该进旁路起草引擎的提示词`);
+    }
+    // 但写作规格与上下文实质内容一条不许少：门控只关「怎么开会话/怎么收尾」，不关写什么
+    assert.ok(namesOf(batch).includes('本章字数目标'), '字数与段落规格对批量起草同样有效（draftSystem 之外还要在简报里）');
+    assert.deepEqual(batch.warnings, session.warnings, '门控不得改变上下文包的实质判定（告警一致）');
+    assert.ok(batch.totalChars < session.totalChars, '省下的就是每章白烧的输入');
+    // 受众值写错必须炸，不许静默退化成「没有纪律段」
+    await assert.rejects(
+        () => buildBriefing({ config: base, io, book: '测试书', novel, n: 60, audience: 'sesion' }),
+        /audience/,
+        '拼错的 audience 要报错——静默降级等于把纪律段弄丢',
+    );
+});
+
+test('★ 提案队列实况：写前简报带「待批提案（唯一真相）」段，防交付里复述过期的「N 枚待审」', async () => {
+    const { buildBriefing } = await import('../lib/briefing.js');
+    const io = { readText: async () => '', readJson: async () => null, listDir: async () => [] };
+    const base = { minChapterChars: 2000, maxChapterChars: 4000, contextBudgetChars: 6000 };
+    const mk = (proposals) => buildBriefing({
+        config: base, io, book: '测试书',
+        novel: { title: '测试书', cast: [], proposals }, n: 1,
+    });
+
+    // 全部已应用（真机形态：P45/P48/P49 applied）→ 必须明说 0 条并禁止声称有待审
+    const done = await mk([
+        { id: 'P45-x', chapter: 45, status: 'applied' },
+        { id: 'P48-x', chapter: 48, status: 'applied' },
+        { id: 'P49-x', chapter: 49, status: 'applied' },
+    ]);
+    const sec0 = done.sections.find((s) => s.name === '待批提案（唯一真相）');
+    assert.ok(sec0, '简报必须有「待批提案」段');
+    assert.ok(sec0.content.includes('0 条'), '已应用干净时待批数必须是 0');
+    assert.ok(sec0.content.includes('不要'), '0 条时要带「不要声称有待审」的护栏');
+    assert.ok(!sec0.content.includes('P49-x'), '已应用的提案不该出现在待批清单里');
+
+    // 有 pending → 逐条列出 id 与章号，且数量一致
+    const pend = await mk([
+        { id: 'P60-a', chapter: 60, status: 'pending' },
+        { id: 'P61-b', chapter: 61, status: 'pending' },
+    ]);
+    const sec1 = pend.sections.find((s) => s.name === '待批提案（唯一真相）');
+    assert.ok(sec1.content.includes('2 条'), '待批数要与 pending 条数一致');
+    assert.ok(sec1.content.includes('P60-a') && sec1.content.includes('第60章'), '要列出待批提案 id 与章号');
+});
+
+test('★ createServerFsio 乐观并发原语：读时带回版本，写时按**读取那一刻**的版本下守卫 intent', async () => {
+    const { createServerFsio } = await import('../lib/fsio.js');
+    const writes = [];
+    const files = new Map([['书/novel.json', { type: 'file', version: 7, text: '{"a":1}' }]]);
+    const fakeCtx = {
+        fs: {
+            async resolve(p) { return `/abs/${p}`; },
+            async stat(target) { const name = target.slice(5); return files.get(name); },
+            async readText(target) { return files.get(target.slice(5))?.text ?? null; },
+            async writeText(target, text, intent) { writes.push({ target, text, intent }); return { version: 8 }; },
+        },
+    };
+    const fsio = createServerFsio(fakeCtx, '/root');
+
+    const { text, version } = await fsio.readTextWithVersion('书/novel.json');
+    assert.equal(text, '{"a":1}');
+    assert.equal(version, 7, '★ 版本必须来自读取这一刻（H2 的根因就是它来自写前一刻）');
+    const absent = await fsio.readTextWithVersion('书/没有.json');
+    assert.deepEqual(absent, { text: null, version: null });
+
+    const json = await fsio.readJsonWithVersion('书/novel.json');
+    assert.deepEqual(json, { value: { a: 1 }, version: 7 });
+
+    // 已有基线 → replaceIfVersion(读取时的版本)
+    await fsio.writeTextAtVersion('书/novel.json', 'x', version);
+    assert.deepEqual(writes[0].intent, { kind: 'replaceIfVersion', version: 7 });
+    assert.equal(writes[0].target, '/abs/书/novel.json');
+
+    // 读时不存在 → createIfAbsent（期间被人建了就该响亮失败，而不是覆盖）
+    await fsio.writeTextAtVersion('书/新.json', 'y', null);
+    assert.deepEqual(writes[1].intent, { kind: 'createIfAbsent' });
+
+    await fsio.writeJsonAtVersion('书/novel.json', { b: 2 }, 7);
+    assert.deepEqual(writes[2].intent, { kind: 'replaceIfVersion', version: 7 }, 'writeJsonAtVersion 同构');
+});
+
+test('★ fsio 沙箱策略线程：写盘第 5 参携带会话 scoped policy（与内置 fs 工具同界，Windows 工作区≠进程 cwd 不再误伤）', async () => {
+    const { createFsio } = await import('../lib/fsio.js');
+    const seen = [];
+    const resolved = [];
+    const session = { header: { cwd: 'D:\\书桌', id: 'sess-1' } };
+    const exec = { agent: { session } };
+    const policySvc = {
+        resolve(request) {
+            resolved.push(request);
+            return { mode: 'workspace-write', workspaceRoot: request.session.header.cwd };
+        },
+    };
+    // 替身镜像真机：sandboxPolicy 经 ctx.get 双路探测取得（不在顶层注入）
+    const fakeCtx = {
+        emit() {},
+        get(prop) { return prop === 'sandboxPolicy' ? policySvc : undefined; },
+        fs: {
+            async resolve(p) { return `D:\\书桌\\${p}`; },
+            async stat() { return undefined; },
+            async writeText(target, text, intent, signal, policy) { seen.push({ target, policy }); return { version: 1 }; },
+        },
+    };
+    const fsio = createFsio(fakeCtx, exec, 'D:\\书桌');
+    await fsio.writeText('大嫂的账本/novel.json', '{}', 'replace');
+    assert.equal(resolved.length, 1, '策略服务必须被询价一次');
+    assert.equal(resolved[0].session, session, '★ exec 的 session 必须显式交给策略服务（宿主 checkedTarget 的无参兜底拿不到它）');
+    assert.equal(seen[0].policy.workspaceRoot, 'D:\\书桌', '★ 写界 = 会话 cwd（此前回落 web 进程 cwd，工作区内的写被判越界）');
+});
+
+test('★ fsio 沙箱策略线程：服务缺失时第 5 参缺省、宿主自兜底（旧宿主/裸后端零回归）', async () => {
+    const { createFsio } = await import('../lib/fsio.js');
+    const calls = [];
+    const fakeCtx = {
+        emit() {},
+        fs: {
+            async resolve(p) { return `/abs/${p}`; },
+            async stat() { return undefined; },
+            // 裸后端签名只有 4 参（沙箱后端才是 5 参）——多传会被无视，这里数参数钉形状
+            async writeText(...args) { calls.push(args); return { version: 1 }; },
+        },
+    };
+    const fsio = createFsio(fakeCtx, { agent: { session: { header: { cwd: '/w', id: 's' } } } }, '/w');
+    await fsio.writeText('书/novel.json', '{}', 'replace');
+    assert.equal(calls[0].length, 4, '无 sandboxPolicy 服务 = 与旧调用形状逐字节一致（target,text,intent,signal）');
+});
+
+test('★ fsio 沙箱拒绝改写：保留宿主原信息并补可行动指引（Windows 根因不再说谜语）', async () => {
+    const { createFsio } = await import('../lib/fsio.js');
+    const fakeCtx = {
+        get(prop) { return prop === 'sandboxPolicy' ? { resolve: () => ({ mode: 'workspace-write', workspaceRoot: '/other' }) } : undefined; },
+        fs: {
+            async resolve(p) { return `/abs/${p}`; },
+            async stat() { return undefined; },
+            async writeText() {
+                throw Object.assign(new Error('cannot write "D:\\书桌\\大嫂的账本\\novel.json": file access denied under workspace-write mode'), { code: 'FS_SANDBOX_DENIED' });
+            },
+        },
+    };
+    const fsio = createFsio(fakeCtx, { agent: { session: { header: { cwd: 'D:\\书桌', id: 's' } } } }, 'D:\\书桌');
+    await assert.rejects(
+        fsio.writeText('大嫂的账本/novel.json', '{}', 'replace'),
+        (e) => e.message.includes('file access denied under workspace-write mode')
+            && e.message.includes('danger-full-access')
+            && e.message.includes('该会话的文件策略'),
+        '原信息必须在，会话面指引（切该会话策略/更新插件）也必须在',
+    );
+});
+
+test('★ fsio 沙箱拒绝提示分场合：REST 面切会话策略无效——read-only 拒绝指向部署默认 mode（评审 2026-09-20）', async () => {
+    const { createServerFsio } = await import('../lib/fsio.js');
+    // 策略线程成功（服务在）+ 无 exec：mode 取部署默认（宿主判定链 session 缺席连 overrideOf 都不问）
+    const fakeCtx = {
+        get(prop) { return prop === 'sandboxPolicy' ? { resolve: () => ({ mode: 'read-only', workspaceRoot: '/books-root' }) } : undefined; },
+        fs: {
+            async resolve(p) { return `/abs/${p}`; },
+            async stat() { return undefined; },
+            async writeText() {
+                throw Object.assign(new Error('cannot write "x": file access denied under read-only mode'), { code: 'FS_SANDBOX_DENIED' });
+            },
+        },
+    };
+    const fsio = createServerFsio(fakeCtx, '/books-root');
+    await assert.rejects(
+        fsio.writeText('大嫂的账本/novel.json', '{}'),
+        (e) => e.message.includes('部署默认')
+            && e.message.includes('danger-full-access 无效')
+            && !e.message.includes('该会话的文件策略切到'),
+        '★ REST 面提示必须指向部署默认 mode，且明说「切会话策略无效」（旧行为：两场合共用一套会话面指引）',
+    );
+});
+
+test('★ fsio 沙箱拒绝提示分场合：服务缺席时策略没线程成功——连工具面也不该建议切会话，指向启动目录/部署默认', async () => {
+    const { createFsio } = await import('../lib/fsio.js');
+    // 无 sandboxPolicy 服务 → writeGuarded 4 参调用 → 宿主兜底 resolve() 无 session：
+    // mode=部署默认、根=web 启动目录——此时会话级覆盖根本不参与判定
+    const fakeCtx = {
+        fs: {
+            async resolve(p) { return `/abs/${p}`; },
+            async stat() { return undefined; },
+            async writeText() {
+                throw Object.assign(new Error('cannot write "x": file access denied under workspace-write mode'), { code: 'FS_SANDBOX_DENIED' });
+            },
+        },
+    };
+    const fsio = createFsio(fakeCtx, { agent: { session: { header: { cwd: 'D:\\书桌', id: 's' } } } }, 'D:\\书桌');
+    await assert.rejects(
+        fsio.writeText('大嫂的账本/novel.json', '{}', 'replace'),
+        (e) => e.message.includes('启动目录')
+            && e.message.includes('宿主策略服务未命中')
+            && !e.message.includes('该会话的文件策略切到'),
+        '★ 服务缺席 = 宿主兜底无 session，切会话策略无效——提示必须改指启动目录（旧行为误导）',
+    );
+});
+
+test('★ createServerFsio 线程策略：REST 面 resolve({}) 的 workspaceRoot 被绑定书根覆写（不再回落进程 cwd）', async () => {
+    const { createServerFsio } = await import('../lib/fsio.js');
+    const resolved = [];
+    const seen = [];
+    const policySvc = { resolve(request) { resolved.push(request); return { mode: 'workspace-write', workspaceRoot: '/proc-cwd' }; } };
+    const fakeCtx = {
+        get(prop) { return prop === 'sandboxPolicy' ? policySvc : undefined; },
+        fs: {
+            async resolve(p) { return `/abs/${p}`; },
+            async stat() { return undefined; },
+            async writeText(target, text, intent, signal, policy) { seen.push({ policy }); return { version: 1 }; },
+        },
+    };
+    const fsio = createServerFsio(fakeCtx, '/root');
+    await fsio.writeText('书/novel.json', '{}');
+    assert.deepEqual(resolved[0], {}, 'resolve 请求保持无 session 的旧形状——不伪造宿主会话（sessionProjections 对未知会话会抛）');
+    assert.equal(seen[0].policy.workspaceRoot, path.resolve('/root'), '★ REST 面写界 = 绑定的书工作区（旧行为回落 /proc-cwd = 宿主 checkedTarget 兜底，正是「书在非 cwd 工作区」误拒的机理）');
+    assert.equal(seen[0].policy.mode, 'workspace-write', 'mode 仍全权归 resolver，插件只动根');
+});
+
+test('★ createServerFsio REST 面：绑定书根覆写覆盖全部写通道（writeTextAtVersion / appendLine），不依赖 live 会话在册（CodeBuddy P2 真机终态）', async () => {
+    // 替身**刻意不带 ctx.sessions**——镜像面板空闲期时序：sessions 服务虽在宿主 base 层装载
+    // （dsh-base/cordis.patch.yml L34，SessionStore list() 可调），但 store 由创建 fiber 持有，
+    // 会话只在 agent 轮运行期在册 → 首修「匹配 live 会话线程其策略」空闲期命中≈0，且会话的
+    // model 侧 mode 覆盖不该进用户面板动作。终态 = 绑定根覆写 workspaceRoot，
+    // 每个 REST 写通道都吃到（appendLine 漏线程曾让存章成功的审计写最先撞非 cwd 工作区拒绝）。
+    const { createServerFsio } = await import('../lib/fsio.js');
+    const seen = [];
+    const policySvc = { resolve: () => ({ mode: 'workspace-write', workspaceRoot: '/proc-cwd' }) };
+    const fakeCtx = {
+        get(prop) { return prop === 'sandboxPolicy' ? policySvc : undefined; },
+        fs: {
+            async resolve(p) { return `/abs/${p}`; },
+            async stat() { return { version: 'v3', type: 'file' }; },   // 文件在场 → 走 replaceIfVersion 分支
+            async readText() { return '已有行\n'; },
+            async writeText(target, text, intent, signal, policy) { seen.push({ intent, policy }); return { version: 4 }; },
+        },
+    };
+    const fsio = createServerFsio(fakeCtx, '/books-root');
+    await fsio.writeTextAtVersion('大嫂的账本/novel.json', '{}', 'v3');
+    assert.equal(seen[0].policy.workspaceRoot, path.resolve('/books-root'), '★ writeTextAtVersion 通道也覆根');
+    await fsio.appendLine('大嫂的账本/.novel/audit.jsonl', '一行审计');
+    assert.equal(seen[1].policy.workspaceRoot, path.resolve('/books-root'), '★ appendLine 通道也覆根（首修漏线程的半边）');
+    assert.deepEqual(seen[1].intent, { kind: 'replaceIfVersion', version: 'v3' }, 'appendLine 读-改-写版本守卫语义不变');
+});
+
+test('★ fsio 策略探测镜像真机 cordis：未声明服务的属性访问 getter 会 throw——可选链防不住，必须视为缺失而非炸写盘（真机 novel_outline 全线抛错回归）', async () => {
+    const { createFsio } = await import('../lib/fsio.js');
+    // 替身镜像真机：cordis 对未在顶层 inject 声明的服务，ctx.sandboxPolicy 的 getter 直接 throw
+    // 「cannot get property sandboxPolicy without inject」——ctx?.sandboxPolicy 只防容器为空，
+    // 防不住 getter 内部 throw（假对象上属性访问永不抛，所以这条此前 294 绿灯全瞎）。
+    const cordisLikeCtx = {};
+    Object.defineProperty(cordisLikeCtx, 'sandboxPolicy', {
+        get() { throw new Error('cannot get property sandboxPolicy without inject'); },
+    });
+    const seen = [];
+    const policySvc = { resolve: () => ({ mode: 'workspace-write', workspaceRoot: '/w' }) };
+    cordisLikeCtx.get = (prop) => (prop === 'sandboxPolicy' ? policySvc : undefined);
+    cordisLikeCtx.emit = () => {};
+    cordisLikeCtx.fs = {
+        async resolve(p) { return `/abs/${p}`; },
+        async stat() { return undefined; },
+        async writeText(target, text, intent, signal, policy) { seen.push({ policy }); return { version: 1 }; },
+    };
+    const fsio = createFsio(cordisLikeCtx, { agent: { session: { header: { cwd: '/w', id: 's' } } } }, '/w');
+    await fsio.writeText('书/novel.json', '{}', 'replace');
+    assert.equal(seen[0].policy.workspaceRoot, '/w', '★ 属性访问 throw 必须降级走 ctx.get 双路探测，而不是把整次写盘炸掉');
+
+    // 双路全缺失（属性 getter 与 ctx.get 都抛）→ policy undefined → 4 参旧形状，宿主自兜底
+    const bothMissingCtx = {};
+    Object.defineProperty(bothMissingCtx, 'sandboxPolicy', {
+        get() { throw new Error('cannot get property sandboxPolicy without inject'); },
+    });
+    bothMissingCtx.get = () => { throw new Error('cannot get property sandboxPolicy without inject'); };
+    bothMissingCtx.emit = () => {};
+    const calls = [];
+    bothMissingCtx.fs = {
+        async resolve(p) { return `/abs/${p}`; },
+        async stat() { return undefined; },
+        async writeText(...args) { calls.push(args); return { version: 1 }; },
+    };
+    const fsio2 = createFsio(bothMissingCtx, { agent: { session: { header: { cwd: '/w', id: 's' } } } }, '/w');
+    await fsio2.writeText('书/novel.json', '{}', 'replace');
+    assert.equal(calls[0].length, 4, '双路探测全缺失 = 与旧 4 参调用逐字节一致，绝不放大故障');
+});
+
+test('★ fsio 沙箱拒绝识别优先匹配结构化 code（宿主文案改版不至于让可行动提示静默失效，CodeBuddy P3）', async () => {
+    const { createFsio } = await import('../lib/fsio.js');
+    const fakeCtx = {
+        get(prop) { return prop === 'sandboxPolicy' ? { resolve: () => ({ mode: 'workspace-write', workspaceRoot: '/other' }) } : undefined; },
+        fs: {
+            async resolve(p) { return `/abs/${p}`; },
+            async stat() { return undefined; },
+            async writeText() {
+                // 宿主改版后的假想文案（不含 'file access denied under'），但 code 不变
+                throw Object.assign(new Error('宿主新文案：write blocked by policy'), { code: 'FS_SANDBOX_DENIED' });
+            },
+        },
+    };
+    const fsio = createFsio(fakeCtx, { agent: { session: { header: { cwd: '/w', id: 's' } } } }, '/w');
+    await assert.rejects(
+        fsio.writeText('书/novel.json', '{}', 'replace'),
+        (e) => e.message.includes('write blocked by policy') && e.message.includes('dsh-novel-forge'),
+        'code 命中即改写提示（原信息保留）——文案漂移不再让诊断静默失效',
+    );
+    // 无 code 且文案不匹配 → 原样上抛，绝不误改写
+    const plainCtx = {
+        get(prop) { return prop === 'sandboxPolicy' ? { resolve: () => ({}) } : undefined; },
+        fs: { async resolve(p) { return `/abs/${p}`; }, async stat() { return undefined; }, async writeText() { throw new Error('磁盘满了'); } },
+    };
+    const plainFsio = createFsio(plainCtx, { agent: { session: { header: { cwd: '/w', id: 's' } } } }, '/w');
+    await assert.rejects(plainFsio.writeText('书/novel.json', '{}', 'replace'), (e) => e.message === '磁盘满了', '非沙箱错误零改动');
+});
+
+test('★ cloneProject（lib/clone.js 共享核心）：章节资产全带走、阶段重置、会话归属、防呆三连', async () => {
+    const { cloneProject } = await import('../lib/clone.js');
+    // 内存 io：createFsio / createServerFsio 的公共接口子集
+    const files = new Map();
+    const io = {
+        sessionId: 'sess-in-io',
+        async readJson(p) { const t = files.get(p); return t === undefined ? null : JSON.parse(t); },
+        async readText(p) { return files.get(p) ?? null; },
+        async writeText(p, text) { files.set(p, text); return { version: 1 }; },
+        async writeJson(p, v) { files.set(p, JSON.stringify(v, null, 2) + '\n'); return { version: 1 }; },
+        async listNames(p) { return [...files.keys()].filter((k) => k.startsWith(p + '/')).map((k) => k.slice(p.length + 1)); },
+        async appendLine(p, line) { files.set(p, (files.get(p) ?? '') + line + '\n'); },
+    };
+    // 源书：2 章 + 大纲 + 细纲 + 世界书 + 账本
+    files.set('源书/novel.json', JSON.stringify({
+        title: '源书', genre: '玄幻', logline: '一句话',
+        chapters: {
+            1: { title: '一章', files: [{ version: 1, file: '源书/正文/第1章.md' }], summary: 's1' },
+            2: { title: '二章', files: [{ version: 1, file: '源书/正文/第2章.md' }], summary: 's2' },
+        },
+        cast: ['主角'],
+    }, null, 2));
+    files.set('源书/正文/第1章.md', '第一章正文');
+    files.set('源书/正文/第2章.md', '第二章正文');
+    files.set('源书/大纲/全书大纲.md', '大纲');
+    files.set('源书/大纲/细纲/第1章.md', '细纲1');
+    files.set('源书/设定/世界书.json', '[]');
+    files.set('源书/账本/facts.json', '{}');
+    files.set('源书/人物/主角.md', '人物卡');
+
+    const v = await cloneProject(io, { fromBook: '源书', newBook: '新书', session: 'sess-面板' });
+    assert.equal(v.action, 'clone');
+    assert.equal(v.chapters, 2, '两章都复制');
+    assert.equal(v.new_stage, 'topic', '阶段重置');
+    const meta = JSON.parse(files.get('新书/novel.json'));
+    assert.deepEqual(meta.sessions, ['sess-面板'], '显式 session 优先于 io.sessionId');
+    assert.equal(meta.stage, 'topic', '新书从 topic 起步');
+    assert.deepEqual(meta.approvals, { outline: {} }, 'approvals 必须带 outline 子对象');
+    assert.deepEqual(meta.proposals, [], '提案清空');
+    assert.deepEqual(meta.gateFailures, {}, '熔断计数清空');
+    assert.equal(meta.chapters[1].path, '新书/正文/第1章.md', '章节索引指向新书路径');
+    assert.ok(files.get('新书/正文/第1章.md')?.includes('第一章正文'), '章正文复制');
+    assert.ok(files.get('新书/大纲/全书大纲.md')?.includes('大纲'), '全书大纲复制');
+    assert.ok(files.get('新书/大纲/细纲/第1章.md')?.includes('细纲1'), '细纲按目录实列复制');
+    assert.ok(files.get('新书/设定/世界书.json') !== undefined, '世界书复制');
+    assert.ok(files.get('新书/账本/facts.json') !== undefined, '账本复制');
+    assert.ok(files.get('新书/人物/主角.md')?.includes('人物卡'), '人物卡复制');
+    assert.ok(files.get('新书/.novel/audit.jsonl')?.includes('project/clone'), '审计落新书');
+
+    // 防呆：同名 / 目标已存在 / 源不存在
+    await assert.rejects(cloneProject(io, { fromBook: '新书', newBook: '新书' }), /源与目标/);
+    await assert.rejects(cloneProject(io, { fromBook: '源书', newBook: '新书' }), /目标书目已存在/);
+    await assert.rejects(cloneProject(io, { fromBook: '没有的书', newBook: '另一本' }), /源书目不存在/);
+});
+
+test('★ cloneProject 传染链：源书章节缺 summary（REST 面板存过章的形态）→ 克隆书 summary 补空串', async () => {
+    // 0.13.7 真机 bug 的 clone 分支：面板 POST /chapters/:no 不传 summary → 键消失。
+    // clone.js 直接手写章节对象、绕开 chapterRecord，若原样透传 rec.summary，克隆出的
+    // 新书同样缺 summary，下一本 status/repair 输出 summary:undefined → 宿主 lossless
+    // JSON 拒收整次调用。修复：clone 处缺省补 ''。此测试锁死这条传染链。
+    const { cloneProject } = await import('../lib/clone.js');
+    const files = new Map();
+    const io = {
+        async readJson(p) { const t = files.get(p); return t === undefined ? null : JSON.parse(t); },
+        async readText(p) { return files.get(p) ?? null; },
+        async writeText(p, text) { files.set(p, text); return { version: 1 }; },
+        async writeJson(p, v) { files.set(p, JSON.stringify(v, null, 2) + '\n'); return { version: 1 }; },
+        async listNames(p) { return [...files.keys()].filter((k) => k.startsWith(p + '/')).map((k) => k.slice(p.length + 1)); },
+        async appendLine(p, line) { files.set(p, (files.get(p) ?? '') + line + '\n'); },
+    };
+    // 源书章节照「REST 存过的盘面形态」：summary 键整个缺失
+    files.set('源书/novel.json', JSON.stringify({
+        title: '源书', genre: '玄幻',
+        chapters: {
+            1: { title: '一章', versions: [1], files: [{ version: 1, file: '源书/正文/第1章.md' }], latest: 1, path: '源书/正文/第1章.md', chars: 20 },
+        },
+        cast: [],
+    }, null, 2));
+    files.set('源书/正文/第1章.md', '正文');
+
+    const v = await cloneProject(io, { fromBook: '源书', newBook: '新书' });
+    assert.equal(v.action, 'clone');
+    const meta = JSON.parse(files.get('新书/novel.json'));
+    assert.ok('summary' in meta.chapters[1], '克隆书章节必须带 summary 键');
+    assert.equal(meta.chapters[1].summary, '', '源书缺 summary 时克隆补空串，不得透传 undefined');
+});
+
+test('★ chapterRelPath：章节记录只认 path / files[].file（0.13.1 阅读器恒空事故回归）', async () => {
+    const { chapterRelPath, chapterRecord } = await import('../lib/store.js');
+    // 真实形态：chapterRecord 产物，path/files 均为工作区相对路径（含书目前缀）
+    const rec = chapterRecord(null, { title: '旺财与剑来', version: 1, file: '剑来旺财/正文/第1章-旺财与剑来-v1.md', chars: 2000 });
+    assert.equal(chapterRelPath(rec), '剑来旺财/正文/第1章-旺财与剑来-v1.md', 'path 优先');
+    // 修订后多版本 → 回退取 files 末条（最高版本）
+    const rec2 = chapterRecord(rec, { title: '旺财与剑来', version: 2, file: '剑来旺财/正文/第1章-旺财与剑来-v2.md', chars: 2100 });
+    assert.equal(chapterRelPath(rec2), '剑来旺财/正文/第1章-旺财与剑来-v2.md', 'files 末条回退');
+    // 防再犯：不存在的 rec.file 字段绝不能被当成路径来源
+    assert.equal(chapterRelPath({ file: '第1章.md' }), null, '只有 rec.file（schema 外字段）时必须返回 null');
+    assert.equal(chapterRelPath(null), null, '缺记录安全');
+    assert.equal(chapterRelPath({}), null, '空记录安全');
+});
+
+test('★ listProposals 富化 + readProposal：reason/摘要/章标题齐备，丢文件有说法', async () => {
+    const { listProposals, readProposal } = await import('../lib/proposals.js');
+    const files = new Map();
+    files.set('书/novel.json', JSON.stringify({
+        title: '书', stage: 'drafting',
+        chapters: { 1: { title: '初入龙渊', files: [{ version: 1, file: '书/正文/第1章-v1.md' }], latest: 1, path: '书/正文/第1章-v1.md' } },
+        proposals: [
+            { id: 'P1-a', chapter: 1, status: 'pending', createdAt: '2026-09-15T06:39:13.577Z' },
+            { id: 'P9-lost', chapter: 2, status: 'pending', createdAt: '2026-09-15T07:00:00.000Z' },
+        ],
+    }, null, 2));
+    files.set('书/.novel/proposals/P1-a.json', JSON.stringify({
+        id: 'P1-a', book: '书', chapter: 1, reason: '机审检出章末无钩子', status: 'pending',
+        createdAt: '2026-09-15T06:39:13.577Z', content: '第一段……\n第二段，把结尾改成悬念对白。',
+    }));
+    const io = {
+        async readJson(p) { const v = files.get(p); return v === undefined ? null : JSON.parse(v); },
+        async readText(p) { return files.get(p) ?? null; },
+        async writeText(p, text) { files.set(p, text); return { version: 1 }; },
+        async writeJson(p, v) { files.set(p, JSON.stringify(v, null, 2)); return { version: 1 }; },
+        async appendLine(p, line) { files.set(p, (files.get(p) ?? '') + line + '\n'); },
+        async listNames() { return []; },
+    };
+    const v = await listProposals(io, '书');
+    assert.equal(v.proposals.length, 2);
+    const p1 = v.proposals[0];
+    assert.equal(p1.title, '初入龙渊', '章标题随列表给出——UI 才能显示「第 1 章 · 初入龙渊」');
+    assert.equal(p1.reason, '机审检出章末无钩子', '模型附的说明必须出列');
+    assert.ok(p1.preview.includes('悬念对白'), '摘要是正文压缩');
+    assert.ok(!p1.preview.includes('\n'), '摘要内换行必须压平（UI 单行显示）');
+    const lost = v.proposals[1];
+    assert.equal(lost.missing, true, '丢文件的提案要有 missing 标记，UI 才能明说');
+    assert.equal(lost.reason, '');
+
+    const full = await readProposal(io, '书', 'P1-a');
+    assert.ok(full.content.includes('第二段'), '全文可读（应用前让人看清改了什么）');
+    assert.equal(full.title, '初入龙渊');
+    await assert.rejects(readProposal(io, '书', 'P9-lost'), /缺失/, '丢文件要给人话报错');
+    await assert.rejects(readProposal(io, '书', 'P404'), /不存在/);
+});
+
+test('★ collectBookChapters + assembleBookText：章节索引 → 整本正文（0.5.x 坏调用致导出恒 500 的回归）', async () => {
+    const { collectBookChapters, assembleBookText, bookStats } = await import('../lib/export.js');
+    const files = new Map([
+        ['书/正文/第1章-v1.md', '一章内容'],
+        ['书/正文/第2章-v1.md', '二章旧稿'],
+        ['书/正文/第2章-v2.md', '二章新稿'],
+    ]);
+    const io = { async readText(p) { return files.get(p) ?? null; } };
+    const novel = {
+        title: '测试书',
+        chapters: {
+            1: { title: '一章', path: '书/正文/第1章-v1.md', latest: 1, files: [{ version: 1, file: '书/正文/第1章-v1.md' }] },
+            // path 指向 v2（当前正文）——collect 必须信 path，不能拿 files[0]
+            2: { title: '二章', path: '书/正文/第2章-v2.md', latest: 2, files: [{ version: 1, file: '书/正文/第2章-v1.md' }, { version: 2, file: '书/正文/第2章-v2.md' }] },
+            3: { title: '空章' },   // 无 path / files → 跳过，不让导出炸掉
+        },
+    };
+    const chapters = await collectBookChapters(io, novel);
+    assert.equal(chapters.length, 2, '读不出正文的章跳过');
+    assert.equal(chapters[0].chapter, 1);
+    assert.equal(chapters[1].versions[0].content, '二章新稿', 'path 优先（当前版本 v2）');
+
+    const md = assembleBookText(chapters, 'md');
+    assert.ok(md.includes('## 第1章 一章'), 'markdown 章节符');
+    assert.ok(md.includes('二章新稿'));
+    const txt = assembleBookText(chapters, 'txt');
+    assert.ok(txt.includes('第1章 一章') && !txt.includes('## '), 'txt 无 markdown 符');
+
+    const stats = bookStats(chapters);
+    assert.equal(stats.chapters, 2);
+    assert.equal(stats.totalChars, '一章内容二章新稿'.length);
+});
+
+// ── diagnose：黄金三章确定性诊断（0.13.2 面板诊断卡回归：REST 直跑同一函数）──
+test('diagnoseIntro: 四维打分取值域 0-100，缺大纲/logline 出建议', () => {
+    const good = '「谁在那儿？」陈默猛地回头，刀已经出了鞘。他盯着门口的黑影，一步步逼近，手心里全是汗。';
+    const d = diagnoseIntro({
+        chapters: [
+            { chapter: 1, title: '一章', content: good + '他一脚踏进院子，迎面撞上三个持刀的汉子。' },
+            { chapter: 2, title: '二章', content: good },
+            { chapter: 3, title: '三章', content: good },
+        ],
+        outline: '# 大纲\n第一卷：初入江湖',
+        logline: '一个刀客的复仇路',
+    });
+    assert.equal(d.perChapter.length, 3);
+    for (const r of d.perChapter) {
+        for (const k of ['hook', 'opening', 'conflict', 'infodump']) {
+            assert.ok(r[k] >= 0 && r[k] <= 100, `${k}=${r[k]} 应在 0-100`);
+        }
+    }
+    assert.ok(!d.issues.some((s) => s.includes('大纲') || s.includes('logline')), '大纲与 logline 齐备不应报');
+});
+
+test('diagnoseIntro: 空书给「先写第 1 章」，超三章只取前三', () => {
+    const empty = diagnoseIntro({ chapters: [], outline: 'x', logline: 'y' });
+    assert.equal(empty.perChapter.length, 0);
+    assert.ok(empty.issues.some((s) => s.includes('还没有任何章节')));
+    const many = diagnoseIntro({
+        chapters: [1, 2, 3, 4, 5].map((n) => ({ chapter: n, title: `${n}`, content: '内容' })),
+    });
+    assert.equal(many.perChapter.length, 3, '黄金三章只看前三章');
+});
+
+// ── 真机会话事故回归（0.13.3 复盘）：宿主对工具输出做 strict
+//    lossless-JSON 校验，undefined / 未声明字段都会被判 invalid output ──
+
+test('judgeAgainstBaseline: 旧基线条目缺 sigma/tolerance → 输出补齐、无 undefined 混入', () => {
+    const metrics = measureStyleMetrics('林晚把刀收进鞘，转身走了。雨还在下，落在青石板上。');
+    // 模拟旧版本基线：条目只有 mu（没有 sigma / tolerance）
+    const legacy = { chapters: 3, dims: { syntax: { mu: 2 }, modifier: { mu: 20, tolerance: 30 } } };
+    const judged = judgeAgainstBaseline(metrics, legacy, {});
+    const bad = [];
+    const walk = (v, p) => {
+        if (v === undefined) { bad.push(p); return; }
+        if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) walk(x, p + '.' + k);
+    };
+    walk(judged.dims, 'dims');
+    assert.deepEqual(bad, [], 'dims 里不得有 undefined（宿主 lossless JSON 拒收）');
+    assert.equal(judged.dims.syntax.tolerance, 35, '缺 tolerance 兜底 35');
+    assert.equal(judged.dims.syntax.sigma, null, '缺 sigma 兜底 null');
+    assert.equal(judged.dims.modifier.tolerance, 30, '给了 tolerance 照用');
+});
+
+test('judgeAgainstBaseline: 实际值略低于均值 → deviationPct 不得是 -0（真机 lossless JSON 拒收负零）', () => {
+    // 基线均值 100，本章测得 99.6 → 相对偏差 (99.6-100)/100*100 = -0.4 → Math.round 产出 -0。
+    // 真机：本书 69 章里第 14/35/46/57 章间歇性报「value is not lossless JSON」。
+    const baseline = { chapters: 3, dims: { modifier: { mu: 100, sigma: 1, tolerance: 35 } } };
+    const metrics = { chars: 1000, sentences: 10, syntax: 2, modifier: 99.6, abstract: 1, action: 10, hedging: 1, blank: 1 };
+    const judged = judgeAgainstBaseline(metrics, baseline, {});
+    assert.equal(judged.dims.modifier.deviationPct, 0);
+    assert.equal(Object.is(judged.dims.modifier.deviationPct, -0), false, '负零必须归正零');
+    // 通用防线：整份输出不得含 -0 / NaN / Infinity（与宿主 isJsonValue 同语义）
+    const bad = [];
+    const walk = (v, p) => {
+        if (Object.is(v, -0)) { bad.push(`${p}=-0`); return; }
+        if (typeof v === 'number' && !Number.isFinite(v)) { bad.push(`${p}=${v}`); return; }
+        if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) walk(x, `${p}.${k}`);
+    };
+    walk(judged, 'judged');
+    assert.deepEqual(bad, [], `工具输出必须是 lossless JSON：${bad.join(', ')}`);
+});
+
+// ── 存储健康度体检（lib/health.js，repair 与 /continuity 共用）──────────────
+
+test('health: 控制字符检测/归一化——\\r\\n 等被识别并剥掉，纯字符串不受影响', () => {
+    assert.equal(hasControlChars('正常/路径.md'), false);
+    assert.equal(hasControlChars('示例书\r\r/正文/第1章.md'), true);
+    assert.equal(hasControlChars(undefined), false, '非字符串一律 false，不抛');
+    assert.equal(hasControlChars(7), false);
+    assert.equal(stripControlChars('a\r\nb\tc'), 'abc');
+    assert.equal(stripControlChars(42), 42, '非字符串原样返回');
+});
+
+test('health: controlCharPaths 同时收 files[].file 与 rec.path，且不修改入参', () => {
+    const novel = {
+        chapters: {
+            1: { path: '书/正文/第1章.md', files: [{ file: '书/正文/第1章\r.md', version: 1 }] },
+            2: { path: '书/正文/第2章\n.md', files: [{ file: '书/正文/第2章.md', version: 1 }] },
+            3: { path: '书/正文/第3章.md', files: [{ file: '书/正文/第3章.md', version: 1 }] },
+        },
+    };
+    const hits = controlCharPaths(novel);
+    assert.deepEqual(hits, ['书/正文/第1章\r.md', '书/正文/第2章\n.md']);
+    assert.equal(novel.chapters['1'].files[0].file, '书/正文/第1章\r.md', '只报告不改（归一化是 repair 的职责）');
+});
+
+test('health: numericNullFields 只报本应为数值的 null——payoffChapter 等合法 null 不误报', () => {
+    const novel = {
+        chapters: {
+            1: { chars: null, latest: 1, files: [{ version: null }] },
+            2: { chars: 100, latest: null, files: [{ version: 2 }] },
+        },
+        foreshadows: [{ id: 'F1', payoffChapter: null }],   // 合法 null，不在检查范围
+    };
+    const baseline = { baseline: { dims: { syntax: { mu: null, sigma: 3 }, modifier: { mu: 5, sigma: null } } } };
+    assert.deepEqual(numericNullFields(novel, baseline), [
+        '第1章 chars=null（数值被写成 null）',
+        '第1章 files[].version=null',
+        '第2章 latest=null',
+        '文风基线 syntax.mu=null',
+        '文风基线 modifier.sigma=null',
+    ]);
+    assert.deepEqual(numericNullFields({ chapters: {} }, null), [], '无基线无章节 → 空清单');
+});
+
+test('health: ghostProposals 拆出「索引有文件无」与「文件有索引无」，missing 保索引序、orphan 排序', () => {
+    const { missing, orphan } = ghostProposals(['P3', 'P1', 'P2'], ['P2', 'P9', 'P0']);
+    assert.deepEqual(missing, ['P3', 'P1'], 'missing 按索引出现顺序（P3 在 P1 前）');
+    assert.deepEqual(orphan, ['P0', 'P9'], 'orphan 排序输出');
+    // 去重 + 非字符串过滤：坏数据不得让比较崩（避免 '[object Object]' 之类伪 id）
+    assert.deepEqual(ghostProposals(['P1', 'P1', null, 5], ['P1']), { missing: [], orphan: [] });
+    assert.deepEqual(ghostProposals(null, null), { missing: [], orphan: [] }, '缺参不抛');
+});
+
+test('health: healthIssues 产出 continuity 同款 issue（severity/code/where/message），可并入全书体检', () => {
+    const issues = healthIssues({
+        novel: { chapters: { 1: { path: '书/正文/第1章\r.md', files: [], chars: null } } },
+        styleBaseline: null,
+        proposalIds: ['P1', 'P2'],
+        proposalFilesOnDisk: ['P1', 'P9'],
+    });
+    const byCode = Object.fromEntries(issues.map((i) => [i.code, i]));
+    assert.equal(issues.length, 4, `应有 4 条（路径/数值/幽灵/冷归档），实际 ${issues.length}：${JSON.stringify(issues)}`);
+    for (const it of issues) {
+        assert.ok(['error', 'warning'].includes(it.severity), 'severity 必须是 error|warning（面板只认这两种）');
+        assert.equal(typeof it.where, 'string');
+        assert.equal(typeof it.message, 'string');
+    }
+    assert.equal(byCode['path-control-char'].severity, 'error');
+    assert.equal(byCode['state-numeric-null'].severity, 'warning');
+    assert.equal(byCode['proposal-file-missing'].severity, 'error');
+    assert.match(byCode['proposal-file-missing'].message, /P2/);
+    assert.equal(byCode['proposal-orphan-file'].severity, 'warning');
+    assert.match(byCode['proposal-orphan-file'].message, /P9/);
+});
+
+test('health: ghostIndexChapters 只报「索引有、书里已删」的章（升序去重），健康索引零噪音', () => {
+    // 索引含 1/2/3/5，书里只剩 1/2 → 3/5 是幽灵（删章后索引未重建的残留）
+    assert.deepEqual(ghostIndexChapters([3, 1, 2, 5, 3], [1, 2]), [3, 5]);
+    assert.deepEqual(ghostIndexChapters([1, 2], ['1', '2']), [], '字符串章节键也要能对齐（无谎言阳性）');
+    assert.deepEqual(ghostIndexChapters([], [1, 2]), [], '空索引不是问题（只是没建/没覆盖）');
+    assert.deepEqual(ghostIndexChapters([1, 2], []), [1, 2], '书里一章都没有时，索引里全是幽灵');
+    assert.deepEqual(ghostIndexChapters([null, 'x', 2], [2]), [], '坏数据不得让比较崩（非整数被过滤）');
+    assert.deepEqual(ghostIndexChapters(null, null), [], '缺参不抛');
+});
+
+test('health: healthIssues 把检索索引陈旧块并进全书体检（search-index-stale，含可行动指引）', () => {
+    const issues = healthIssues({
+        novel: { chapters: { 1: { title: 'a' } } },
+        indexedChapters: [1, 4],
+    });
+    assert.equal(issues.length, 1, `只报第4章幽灵块，实际：${JSON.stringify(issues)}`);
+    assert.equal(issues[0].code, 'search-index-stale');
+    assert.equal(issues[0].severity, 'warning');
+    assert.match(issues[0].where, /第4章/);
+    assert.match(issues[0].message, /repair/, '文案要给出可行动的修复入口');
+    // 默认不带 indexedChapters → 不误报（向后兼容：老调用点行为不变）
+    assert.equal(healthIssues({ novel: { chapters: { 1: {} } } }).length, 0);
+});
+
+// ── 数据格式版本锚点与迁移（lib/store.js，方向3）────────────────────────────
+
+test('store: 新书带当前 schemaVersion 锚点；migrateNovel 幂等（迁移完再跑无改动）', () => {
+    const fresh = defaultNovel({ title: '新书', genre: '悬疑' });
+    assert.equal(fresh.schemaVersion, SCHEMA_VERSION);
+    const again = migrateNovel(fresh);
+    assert.equal(again.changed, false, '新书已是当前版本，迁移应为空操作');
+    assert.equal(fresh.schemaVersion, SCHEMA_VERSION);
+});
+
+test('store: migrateNovel 把「旧书」（无 schemaVersion 的残缺结构）补齐并升到当前版本', () => {
+    // 模拟早期版本落下的 novel.json：没有 id / sessions / cast / approvals.outline
+    const legacy = { title: '旧书', genre: '玄幻', chapters: { 1: { title: 'a' } } };
+    const { changed, from, to, notes } = migrateNovel(legacy);
+    assert.equal(changed, true);
+    assert.equal(from, 0, '无版本号视为 v0');
+    assert.equal(to, SCHEMA_VERSION);
+    assert.equal(legacy.schemaVersion, SCHEMA_VERSION);
+    assert.equal(typeof legacy.id, 'string');
+    assert.ok(legacy.id.startsWith('nb_'), '旧书要补稳定 id');
+    assert.deepEqual(legacy.sessions, []);
+    assert.deepEqual(legacy.cast, []);
+    assert.deepEqual(legacy.proposals, []);
+    assert.deepEqual(legacy.gateFailures, {});
+    assert.deepEqual(legacy.approvals.outline, {}, '缺 approvals.outline 的旧书要补（否则 approve 会报错）');
+    assert.deepEqual(legacy.chapters, { 1: { title: 'a' } }, '只补结构，不动已有内容');
+    assert.ok(notes.length > 0);
+    // 幂等：对补完的书再迁移一次，应无改动
+    assert.equal(migrateNovel(legacy).changed, false);
+});
+
+test('store: migrateNovel 遇到「比自己新」的数据版本一律不动（本地降级不毁数据）', () => {
+    const future = { title: '未来书', schemaVersion: SCHEMA_VERSION + 5 };
+    const snapshot = JSON.stringify(future);
+    const { changed, from, to } = migrateNovel(future);
+    assert.equal(changed, false);
+    assert.equal(from, SCHEMA_VERSION + 5);
+    assert.equal(to, SCHEMA_VERSION + 5);
+    assert.equal(JSON.stringify(future), snapshot, '高版本数据必须原样保留');
+});
+
+// ── 会话疲劳（0.15.1）：长会话上下文堆积的首稿退化检测 ──────────────────────
+
+test('auditLine: session 字段只在给准时出现（历史行无 session 的兼容性）', () => {
+    const withS = JSON.parse(auditLine('write_chapter/saved', { chars: 2000 }, 'agent', 'sess-1'));
+    assert.equal(withS.session, 'sess-1');
+    assert.equal(withS.chars, 2000);
+    const noS = JSON.parse(auditLine('write_chapter/saved', { chars: 2000 }, 'agent'));
+    assert.equal('session' in noS, false, 'REST 面/旧形状不得带 session 键');
+});
+
+test('health: 会话疲劳——首稿退化警示优先于章数阈值，别会话/非写章行不计入', () => {
+    const lines = [
+        { session: 's1', action: 'write_chapter/rejected', chapter: 10, reason: '正文 800 字，低于下限 2000' },
+        { session: 's1', action: 'write_chapter/saved', chapter: 10, chars: 2000 },
+        { session: 's1', action: 'write_chapter/saved', chapter: 11, chars: 900 },
+        { session: 'other', action: 'write_chapter/saved', chapter: 12, chars: 2100 },
+        { session: 's1', action: 'ledger/update', chapter: 10 },
+        { noSessionAtAll: true, action: 'write_chapter/saved', chapter: 13, chars: 2050 },
+    ].map((j) => JSON.stringify(j)).join('\n');
+    const f = sessionFatigue(lines, 's1', 2100);
+    assert.equal(f.sessionChapters, 2, '只有 s1 的两个 saved 章');
+    assert.equal(f.sessionFirstAvg, 850, '首稿=每章第一次出现的行（ch10 取 rejected 的 800）');
+    assert.equal(f.baselineAvg, 2100);
+    assert.ok(f.warn.includes('低于全书基线'), '首稿退化警示优先');
+});
+
+test('health: 会话疲劳——首稿健康但连续章数超阈值，改发章数警示', () => {
+    const many = Array.from({ length: 9 }, (_, i) => JSON.stringify({
+        session: 's2', action: 'write_chapter/saved', chapter: i + 1, chars: 2100,
+    })).join('\n');
+    const f2 = sessionFatigue(many, 's2', 2100);
+    assert.equal(f2.sessionChapters, 9);
+    assert.equal(f2.sessionFirstAvg, 2100);
+    assert.ok(f2.warn.includes('连续写 9 章'), '章数阈值警示');
+    assert.equal(f2.warn.includes('低于全书基线'), false);
+});
+
+test('health: 会话疲劳——无基线/空会话不警示，bookCharBaseline 滤掉 null 残留', () => {
+    assert.equal(sessionFatigue('', 's1', 2100).sessionFirstAvg, null);
+    assert.equal(sessionFatigue('{}\n{}\n', 's1', 2100).sessionFirstAvg, null);
+    assert.equal(sessionFatigue(JSON.stringify({ session: 's1', action: 'write_chapter/saved', chapter: 1, chars: 1900 }), 's1', 0).warn, null, '无基线不判退化');
+    assert.equal(bookCharBaseline({ chapters: { 1: { chars: 2000 }, 2: { chars: 2200 }, 3: { chars: null } } }), 2100, 'NaN→null 残留被滤掉');
+    assert.equal(bookCharBaseline({ chapters: {} }), 0);
+});
+
+// ── 安全加固纯函数（CodeBuddy 审计 2026-10-09）────────────────────────────────
+
+test('security: containedBookPath 收口——只放行书内、无空洞段的相对路径', () => {
+    assert.equal(containedBookPath('书名', '书名/正文/第1章-v1.md'), '书名/正文/第1章-v1.md');
+    assert.equal(containedBookPath('书名', '别的书/novel.json'), null, '跨书拒绝');
+    assert.equal(containedBookPath('书名', '../家目录/secret'), null, '穿越拒绝');
+    assert.equal(containedBookPath('书名', '书名/../../etc/passwd'), null, '段内 .. 拒绝');
+    assert.equal(containedBookPath('书名', '/etc/passwd'), null, '绝对路径拒绝（首段非书名）');
+    assert.equal(containedBookPath('书名', '书名//x'), null, '空段拒绝');
+    assert.equal(containedBookPath('书名', ''), null);
+    assert.equal(containedBookPath('', '书名/x'), null);
+});
+
+test('security: validProposalId 白名单——合式 id 过，路径类怪值拒', () => {
+    assert.equal(validProposalId('P12-lx3k9-ab01'), true);
+    assert.equal(validProposalId('P1-k-me'), true);
+    assert.equal(validProposalId('../escape'), false);
+    assert.equal(validProposalId('a/b'), false);
+    assert.equal(validProposalId(''), false);
+    assert.equal(validProposalId(undefined), false);
+    assert.equal(validProposalId('x'.repeat(65)), false, '限长 64');
+});
