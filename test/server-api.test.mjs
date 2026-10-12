@@ -1081,24 +1081,49 @@ test('R-疲劳 详情按 ?session= 聚合首稿趋势并给交接摘要（面板
 
 // ── R-轮换：疲劳横幅一键开新会话+归档（服务端能力探测决定 501 还是 200）──
 
-test('R-轮换-0 探测器：候选名直读 + 方法面对账（只读 face 不算 create 能力）', () => {
-    const full = probeSessionCapabilities({ sessions: { create() {} }, workspace: { archiveSession() {} } });
+test('R-轮换-0 探测器：只认 fiber 交付的真名服务；浏览器面假体不算 create 能力', () => {
+    // 两条独立 fiber（lib/index.js）实际交付什么，能力就是什么。
+    const full = probeSessionCapabilities({
+        sessionController: { create() {}, list() {} },
+        workspaceController: { archiveSession() {} },
+    });
     assert.equal(full.full, true);
     assert.equal(typeof full.sessions.create, 'function');
     assert.equal(typeof full.workspace.archiveSession, 'function');
-    const readonly = probeSessionCapabilities({ sessions: { list() {}, subscribe() {} } });
-    assert.equal(readonly.full, false, '浏览器侧只读 face 没有 create，不算能力');
+
+    // ★ 真机教训（2026-10-08）：'sessions' 是浏览器面假体——它有 create，但建的是内存
+    //   session-N（宿主面板可见、磁盘无目录、工具拿不到工作区）。旧实现按候选名 peek，
+    //   假体被当成能力，"成功"开出一个不可用的会话。探测器现在根本不看它。
+    const phantom = probeSessionCapabilities({ sessions: { create() {}, list() {} } });
+    assert.equal(phantom.sessions, null, '假体 sessions 不算 create 能力');
+    assert.equal(phantom.canCreate, false, '只有假体时面板必须退回复制交接摘要');
+    assert.match(phantom.detail, /sessionController=fiber未交付/, '明细要说清「真名没交付」');
+
+    const readonly = probeSessionCapabilities({ sessionController: { list() {}, subscribe() {} } });
+    assert.equal(readonly.full, false, '只读 face 没有 create，不算能力');
     assert.equal(readonly.sessions, null);
+    assert.match(readonly.detail, /无create\[list,subscribe\]/, 'surface 要如实列出，供「宿主哪天补上」对账');
+
+    // 只交付其中一个 → 另一半自己降级（两段各自尽力）
+    const half = probeSessionCapabilities({ sessionController: { create() {} } });
+    assert.equal(half.canCreate, true);
+    assert.equal(half.full, false, '没归档通道时只算「可开新会话」');
+    assert.match(half.detail, /workspaceController=fiber未交付/);
+
     const none = probeSessionCapabilities({});
     assert.equal(none.sessions, null);
     assert.equal(none.workspace, null);
     assert.equal(none.full, false);
-    assert.match(none.detail, /不可见/, '探测明细要说清「为什么不可见」（cordis 未 inject 即不可见）');
-    // 回归钉：探测绝不允许 throw——cordis 代理对未 inject 名直接抛错（68cb694 曾借此炸掉疲劳横幅）
+    // holder 上游声明失败也要在明细里留痕，不许静默成「宿主没提供」
+    const broken = probeSessionCapabilities({ probeError: '本宿主 ctx.inject 不可用' });
+    assert.equal(broken.canCreate, false);
+    assert.match(broken.detail, /声明失败\[本宿主 ctx.inject 不可用\]/);
+
+    // 回归钉：探测绝不允许 throw——68cb694 曾借 cordis 拒绝式代理的 throw 吞掉整块疲劳横幅
     const hostile = new Proxy({}, { get(target, prop) { throw new Error(`cannot get property "${String(prop)}" without inject`); } });
     const safe = probeSessionCapabilities(hostile);
     assert.equal(safe.full, false, '对 cordis 式拒绝代理必须安全降级，不许 throw');
-    assert.match(safe.detail, /不可见/);
+    assert.equal(safe.canCreate, false);
 });
 
 test('R-轮换-1 无能力（默认桩）→ 501 SESSION_ROTATE_UNSUPPORTED 且指路复制交接', async () => {

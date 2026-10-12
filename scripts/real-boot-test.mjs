@@ -267,11 +267,59 @@ async function layerMcp() {
     }
 }
 
+// ── mount 层：真 headless profile 上插件必须照常激活 ─────────────────────
+// 事故（真机 2026-10-12）：主插件把宿主真名服务 sessionController/workspaceController
+// 写进顶层 inject，而 headless profile 没有它们 ⇒ cordis 让整个插件永远 pending，
+// 20 个 novel_* 工具 + 面板在 headless 上整块消失：
+//   dsh: warning: 1 entry did not activate
+//   dsh-novel-forge (dsh-novel-forge): pending (waiting for services: sessionController, workspaceController)
+// 这里直接用**真实的 headless profile** 复现（不模拟缺席），修完必须两条都不再出现。
+// 模型那一发可能因余额报 402——与本层无关：mount 警告在服务调用之前就打了。
+async function layerMount() {
+    console.log('\n== MOUNT 层：headless（无会话/工作区控制器）必须激活插件 ==');
+    const REAL_HEADLESS = path.join(os.homedir(), '.dsh/profiles/headless');
+    if (!fs.existsSync(REAL_HEADLESS)) { soft('本机没有 headless profile，跳过本层', false, REAL_HEADLESS); return; }
+    const dir = path.join(dshHome, 'profiles/headless');
+    fs.mkdirSync(dir, { recursive: true });
+    for (const f of ['package.json', 'cordis.yml', 'cordis.patch.yml']) {
+        const src = path.join(REAL_HEADLESS, f);
+        if (fs.existsSync(src)) fs.copyFileSync(src, path.join(dir, f));
+    }
+    fs.symlinkSync(path.join(REAL_HEADLESS, 'node_modules'), path.join(dir, 'node_modules'), 'dir');
+
+    const child = spawn(process.execPath, [DSH_BIN, '--profile', 'headless', '--json', '好'], {
+        cwd: ws,
+        env: { ...process.env, HOME: home, DSH_HOME: dshHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let all = '';
+    child.stdout.on('data', (d) => { all += d; });
+    child.stderr.on('data', (d) => { all += d; });
+    const budget = setTimeout(() => child.kill(), 120_000);
+    await new Promise((resolve) => { child.on('exit', resolve); child.on('error', resolve); });
+    clearTimeout(budget);
+
+    const noisy = all.split('\n').filter((l) => /pending|did not activate/i.test(l)).slice(0, 4).join(' ⏎ ');
+    // 前置：headless 真的起来了（打了 session 事件）。否则「没有 pending 行」是空判。
+    const booted = /\{"type":"session"/.test(all) || /Insufficient Balance|QUOTA|402/.test(all);
+    if (!check('S11a 前置：headless 容器确实完成了启动（拿到 session 事件或走到模型调用）', booted,
+        all.split('\n').slice(0, 4).join(' ⏎ '))) {
+        return;
+    }
+    // 只判「本插件有没有被牵连」——别的条目因被删而 pending 是正常形态，不许断成
+    // 「日志里一个 pending 都不许出现」（那会钉死宿主其它插件的可选依赖）。
+    check('S11b 缺席控制器不再挂起主插件（本插件的 pending 行必须消失）',
+        !/dsh-novel-forge[^\n]*pending/i.test(all), noisy);
+    soft('S11c 本层留痕（模型侧余额/鉴权故障与本层无关）', true,
+        all.split('\n').filter((l) => /QUOTA|Balance|401|402/i.test(l)).slice(0, 1).join(' '));
+}
+
 // ── 汇总 ────────────────────────────────────────────────────────────────
 if (!fs.existsSync(DSH_BIN)) { console.error(`找不到 dsh 入口：${DSH_BIN}（可用 DSH_BIN 覆盖）`); process.exit(2); }
 try {
     if (LAYER === 'web' || LAYER === 'all') await layerWeb();
     if (LAYER === 'mcp' || LAYER === 'all') await layerMcp();
+    if (LAYER === 'mount' || LAYER === 'all') await layerMount();
 } finally {
     if (!KEEP) fs.rmSync(base, { recursive: true, force: true });
     else console.log(`\n(--keep) 现场保留在 ${base}`);
