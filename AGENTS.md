@@ -14,7 +14,10 @@ DSH（DeepSeek Harness）小说创作插件。设计主线：**代码强制 > �
      （与 preset 部署同类：工作区之外的基础设施，`import.meta.url` 定位安装目录）；
    - `lib/index-store.js` 的 **sqlite 派生索引**（`书/.novel/index.db` 二进制文件无法走文本
      fs 通道；落盘路径必须经 `io.abs()` → `ctx.fs.resolve` 取得，容器防护不绕过）。
-     search 工具、`novel_project repair`、REST `/continuity` 三处共用此收口，禁止各自再拼路径；
+     search 工具、写章提交链的**自动续索引**、`novel_project repair`、REST `/continuity`
+     与简报的只读探测共用此收口（建索引逻辑同样只有 `indexStore.indexChapters` 一份），
+     禁止各自再拼路径或抄第二份 build——抄出来的那份一定在「标签保留 / 越书路径 /
+     全量才清删章块」三条保护上漂移；
    - `lib/mcp-standalone.js` / `lib/server-api.js` 的**非宿主通道**（node:fs 后端 / REST 数据面），
      必须自带与宿主同语义的 containment 与版本守卫。
 2. **纯逻辑与 io 分离**：`lib/{noai,ledger,gate,versioning,audit,contextpack}.js` 必须保持

@@ -645,6 +645,47 @@ test('batch-draft: runDraftBatch 并发生成、串行提交；失败不整批�
     assert.match(auditText, /write_chapter\/saved/);
 });
 
+test('★ batch-draft: 会话纪律段不进起草提示词（旁路引擎没有 novel_* 工具可调，也不会向用户汇报）', async () => {
+    // 真跑一遍批量起草，抓**实际发给引擎的提示词**——不是 grep 源码。
+    // 「每一步直接发起调用」这类话对会话执笔人是纪律，对单次补全的起草引擎是诱导：
+    // 它的系统提示第 1 条就是「只输出正文，不要任何解释/前言」。
+    const book = '受众门控书';
+    const files = {
+        [`${book}/novel.json`]: JSON.stringify({
+            title: book, genre: '仙侠', logline: '', stage: 'chapter', phases: {},
+            approvals: { outline: { 1: true } },
+            chapters: {}, cast: [], gateFailures: {},
+            // 有 pending 提案——正是要验证「待批提案」段不会被拼进批量提示词（引擎不做交付汇报）
+            proposals: [{ id: 'P1-x', chapter: 1, status: 'pending' }],
+        }),
+        [`${book}/大纲/细纲/第1章.md`]: '# 第1章 雪夜\n\n- 码头相遇：她在雾里认出暗号。',
+    };
+    const io = memIo(files);
+    const prompts = [];
+    const engine = {
+        async run(_channel, { prompt }) {
+            prompts.push(prompt);
+            return {
+                ok: true, finishKind: 'stop', attempts: 1,
+                route: { provider: 'p', model: 'm', source: 'default' },
+                text: CHAPTER_TEXTS[1],
+            };
+        },
+    };
+    await runDraftBatch({
+        engine, config: TEST_CFG, io, p: pathsFor(book), book,
+        novel: JSON.parse(files[`${book}/novel.json`]), from: 1, count: 1, concurrency: 1,
+    });
+    assert.equal(prompts.length, 1, '一章一次起草调用');
+    const prompt = prompts[0];
+    for (const name of ['待批提案（唯一真相）', '交付纪律（收尾怎么走）', '输出预算纪律（回合怎么开）']) {
+        assert.ok(!prompt.includes(name), `「${name}」是给会话执笔人的纪律，不该出现在批量起草提示词里`);
+    }
+    assert.ok(!prompt.includes('禁止调用宿主 present'), 'present 禁令同样不该出现（起草引擎不负责交付）');
+    assert.ok(prompt.includes('本章字数目标'), '写作规格（字数/段落）对两条路径都有效，必须留在提示词里');
+    assert.ok(prompt.includes('【第 1 章 · 写前简报】'), '上下文包本体照旧注入（门控只关纪律段，不关前文）');
+});
+
 test('batch-draft: 没有场景契约时把并发压回 1（上下文预算 ×N 的刹车）', async () => {
     const book = '无契约书';
     const files = {
