@@ -1358,6 +1358,21 @@ test('★ 检索命中的输出必须过宿主真校验器（未打标块不得�
     assert.ok(v.hits.every((h) => Number.isFinite(h.score) && Number.isFinite(h.hitRatio)
         && !Object.is(h.score, -0) && !Object.is(h.hitRatio, -0)),
         'score / hitRatio 必须是 JSON 安全的有限数（-0 也不行：宿主按 JSON 规范拒收）');
+
+    // 同族第三处：library analyze 的数值输出直接进工具结果（round 曾是半颗雷——
+    // 有 finite 守卫、没 -0 归一；修正后与 style/audit 一样统一走 json-numbers 的
+    // finiteOr）。analyze 走书库独立命名空间，不碰上面的书。铸类收口必须过宿主真校验器。
+    const library = tool('novel_library');
+    await library.execute({
+        action: 'import', title: '校验书库书',
+        text: '第1章 起\n他推门进来。"来了？"她没有回头。\n\n第2章 承\n门外没有脚步声。灯自己灭了一盏。',
+    }, exec);
+    const an = await library.execute({ action: 'analyze', title: '校验书库书' }, exec);
+    assert.deepEqual(validateJsonSchemaValue(library.output.schema, an), [],
+        'library analyze 的数值输出必须过宿主真校验器（round 的 -0 半守卫就在这条路径上）');
+    // 清场：书库索引是本文件共享夹具，后面的 G2 用例断言「书库初始为空」——
+    // 自己的夹具自己收（delete 只移索引不删原文；这条纪律在用例顺序上踩过一次）。
+    await library.execute({ action: 'delete', title: '校验书库书' }, exec);
 });
 
 // 纪律让模型「用 novel_search 摘录代替整章 read」，但这句只在索引跟得上时成立：
