@@ -11,7 +11,8 @@
 set -uo pipefail
 
 SRC="/Users/huangshengju/Documents/novel/开局觉醒加特林"
-BK="/Users/huangshengju/Documents/other/dsh-novel-forge/真机测试备份"
+REPO="/Users/huangshengju/Documents/other/dsh-novel-forge"
+BK="$REPO/真机测试备份"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 ROOT="$BK/ws-$STAMP"
 OUT="$BK/headless-events-$STAMP.jsonl"
@@ -25,7 +26,33 @@ const j=require('$ROOT/开局觉醒加特林/novel.json');console.log(Object.key
 
 export PATH=/Users/huangshengju/.npm-global/bin:$PATH
 cd "$ROOT"
-dsh --profile headless --json \
+# --patch：给 headless 补 arkcoding 路由（不给 providers 就没有 openai-completions
+# 适配器，光切默认模型必报 NO_ADAPTER；不给 patch 则走默认 deepseek-official —— 那把
+# 凭据没余额，就是之前 402 的真来源）。见 scripts/arkc-headless.patch.yml。
+dsh --profile headless --patch "$REPO/scripts/arkc-headless.patch.yml" --json \
   "继续写《开局觉醒加特林》的第 102 章。按小说锻炉的工作流走完再落盘：novel_project status 看清进度 → novel_outline save_chapter 写第102章细纲（含「## 本章必写场景」与「## 本章禁止偏离项」）→ novel_outline approve → novel_scene save 声明本章出场人物 → novel_briefing 拿上下文包 → 按细纲成稿后 novel_write_chapter 落盘（正文 2000-4000 字，带上 summary 与 facts_updates）。只写这一章，写完停下汇报本章要点和下一章建议。" \
   > "$OUT" 2> "$ERR"
 echo "[done] exit=$? 事件 $(wc -l < "$OUT") 行 / stderr $(wc -l < "$ERR") 行 → $OUT"
+
+# ── 用量与行为读取 ────────────────────────────────────────────────────────
+# 数据源就是本次的 --json 事件流（step_end 带 usage、tool_call/tool_result 带工具轨迹），
+# 不去猜 ~/.dsh/sessions 下哪个分组是本次的（猜错就采样 0 条、把成功的跑读成空表）。
+# 要看**未截断**的工具出入参（事件流对大结果打 truncated:true，简报正文只剩前 ~3k 字），
+# 走会话持久化取证：node scripts/read-turn-usage.mjs ~/.dsh/sessions/<cwd 分组>
+node -e "
+import('node:fs').then(({default:fs})=>{
+  const evs=fs.readFileSync(process.argv[1],'utf8').trim().split('\n').map(l=>{try{return JSON.parse(l)}catch{return null}}).filter(Boolean);
+  const u=evs.filter(e=>e.phase==='step_end').map(e=>e.usage).filter(Boolean);
+  const ctx=(x)=>(x.cacheReadTokens??0)+(x.inputTokens??0);
+  const reads=evs.filter(e=>['read','grep','glob'].includes(e.tool)).length;
+  const rej=evs.filter(e=>String(e.result??'').includes('invalid output')).length;
+  const search=evs.filter(e=>e.tool==='novel_search').length;
+  console.log('[usage] 步数 '+u.length
+    +' | 峰值上下文 '+(u.length?Math.max(...u.map(ctx)):'-')
+    +' | completion 峰值 '+(u.length?Math.max(...u.map(x=>x.outputTokens??0)):'-'));
+  console.log('[行为] 宿主 read/grep/glob '+reads+' 次（0 = 没退回去捞原文） | 检索调用 '+search+' 次 | 工具被宿主拒收 '+rej+' 次');
+  const w=evs.filter(e=>e.tool==='novel_write_chapter').length;
+  console.log('[落盘] novel_write_chapter 尝试 '+w+' 次');
+});
+" "$OUT"
+
