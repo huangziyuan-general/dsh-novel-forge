@@ -1587,6 +1587,52 @@ test('真机数据探针：磁盘上的书包里有含换行的梗概时，压�
     console.log(`  （真机探针：${checked} 本书，其中 ${withNewline} 本的梗概含换行）`);
 });
 
+test('★ 衔接保留额：卡片/基因卡/世界书/锚段再挤，也不许吃掉上一章结尾与摘要窗口', async () => {
+    // 复刻真机形状（《开局觉醒加特林》101 章 / 第 102 章 / budget=6000）：
+    // 7 人物卡 + 7 语言基因卡 + 12 条世界书 + 30 行账本 + 上一章结尾 + 101 条摘要。
+    // 旧分配下 room 只剩 ≈113 字 → 衔接整块消失，简报当面写着「因预算丢弃：上一章结尾」，
+    // 模型只能自己 grep/read 整章捞前文（真机同一发会话上下文 1.7 万 → 10 万+）。
+    const { buildContextPack } = await import('../lib/contextpack.js');
+    const pack = buildContextPack({
+        chapter: 102,
+        chapterOutline: '本章细纲：' + '细'.repeat(900),
+        promise: '承诺书：' + '诺'.repeat(500),
+        castCards: Array.from({ length: 7 }, (_, i) => ({ name: `人物${i + 1}`, card: '卡'.repeat(400) })),
+        voiceCards: Array.from({ length: 7 }, (_, i) => ({ name: `人物${i + 1}`, card: '声'.repeat(200) })),
+        worldEntries: Array.from({ length: 12 }, (_, i) => ({ id: `W${i + 1}`, content: '设定'.repeat(200) })),
+        factsDigest: Array.from({ length: 30 }, (_, i) => `实体${i}·键: 值（第${i + 1}章起）`),
+        prevTail: '结尾' .repeat(600),
+        anchors: [{ kind: 'dialogue', para: '「台词」' + '样'.repeat(200) }, { kind: 'narrative', para: '样'.repeat(200) }],
+        summaries: Array.from({ length: 101 }, (_, i) => `第${i + 1}章《章${i + 1}》：${'梗概'.repeat(60)}`),
+        bookOutline: '大纲'.repeat(700),
+        budget: 6000,
+    });
+    const has = (prefix) => pack.sections.some((s) => String(s.name).startsWith(prefix));
+    const sum = pack.sections.find((s) => String(s.name).startsWith('前文章节摘要'));
+
+    assert.ok(has('上一章结尾'), '★ 上一章结尾必须在场——它没有任何别的获取路径');
+    assert.ok(sum, '★ 摘要窗口必须在场——它是「用摘录代替整章 read」的供给侧');
+    assert.ok(sum.content.includes('第101章'), '最近一章绝不许被弹性区块挤掉');
+    assert.ok(has('本章细纲'), '保留额不得反过来吃掉最高优先级的细纲');
+    assert.ok(has('事实账本'), '账本属硬需求，同不受保留额影响');
+    // 挤掉的必须是弹性区块，且**如实登记**（无声丢衔接才是最坏形态）
+    assert.ok(pack.dropped.some((d) => String(d).startsWith('世界书')), '挤不动时先裁世界书这类可再得条目');
+    assert.ok(pack.dropped.every((d) => !String(d).startsWith('上一章结尾')
+        && !String(d).startsWith('前文章节摘要')), 'dropped 里绝不许出现衔接两件套');
+    assert.ok(pack.sections.reduce((a, s) => a + s.content.length + s.name.length + 4, 0) <= 6000
+        + 200, '总占用不得越过预算（保留额是重分配，不是加预算）');
+
+    // 小预算下限：保留额取 budget/3，不许把弹性区压成 0 后只剩衔接一组
+    const tiny = buildContextPack({
+        chapter: 3, prevTail: '尾'.repeat(600),
+        summaries: ['第1章《a》：一', '第2章《b》：二'],
+        castCards: [{ name: '甲', card: '卡'.repeat(400) }],
+        budget: 900,
+    });
+    assert.ok(tiny.sections.length > 0, '小预算下仍要出内容');
+    assert.ok(tiny.sections.some((s) => String(s.name).startsWith('人物卡')), 'elasticCeil=budget-reserve(=600) 仍容得下一张卡');
+});
+
 test('★ 会话纪律段只给会话，不给批量起草（受众门控）', async () => {
     const { buildBriefing } = await import('../lib/briefing.js');
     const io = { readText: async () => '', readJson: async () => null, listDir: async () => [] };

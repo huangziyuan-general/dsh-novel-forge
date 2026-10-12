@@ -1312,7 +1312,54 @@ test('★ G1 长篇检索：build 建索引 → query 按记忆碎片找回 → 
     assert.equal(st.chunks, before);
 });
 
-// ── 索引自动续建（建议#4）：把「回溯用摘录」的前提变成代码强制 ──────────────
+// 真机事故（2026-10-12，headless 写章会话）：`novel_search query` 每次都
+// `returned invalid output: "value.hits[0].tags" must be a string` —— 未打标块的 tags
+// 归一成 null 后被 spread 带进输出，宿主 lossless 校验整次拒收。后果不是"报错"这么简单：
+// 简报与纪律都写着「回溯用 novel_search 摘录」，这条路一调就断，模型只能退回整章 read
+// （in_tok 爆掉的那条路）。所以这里用**宿主真校验器**过一遍带命中的 query 输出。
+test('★ 检索命中的输出必须过宿主真校验器（未打标块不得带 tags:null）', async () => {
+    const { validateJsonSchemaValue } = await import('@deepseek-ai/dsh-tools');
+    const project = tool('novel_project');
+    const outline = tool('novel_outline');
+    const write = tool('novel_write_chapter');
+    const search = tool('novel_search');
+    // 自带夹具：不依赖别的小用例建过的书（用例顺序一改就互相踩，本文件末尾就有过这种事故）
+    const BOOK = '检索校验书';
+    await project.execute({ action: 'init', book: BOOK, title: BOOK }, exec);
+    await outline.execute({ action: 'save_chapter', book: BOOK, chapter: 1, outline: '## 本章必写场景\n1. 码头斗笠\n' }, exec);
+    await outline.execute({ action: 'approve', book: BOOK, chapter: 1 }, exec);
+    await write.execute({ book: BOOK, chapter: 1, title: '码头', summary: '周砚夜会斗笠人', cast: '周砚', content: [
+        '周砚把斗笠的系带解开，随手搁在码头的石阶上。风灯在桅杆之间摇晃，把江面照成一条条抖动的碎金。他数着远处的更鼓，一声，两声，直到夜风把他的衣角掀起来，又落下。',
+        '他等的人没有来。倒是江心有艘乌篷船悄悄靠了岸，船头立着个戴斗笠的身影，一动不动地望了他许久，像是在确认什么。岸上的纤夫收工了，绳索在石桩上勒出细响。',
+        '「你是周砚？」那人终于开口。周砚没有应声，只是把袖中的短刃往里收了半寸。脚下的石阶被夜露浸得发滑，他退半步，靴底碾过一粒碎石。',
+        '他把斗笠檐往下压了压，遮住半张脸。江风穿过桅杆，带起一阵铁锈味，那是上游船坞里新补的船板在滴桐油。远处有狗吠，吠了两声，很快又停了。',
+        '他忽然想起师父临走前那句没头没尾的话，说这一带的水底下埋着不该埋的东西。那时他只当是醉话，如今站在码头上，竟也觉着江风里带着一股散不去的腥气。',
+    ].join('\n\n') }, exec);
+
+    const built = await search.execute({ action: 'build', book: BOOK }, exec);
+    if (built.degraded) { console.log('  （本运行时无 sqlite，跳过真校验器用例）'); return; }
+    const v = await search.execute({ action: 'query', book: BOOK, q: '戴斗笠的人' }, exec);
+    assert.ok(v.hits.length > 0, '前置：必须拿到非空命中（空命中测不到这条 bug）');
+    const violations = validateJsonSchemaValue(search.output.schema, v);
+    assert.deepEqual(violations, [],
+        `query 输出被宿主校验器判违规：${violations.join('；')}`
+        + `｜hits 数=${v.hits.length}`
+        + `｜score 各条=${v.hits.map((h) => `${String(h.score)}:${Number.isFinite(h.score)}`).join(' , ')}`
+        + `｜hitRatio 各条=${v.hits.map((h) => `${String(h.hitRatio)}:${Number.isFinite(h.hitRatio)}`).join(' , ')}`);
+    // 没打过标 → mode 必须是 lexical（旧实现把 null 当「有标签」，谎报 hybrid）
+    assert.equal(v.mode, 'lexical', '未打标块不得让 mode 谎报 hybrid');
+    assert.ok(v.hits.every((h) => h.tags === undefined), 'hits 里要么带非空 string 标签，要么根本没这个键');
+    // 同族雷（用例跑出来才发现的）：bm25 能给 ±Infinity、空分母能给 NaN，
+    // 宿主一律判 "must be a finite JSON number" 整次拒收——纯符号查询必须给干净的空结果。
+    const symbolOnly = await search.execute({ action: 'query', book: BOOK, q: '！！！' }, exec);
+    assert.ok(Array.isArray(symbolOnly.hits), '纯符号查询必须返回结构化结果');
+    assert.deepEqual(validateJsonSchemaValue(search.output.schema, symbolOnly), [],
+        '纯符号查询的输出不得被宿主校验器判违规');
+    assert.ok(v.hits.every((h) => Number.isFinite(h.score) && Number.isFinite(h.hitRatio)
+        && !Object.is(h.score, -0) && !Object.is(h.hitRatio, -0)),
+        'score / hitRatio 必须是 JSON 安全的有限数（-0 也不行：宿主按 JSON 规范拒收）');
+});
+
 // 纪律让模型「用 novel_search 摘录代替整章 read」，但这句只在索引跟得上时成立：
 // 索引缺章 → 召不回 → 模型退回捞正文（真机 in_tok 13 万级就是这么来的）。
 // 所以写章落盘后自动增量建索引，简报再把「落后多少章」如实说出来。
