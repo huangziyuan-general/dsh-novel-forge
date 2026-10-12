@@ -1,0 +1,29 @@
+# scripts/arkc-headless.patch.yml —— 给 headless profile 补 arkcoding 路由（覆盖层，不改用户 profile）
+#
+# 为什么要它（真机实证 2026-10-12）：headless 的组合树里 `llm-pi-ai` 插件**是加载了的**，
+# 但没有任何 config —— 没有 providers，就没有 arkcoding 这个提供方；真正的
+# openai-completions 适配器要由 providers 配置注册。所以只把默认模型改成
+# arkcoding/ark-code-latest 必炸 `NO_ADAPTER: no adapter registered for provider "arkcoding"`。
+# （顺带解释之前的 402：headless 默认走 provider: deepseek-official，那把凭据没余额。）
+#
+# 形状抄自 ~/.dsh/profiles/web/cordis.patch.yml 的同名条目——web 能跑 arkcoding 就是靠它。
+# 凭据**不落在这里**：只写 apiKeyEnv 指向宿主凭据库 ~/.dsh/.credentials.yaml 的键名。
+#
+# 用法：dsh --profile headless --patch scripts/arkc-headless.patch.yml --json "…"
+- id: llm-pi-ai
+  name: '@deepseek-ai/dsh-llm-pi-ai'
+  config:
+    providers:
+      arkcoding:
+        apiKeyEnv: ARKCODING_API_KEY
+        api: openai-completions
+        baseURL: https://ark.cn-beijing.volces.com/api/coding/v3
+        models:
+          - id: ark-code-latest
+            name: ark-code-latest
+
+- id: agent-default-model
+  name: '@deepseek-ai/dsh-agent-default-model'
+  config:
+    provider: arkcoding
+    model: ark-code-latest
