@@ -134,6 +134,14 @@ function tool(name) {
     return t;
 }
 
+/** 书级细纲契约段策略开关：绝大多数用例不关心细纲格式，打 warn 保持自由文本细纲可用。 */
+async function setOutlineContract(book, mode) {
+    const meta = path.join(root, book, 'novel.json');
+    const j = JSON.parse(fs.readFileSync(meta, 'utf8'));
+    j.outlineContract = mode;
+    fs.writeFileSync(meta, JSON.stringify(j));
+}
+
 const GOOD_CHAPTER = [
     '林晚把最后一枚铜钱按进香炉，灰烬腾起来，呛得她直咳嗽。三日没扫的供桌上，那只缺了口的粗瓷碗还在原处。',
     '',
@@ -236,6 +244,7 @@ test('链路：init → 大纲 → 人物 → 世界书 → 细纲批准', async
         { action: 'init', book: '星海拾骨', title: '星海拾骨', genre: '东方玄幻', logline: '捡骨人逆改星图' }, exec,
     );
     assert.equal(r1.action, 'init');
+    await setOutlineContract('星海拾骨', 'warn'); // 本链路用例不关心细纲格式
     assert.ok(fs.existsSync(path.join(root, '星海拾骨', 'novel.json')));
 
     await assert.rejects(
@@ -643,6 +652,7 @@ test('输出契约：可选字段缺省时省略键，真校验器对真实返�
 
     // 新书第 1 章 + 无钩子正文：同时触发 repetition.chapter 与 endingHook.kind 的缺省路径
     await tool('novel_project').execute({ action: 'init', book: '契约楼', title: '契约楼', genre: '悬疑' }, exec);
+    await setOutlineContract('契约楼', 'warn');
     await tool('novel_outline').execute({ action: 'save_chapter', book: '契约楼', chapter: 1, outline: '第1章：白日盘点义庄。出场：林晚。' }, exec);
     await tool('novel_outline').execute({ action: 'approve', book: '契约楼', chapter: 1 }, exec);
     const w = await tool('novel_write_chapter').execute({
@@ -671,6 +681,7 @@ test('输出契约：可选字段缺省时省略键，真校验器对真实返�
 
 test('克隆回归：未批准细纲一并复制，新书 approve 不再 TypeError', async () => {
     // 拾骨记：先存一章「只保存未批准」的细纲，再克隆
+    await setOutlineContract('拾骨记', 'warn'); // 本用例只关心克隆机制，不关心细纲格式
     await tool('novel_outline').execute({ action: 'save_chapter', book: '拾骨记', chapter: 9, outline: '第9章：尚未批准的细纲。' }, exec);
     await tool('novel_clone_project').execute({ from_book: '拾骨记', new_book: '拾骨记-塞北版' }, exec);
     assert.ok(
@@ -679,6 +690,7 @@ test('克隆回归：未批准细纲一并复制，新书 approve 不再 TypeErr
     );
     const cm = JSON.parse(fs.readFileSync(path.join(root, '拾骨记-塞北版', 'novel.json'), 'utf8'));
     assert.deepEqual(cm.approvals, { outline: {} }, '克隆产物的 approvals 必须与 defaultNovel 同形');
+    assert.equal(cm.outlineContract, 'strict', '★ 克隆书按新书对待：续写的新章细纲必须带契约段');
     const ra = await tool('novel_outline').execute({ action: 'approve', book: '拾骨记-塞北版', chapter: 9 }, exec);
     assert.equal(ra.approved, true, '克隆出的书必须能正常 approve（不再 TypeError）');
 });
@@ -839,6 +851,7 @@ test('★ 内容门禁：死人复活阻断落盘；force 放行记审计；chec
     assert.equal(hasSdk, true, '缺宿主 SDK symlink：先 npm run setup-dev');
     const project = tool('novel_project');
     await project.execute({ action: 'init', book: '门禁测试书', title: '门禁测试书' }, exec);
+    await setOutlineContract('门禁测试书', 'warn');
 
     await tool('novel_outline').execute(
         { action: 'save_chapter', book: '门禁测试书', chapter: 1, outline: '第1章：河滩。赵擎重伤垂死。出场：林晚、赵擎。' }, exec,
@@ -886,6 +899,7 @@ test('★ 内容门禁：死人复活阻断落盘；force 放行记审计；chec
 test('★ 追读铁律：到期伏笔零回应却开新钩 → 内容门禁阻断', async () => {
     const project = tool('novel_project');
     await project.execute({ action: 'init', book: '追读测试书', title: '追读测试书' }, exec);
+    await setOutlineContract('追读测试书', 'warn');
     // 第1章埋一个「预计第2章回收」的伏笔
     await tool('novel_ledger').execute({
         action: 'foreshadow_setup', book: '追读测试书', chapter: 1, setup: '断刃的下落', plan: 2,
@@ -1014,6 +1028,35 @@ test('★ B3 场景契约：隐藏人物不进上下文，写进正文被内容�
     assert.ok(auditLog.includes('gate_forced'), '细纲禁项 force 也要留痕');
 });
 
+test('★ P2-2 场景契约跨章提醒：save_chapter 带出上一章禁项（《遗物手账》监控：不提醒就靠模型自觉记）', async () => {
+    const project = tool('novel_project');
+    const scene = tool('novel_scene');
+    const outline = tool('novel_outline');
+
+    await project.execute({ action: 'init', book: '遗物手账', title: '遗物手账', genre: '悬疑' }, exec);
+    await scene.execute({
+        action: 'save', book: '遗物手账', chapter: 1, scene: '雨夜收殓',
+        participants: '陈鹤年,陈嘉树', forbidden: '现代词汇,手机', hidden: '写账人',
+        notes: '写账人的身份本章不揭',
+    }, exec);
+
+    // 第 2 章 save_chapter → 结果必须带上一章契约提醒（schema 已同步 note 字段）
+    const r2 = await outline.execute({
+        action: 'save_chapter', book: '遗物手账', chapter: 2,
+        outline: '## 本章必写场景\n1. 账页核对：陈嘉树逐页比对笔迹\n2. 夜访：陈鹤年收到字条\n\n## 本章禁止偏离项\n- 不得让写账人现身\n',
+    }, exec);
+    assert.ok(typeof r2.note === 'string' && r2.note.includes('第1章'), '★ save_chapter 必须带上一章契约提醒');
+    assert.ok(r2.note.includes('现代词汇') && r2.note.includes('写账人'), '禁项与隐藏人物都要点名');
+    assert.ok(r2.note.includes('不会自动延续'), '提醒要说清「延续则重申、解除则放行」的显式决定');
+
+    // 第 1 章 save_chapter（无上一章契约）→ 不打扰
+    const r1 = await outline.execute({
+        action: 'save_chapter', book: '遗物手账', chapter: 1,
+        outline: '## 本章必写场景\n1. 雨夜收殓：无名尸体进门\n2. 账本初现：陈鹤年记账\n',
+    }, exec);
+    assert.equal(r1.note, undefined, '第 1 章没有上一章契约，不得造出提醒');
+});
+
 test('★ A3/A4 细纲禁项：命中即拒绝落盘（判定权归代码）', async () => {
     const outline = tool('novel_outline');
     const write = tool('novel_write_chapter');
@@ -1060,9 +1103,31 @@ test('★ 细纲门禁前移（真机配置）：场景数连下限都撑不到 
     const ok = await outline2.execute({ action: 'save_chapter', book: '细纲容量书', chapter: 1, outline: `${enough}\n` }, exec);
     assert.equal(ok.action, 'save_chapter');
 
-    // 没写场景段的自由文本细纲不受影响（老书兼容：不判、不阻断）
+    // strict 下：无段自由文本直接驳回（容量门禁/契约指标不能被静默旁路）
+    await assert.rejects(
+        () => outline2.execute({ action: 'save_chapter', book: '细纲容量书', chapter: 2, outline: '第2章：来客。出场：林晚。' }, exec),
+        /outlineContract=strict：细纲必须带/,
+    );
+
+    // strict 下「有段但解析不出条目」（空段）：格式教学驳回。注意散文行会被 parseScenes
+    // 当成 1 个「场景」（标题=整行），真机配置下会先被容量门禁接住（480 < 2000）——
+    // 两条防线各管一段，这里用低下限书覆盖格式教学分支。
+    await tool('novel_project').execute({ action: 'init', book: '契约段格式书', title: '契约段格式书' }, exec);
+    await assert.rejects(
+        () => tool('novel_outline').execute({
+            action: 'save_chapter', book: '契约段格式书', chapter: 1,
+            outline: '## 本章必写场景\n\n',
+        }, exec),
+        /解析不出条目/,
+    );
+
+    // warn 档（存量旧书缺省）：自由文本不拒稿，但 note 指路 + 审计留痕
+    await setOutlineContract('细纲容量书', 'warn');
     const free = await outline2.execute({ action: 'save_chapter', book: '细纲容量书', chapter: 2, outline: '第2章：来客。出场：林晚。' }, exec);
     assert.equal(free.chapter, 2);
+    assert.match(free.note ?? '', /建议补一段/, 'warn 档要告诉模型为什么补段');
+    const auditText = fs.readFileSync(path.join(root, '细纲容量书', '.novel', 'audit.jsonl'), 'utf8');
+    assert.ok(auditText.includes('outline/no_contract_section'), 'warn 档留痕：无段保存必须进审计');
 });
 
 test('★ E3 语言基因卡：建卡单独注入；角色说了自己的禁忌词被抓出', async () => {
@@ -1176,6 +1241,9 @@ test('★ E2 熔断：同章连续被驳回 3 次即拒写；重批细纲可解�
     const m2 = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
     assert.equal(m2.stage, 'topic', '熔断期间阶段没有推进');
     assert.equal(m2.chapters['1'], undefined, '熔断期间没有落盘任何正文');
+
+    // 解耦验证：熔断不认 force——即便 force:true 也照样拒写（墨骨录教训：force 反复硬写绕过熔断）
+    await assert.rejects(() => write.execute({ ...args, force: true }, exec), /熔断/, '★ 熔断不认 force：force:true 也照样拒写');
 
     // 解除通道：重批细纲（去掉禁项）→ 计数清零 → 写得进去
     await outline.execute({
@@ -1708,6 +1776,7 @@ const AUDIT_CHAPTER = [
 test('★ 落盘成功后的 saved 审计写失败：整章不得被报成失败（假阴性会诱导出重复版本）', async () => {
     const B = '审计断链书';
     await tool('novel_project').execute({ action: 'init', book: B, title: B, genre: '悬疑', logline: '族谱少了一行' }, exec);
+    await setOutlineContract(B, 'warn'); // 本用例只关心审计断链，不关心细纲格式
     await tool('novel_outline').execute({
         action: 'save_chapter', book: B, chapter: 1,
         outline: '第1章：祠堂对账。出场：沈砚。事件：族谱第七行被撕走（伏笔：河滩青泥）。',
@@ -1816,6 +1885,7 @@ test('★ 孤儿清单：数组给全量，next 只列前 20 且不教用户 rm'
 test('★ 方向1 进度卡：novel_write_chapter 现算章数/账本/伏笔/待批提案（汇报走代码强制）', async () => {
     const B = '进度卡书';
     await tool('novel_project').execute({ action: 'init', book: B, title: B, genre: '悬疑' }, exec);
+    await setOutlineContract(B, 'warn'); // 本用例只关心进度卡，不关心细纲格式
     await tool('novel_outline').execute({ action: 'save_chapter', book: B, chapter: 1, outline: '第1章：义庄盘点。出场：林晚。' }, exec);
     await tool('novel_outline').execute({ action: 'approve', book: B, chapter: 1 }, exec);
     const w = await tool('novel_write_chapter').execute({
@@ -2023,4 +2093,46 @@ test('★ 路径收口：rec.path 指向书目录外时工具面拒读，repair 
     assert.equal(after.chapters['1'].path, '污染书/正文/第1章-旧版-v1.md', '当前正文回落到书内最后一个可达版本');
     assert.ok(fs.existsSync(secretPath), '对账清的是索引引用，不碰别人的文件');
     assert.equal(fs.readFileSync(secretPath, 'utf8'), '机密内容-绝不应出现在任何工具输出里');
+});
+
+// ── 熔断解除通道：须真实改动才清零（开局觉醒加特林实证的「approve+scene/save 续命」）──
+
+test('★ 熔断解除通道：改了才清零；原样重存/零改动重批不清零且给警告', async () => {
+    const B = '熔断通道书';
+    await tool('novel_project').execute({ action: 'init', book: B, title: B }, exec);
+    const meta = path.join(root, B, 'novel.json');
+    const trip = () => {
+        const j = JSON.parse(fs.readFileSync(meta, 'utf8'));
+        j.gateFailures = { 3: 3, '3:last': { code: 'audit', detail: '字数不足', at: 't0' } };
+        fs.writeFileSync(meta, JSON.stringify(j));
+    };
+    const count = () => JSON.parse(fs.readFileSync(meta, 'utf8')).gateFailures?.['3'] ?? 0;
+
+    // 细纲通道（strict 书：细纲带契约段）
+    await tool('novel_outline').execute(
+        { action: 'save_chapter', book: B, chapter: 3, outline: '## 本章必写场景\n- 灯楼对账：林晚核对账册，发现缺页（伏笔：缺页去向）\n- 夜变收束：对质后收在钩子' }, exec,
+    );
+    trip();
+    const a1 = await tool('novel_outline').execute({ action: 'approve', book: B, chapter: 3 }, exec);
+    assert.equal(count(), 3, '细纲一字未改，approve 不得清零熔断（否则解除通道＝一调用续命按钮）');
+    assert.match(a1.note ?? '', /熔断未解除/, '要明确告诉模型为什么没解除');
+    await tool('novel_outline').execute(
+        { action: 'save_chapter', book: B, chapter: 3, outline: '## 本章必写场景\n- 灯楼对账（改稿）：林晚核对账册发现缺页，更夫作证补出页去向\n- 夜变重收：对质后收在钩子' }, exec,
+    );
+    const a2 = await tool('novel_outline').execute({ action: 'approve', book: B, chapter: 3 }, exec);
+    assert.equal(count(), 0, '细纲真改后重批 → 清零');
+    assert.equal(a2.note, undefined, '正常重批不带警告');
+
+    // 场景契约通道
+    trip();
+    const sceneArgs = { action: 'save', book: B, chapter: 3, participants: '林晚', forbidden: '现代词汇' };
+    await tool('novel_scene').execute(sceneArgs, exec);
+    assert.equal(count(), 0, '首次 save（此前无契约）＝有变化 → 清零');
+    trip();
+    const s2 = await tool('novel_scene').execute(sceneArgs, exec);
+    assert.equal(count(), 3, '原样重存（语义指纹相同）不清零');
+    assert.ok((s2.warnings ?? []).some((w) => w.includes('熔断未解除')), '原样重存要警告并指路');
+    const s3 = await tool('novel_scene').execute({ ...sceneArgs, forbidden: '现代词汇,储物戒指' }, exec);
+    assert.equal(count(), 0, '契约真改 → 清零');
+    assert.equal(s3.warnings?.length ?? 0, 0, '真改的正常路径不带警告');
 });

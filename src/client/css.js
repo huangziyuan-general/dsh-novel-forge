@@ -68,6 +68,24 @@ export function buildCss() {
 	return [
 		`/* dsh-novel-forge 面板交互态（由 src/client/css.js 生成，勿手改）*/`,
 
+		// ── 面板级主题变量（浅/深两套；styles.js 只给带浅色回退值的 var() 引用）──
+		// 变量注在**面板根**上——不能注 :root/body：样式表每条规则必须锁在面板根内
+		//（「面板根限定」护栏会拦）。深色与浅色同特异性（DARK 是 :where() 权重 0），
+		// 靠后声明压过浅色；面板内所有 var() 引用照常继承，回退值兜 headless/未注入场景。
+		// --nf-accent：前景金（文字/chip/焦点环/品牌块）。金是中亮度色，单一金值无法
+		// 两主题同时过 4.5:1（浅色要暗金、深色要亮金）→ 分两档：
+		// 浅 #a86200（白底 ≈4.7:1）/ 深 #f3a62a（暗底 ≈8.6:1）。
+		rule(`${ROOT}`, {
+			'--nf-elev-1': '0 1px 2px rgba(15,17,21,.05), 0 2px 8px rgba(15,17,21,.06)',
+			'--nf-elev-2': '0 2px 6px rgba(15,17,21,.08), 0 8px 20px rgba(15,17,21,.08)',
+			'--nf-accent': '#a86200',
+		}),
+		rule(`${DARK} ${ROOT}`, {
+			'--nf-elev-1': '0 1px 2px rgba(0,0,0,.35), 0 2px 10px rgba(0,0,0,.28)',
+			'--nf-elev-2': '0 2px 8px rgba(0,0,0,.40), 0 10px 24px rgba(0,0,0,.32)',
+			'--nf-accent': '#f3a62a',
+		}),
+
 		// ── 按钮基座：三态的前提是"外观由 CSS 说了算" ──
 		rule(`${ROOT} [data-nf-btn]`, {
 			borderWidth: '1px', borderStyle: 'solid', borderColor: 'transparent',
@@ -95,9 +113,12 @@ export function buildCss() {
 		rule(`${ROOT} [data-nf-tap]:hover`, {
 			background: `${color.hover} !important`,
 			borderColor: `${color.border3} !important`,
+			boxShadow: 'var(--nf-elev-2) !important',
+			transform: 'translateY(-1px)',
 		}),
 		rule(`${ROOT} [data-nf-tap]:active`, {
 			background: `${color.pressed} !important`,
+			boxShadow: 'var(--nf-elev-1) !important',
 			transform: 'translateY(1px)',
 		}),
 
@@ -146,7 +167,7 @@ export function buildCss() {
 		// 用 `:where()` 把选择器权重降到 0，**否则会压过上面的 `:active` 内阴影**
 		// （`body[data-x] [y]` 比 `[y]:active` 权重更高）。这类"降权重"是深色补丁的通用手法。
 		rule(`${DARK} ${ROOT} [data-nf-tap]`, {
-			boxShadow: 'inset 0 1px 0 rgba(255,255,255,.04)',
+			boxShadow: 'var(--nf-elev-1), inset 0 1px 0 rgba(255,255,255,.05)',
 		}),
 		rule(`${DARK} ${ROOT} [data-nf-btn][data-variant="secondary"]`, {
 			background: 'rgba(255,255,255,.05)',
@@ -165,9 +186,9 @@ ${ROOT} [data-nf-gap]{gap:${space.sm}px}
 ${ROOT} :where(span,div,p,code){overflow-wrap:anywhere}`,
 
 		// ── 动效弱化（系统开了「减少动态效果」时）──
-		// 位移与过渡都停：按下反馈只剩内阴影/底色，信息不丢、不晃。
+		// 位移与过渡都停：悬停抬升与按下下沉一并归零，反馈只剩内阴影/底色，信息不丢、不晃。
 		// 收成单行：静态自检要求每条含 `{` 的行都带面板根限定，@media 独占一行会破例。
-		`@media (prefers-reduced-motion: reduce){${ROOT} [data-nf-btn],${ROOT} [data-nf-tap],${ROOT} [data-nf-seg],${ROOT} input,${ROOT} textarea,${ROOT} select{transition:none}${ROOT} [data-nf-btn]:active:not(:disabled),${ROOT} [data-nf-tap]:active,${ROOT} [data-nf-seg]:active:not([data-active="1"]){transform:none}}`,
+		`@media (prefers-reduced-motion: reduce){${ROOT} [data-nf-btn],${ROOT} [data-nf-tap],${ROOT} [data-nf-seg],${ROOT} input,${ROOT} textarea,${ROOT} select{transition:none}${ROOT} [data-nf-btn]:active:not(:disabled),${ROOT} [data-nf-tap]:hover,${ROOT} [data-nf-tap]:active,${ROOT} [data-nf-seg]:active:not([data-active="1"]){transform:none}}`,
 	].join('\n');
 }
 

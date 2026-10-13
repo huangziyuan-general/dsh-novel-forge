@@ -262,6 +262,74 @@ async function layerMcp() {
         const st = await send('tools/call', { name: 'novel_project', arguments: { action: 'status', book: 'MCP冒烟书' } });
         check('M5 status 读回同书', !st.result?.isError && JSON.stringify(payload(st)).includes('MCP冒烟书'), st.result?.content?.[0]?.text?.slice(0, 160) ?? '');
         soft('M6 stderr ready 横幅', /ready: \d+ tools/.test(stderr), stderr.trim().slice(0, 120));
+
+        // ── M7：《遗物手账》全书监控九项修复真机回归 ──────────────────────────
+        // 真 MCP 通道（真 server.mjs + 真磁盘）复演监控报告的故障形状：
+        // ① 范围括号禁项章必须放行（旧版必拦 outline-banned，白烧一整轮生成）；
+        // ② 直引号对话必须计入 dialogueRatio（旧版四章全 0%）；
+        // ③ 倒计时/打断式章末钩子必须检出（旧版强钩子报「无」）；
+        // ④ 纯第一人称 + 引语里的「他」不得误报人称混用；
+        // ⑤ briefing 带「不足目标 85% 不许收尾」；⑥ save_chapter 带上一章契约提醒。
+        const m7 = async (name, args) => {
+            const r = await send('tools/call', { name, arguments: args });
+            return { isError: r.result?.isError === true, text: r.result?.content?.[0]?.text ?? '', out: payload(r) };
+        };
+        const BK = '遗物手账回归';
+        const paras = [
+            '雨停在后半夜。我提着灯走进殡房，账本摊在第三十七页，墨迹还没干透，纸边卷了毛。',
+            '陈嘉树站在门边，手里捏着那枚黄铜钥匙，指节发白。他把钥匙放到桌上，正压住一页潦草的字。',
+            '"这到底是什么？"我问。他没有立刻回答，只把灯芯捻亮了一些，影子在土墙上晃了晃。',
+            '死者的名字还没有人来认。账上写着：七月十四，收殓无名男尸一具，垫付铜钱六百文，笔迹很稳。',
+            '"钥匙证人昨天来过吗？"我又问。陈嘉树摇头，说那人只在雨夜出现，从不走正门，也不留脚印。',
+            '我把账本翻回第一页。同一行字迹抄了三遍：凡入册者，皆有所欠。墨色一层压着一层。',
+            '更夫在巷口敲了三下。陈嘉树忽然压低声音："别问了。这册子记的不是钱，是命。"',
+            '火盆里的炭塌了一角。我把灯挪近，看清那页末尾还有半行小字，被水渍晕开，认不全了。',
+        ];
+        let content = '';
+        for (let i = 0; i < 18; i += 1) {
+            content += `${paras[i % paras.length]}这是第${i + 1}遍核对，情形与上一遍略有不同：铜钱数目、垫付名目、来人的时辰，每一条都要对回原册。檐水落了一整夜，火盆的炭明灭不定，我把冷掉的茶泼在地上，重新研墨。\n\n`;
+        }
+        content += '我屏住呼吸，把半行小字抄进手心。数到第七下，门被敲响了。\n';
+        const m7r = {};
+        m7r.init = await m7('novel_project', { action: 'init', book: BK, title: BK, genre: '悬疑', logline: '一本收殓无名尸的账，凡入册者皆有所欠。' });
+        check('M70 init 回归书', !m7r.init.isError, m7r.init.text.slice(0, 160));
+        m7r.a = await m7('novel_outline', {
+            action: 'save_chapter', book: BK, chapter: 1,
+            outline: '## 本章必写场景\n'
+                + '- 雨夜收殓：无名男尸进门，陈鹤年记账垫付\n'
+                + '- 钥匙压页：陈嘉树出示黄铜钥匙，两人核对账册\n'
+                + '- 证人线索：提及钥匙证人只走后门\n'
+                + '- 半行小字：水渍晕开的字迹认不全\n'
+                + '- 更夫三更：巷口梆子响，两人约定天亮再查\n\n'
+                + '## 本章禁止偏离项\n'
+                + '- 不得让陈嘉树与父亲达成和解（只推进到"钥匙证人"与"这到底是什么"）\n',
+        });
+        check('M7a 范围括号禁项细纲 save_chapter 200（不驳回）', !m7r.a.isError, m7r.a.text.slice(0, 200));
+        m7r.b = await m7('novel_outline', { action: 'approve', book: BK, chapter: 1 });
+        check('M7b 细纲 approve', !m7r.b.isError, m7r.b.text.slice(0, 160));
+        m7r.c = await m7('novel_scene', {
+            action: 'save', book: BK, chapter: 1, scene: '雨夜收殓',
+            participants: '陈鹤年,陈嘉树', forbidden: '现代词汇,手机', hidden: '写账人', notes: '写账人身份不揭',
+        });
+        check('M7c 场景契约 save（hidden/forbidden 生效）', !m7r.c.isError, m7r.c.text.slice(0, 160));
+        m7r.d = await m7('novel_briefing', { book: BK, chapter: 1 });
+        const bfText = m7r.d.out?.rendered ?? '';
+        check('M7d briefing 带「不足目标 85% 不许收尾」硬约束', !m7r.d.isError && bfText.includes('不足目标 85%'), m7r.d.text.slice(0, 160));
+        m7r.e = await m7('novel_write_chapter', {
+            book: BK, chapter: 1, title: '雨夜收殓', cast: '陈鹤年,陈嘉树',
+            content, summary: '雨夜收殓无名尸，铜钥匙压住账页，门在数到第七下时被敲响。',
+        });
+        const wOut = m7r.e.out ?? {};
+        check('M7e ★ 范围括号禁项章真机放行（旧版 outline-banned 必拦）', !m7r.e.isError && wOut.version === 1 && (wOut.gate?.bannedHits?.length ?? 0) === 0,
+            m7r.e.text.slice(0, 260));
+        check('M7f 直引号对话计入 dialogueRatio（旧版全 0%）', (wOut.audit?.dialogueRatio ?? 0) > 0, `dialogueRatio=${wOut.audit?.dialogueRatio}`);
+        check('M7g 倒计时收尾检出 countdown 钩子（旧版报「无」）', wOut.audit?.endingHook?.detected === true && wOut.audit?.endingHook?.kind === 'countdown',
+            JSON.stringify(wOut.audit?.endingHook));
+        check('M7h 纯第一人称 + 引语「他」不误报人称混用', !(wOut.contentGate?.warnings ?? []).some((w) => w.includes('并存')),
+            JSON.stringify((wOut.contentGate?.warnings ?? []).slice(0, 3)));
+        m7r.f = await m7('novel_outline', { action: 'save_chapter', book: BK, chapter: 2, outline: '## 本章必写场景\n- 天亮再查：陈鹤年带册去当铺\n- 铜钱对账：垫付数目对不上\n- 后门线索：钥匙证人留下湿布鞋\n- 字条：门缝里多出一张字条\n- 决定：两人分工查册与访人\n' });
+        check('M7i save_chapter 带上一章契约提醒（P2-2）', typeof m7r.f.out?.note === 'string' && m7r.f.out.note.includes('第1章') && m7r.f.out.note.includes('现代词汇') && m7r.f.out.note.includes('写账人'),
+            JSON.stringify(m7r.f.out?.note ?? m7r.f.text.slice(0, 200))?.slice(0, 200));
     } finally {
         child.kill();
     }

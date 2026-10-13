@@ -16,6 +16,7 @@ import {
 	card, btnLayout, chip, meterTrackStyle, meterFillStyle,
 	emptyStateStyle, emptyIconStyle, emptyTitleStyle, hintStyle, stackStyle,
 	errStyle, okStyle,
+	statTileStyle, statTileNum, statTileLabel,
 } from './styles.js';
 import { PHASES, phaseIndex } from '../../lib/phases.js';
 
@@ -31,12 +32,17 @@ export function Card({ tone = 'plain', pad } = {}, ...children) {
 	return h('div', { style: pad === undefined ? card({ tone }) : card({ tone, pad }) }, ...children);
 }
 
-/** 区块标题行：图标 + 标题 +（可选）右侧内容。 */
+/** 区块标题行：左侧强调色条 + 标题 +（可选）右侧内容。 */
 export function Section({ icon = '', title, right = null } = {}, ...children) {
 	return h('div', { style: stackStyle(space.sm) },
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm } },
-			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small, color: color.text2 } },
-				icon ? `${icon} ${title}` : title),
+			h('span', {
+				style: {
+					fontWeight: weight.semibold, fontSize: font.small, color: color.text,
+					borderLeft: `3px solid ${tint(color.accent, 45)}`,
+					paddingLeft: space.sm, lineHeight: 1.4,
+				},
+			}, icon ? `${icon} ${title}` : title),
 			right ? h('span', { style: { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: space.xs } }, right) : null,
 		),
 		...children,
@@ -107,6 +113,29 @@ export function Stat({ icon = '', value, unit = '', tone = 'neutral' } = {}) {
 		icon ? h('span', { style: { fontSize: '10px' } }, icon) : null,
 		h('span', { style: { fontWeight: weight.semibold, fontSize: font.small, color: toneColor } }, String(value)),
 		unit ? h('span', null, unit) : null,
+	);
+}
+
+/**
+ * 仪表盘数字卡（详情/体检页的「章节 / 伏笔 / 硬伤」指标）。
+ * 大号等宽数字 + 弱标签，扫读时先看数——典型的商业后台观感。
+ * @param {object} p { value, label, tone }  tone: neutral|accent|ok|warn|danger
+ */
+export function StatTile({ value, label = '', tone = 'neutral', icon = '', size = 'md' } = {}) {
+	const c = tone === 'warn' ? color.warn
+		: tone === 'danger' ? color.danger
+		: tone === 'ok' ? color.ok
+		: tone === 'accent' ? color.accent
+		: color.text;
+	const compact = size === 'sm';
+	const numStyle = compact ? { ...statTileNum, fontSize: font.lead } : statTileNum;
+	const boxStyle = compact
+		? { ...statTileStyle, padding: `${space.sm}px ${space.sm}px`, minWidth: '58px' }
+		: statTileStyle;
+	return h('div', { style: boxStyle },
+		icon ? h('div', { style: { fontSize: '11px', lineHeight: 1, marginBottom: '2px', opacity: .82 } }, icon) : null,
+		h('div', { style: { ...numStyle, color: c } }, String(value)),
+		label ? h('div', { style: statTileLabel }, label) : null,
 	);
 }
 

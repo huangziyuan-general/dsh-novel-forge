@@ -1,7 +1,7 @@
 {
   "name": "dsh-novel-forge",
-  "version": "0.16.3",
-  "description": "DSH 小说锻炉：把 AI 长篇写作的通病变成代码强制的硬约束——事实账本、上下文包、阶段门禁、结构性去 AI 味扫描、确定性章节审计与修改提案制。Novel-writing plugin for DeepSeek Harness (DSH) that turns known AI-fiction failure modes into code-enforced guardrails.",
+  "version": "0.17.0",
+  "description": "AI 写长篇的四个死法：设定崩、看不见前文、水文超字数、满屏 AI 味——这个插件全用代码堵死。细纲不批准就不给写章，设定改值直接拒绝，重复句段机审拦下，六维去 AI 味扫描零 token。右侧栏锻炉面板带听书、全书体检、批量起草断点续跑；20 个 novel_* 工具，你只管讲故事，把关交给代码。Novel-writing guardrails plugin for DeepSeek Harness (DSH).",
   "keywords": [
     "deepseek",
     "deepseek-harness",
@@ -9,7 +9,13 @@
     "dsh-plugin",
     "novel-writing",
     "ai-writing",
-    "creative-writing"
+    "creative-writing",
+    "小说",
+    "网文",
+    "连载",
+    "起点",
+    "番茄",
+    "去AI味"
   ],
   "license": "MIT",
   "author": "huangziyuan-general",

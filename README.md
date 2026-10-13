@@ -1,11 +1,25 @@
 # dsh-novel-forge · 小说锻炉
 
+> 中文文档 ｜ [English](./README.en.md)
+
 ![release](https://img.shields.io/github/v/release/huangziyuan-general/dsh-novel-forge) ![license](https://img.shields.io/github/license/huangziyuan-general/dsh-novel-forge) [![tests](https://img.shields.io/github/actions/workflow/status/huangziyuan-general/dsh-novel-forge/ci.yml?branch=main&label=tests)](https://github.com/huangziyuan-general/dsh-novel-forge/actions/workflows/ci.yml)
 
 DeepSeek Harness（DSH）的小说创作插件。设计主线只有一条：
 
 > **代码强制 > 提示词自觉。** 凡是"靠模型自觉"的约束都会失效——
 > 一致性、门禁、审计必须是工具层/数据层的硬约束。
+
+## 界面一览
+
+右侧栏「锻炉」面板实机渲染（以下均为**虚构示例数据**，非真实书目）：
+
+| | |
+| --- | --- |
+| **项目列表**<br><img src="assets/mockups/png/dark-1-项目列表.png" width="100%"> | **详情 · 基本信息**（全书体检仪表盘）<br><img src="assets/mockups/png/dark-2-详情-基本信息.png" width="100%"> |
+| **润色守卫拦下**（核心卖点：代码拒绝，理由给全）<br><img src="assets/mockups/png/dark-5-润色守卫拦下.png" width="100%"> | **批量起草**（并发生成·串行过门禁·断点续跑）<br><img src="assets/mockups/png/dark-6-批量起草.png" width="100%"> |
+| **章节听书**<br><img src="assets/mockups/png/dark-3-章节听书.png" width="100%"> | **世界书**<br><img src="assets/mockups/png/dark-4-世界书.png" width="100%"> |
+
+> 以上是 `lib/client.js` 的**真实渲染**（非手绘 mock）：`npm run preview` 生成预览页后跑 `assets/mockups/shoot-real.cjs` 即可复现，浅色/深色两套随宿主主题。
 
 AI 长篇写作的通病不是玄学，每一个都有对应的工程解法。本插件把其中"有明确对错"的部分做进代码：
 
@@ -33,15 +47,6 @@ AI 长篇写作的通病不是玄学，每一个都有对应的工程解法。�
 | 批量起草中途断了 | 断点检查点：每章提交后落盘 `.novel/batch-checkpoint.json`，`resume:true` 从断点续跑——已落盘章自动跳过、只重试未完成的 | `draft-batch resume` |
 | 同一会话连写越写越短 | 会话疲劳检测：首稿字数低于全书基线 70% 或同会话连写 ≥8 章即警示；「创建新会话并交接」一键建新会话（有归档能力就建+归档一次完成），交接摘要自动进剪贴板 | 面板疲劳横幅 |
 | 写到百章后"看不见前文" | 本地检索索引：按**记忆碎片**把段落找回来（中文手工二元切分，零依赖） | `novel_search` |
-
-## 界面一览
-
-右侧栏「锻炉」面板实机截图（演示书目为演示新建的虚构内容）：
-
-| | |
-| --- | --- |
-| **项目列表**<br><img src="assets/screenshots/1-项目列表.png" width="100%"> | **详情 · 基本信息**<br><img src="assets/screenshots/2-详情-基本信息.png" width="100%"> |
-| **章节听书**<br><img src="assets/screenshots/3-章节听书.png" width="100%"> | **阅读卡**<br><img src="assets/screenshots/4-阅读卡.png" width="100%"> |
 
 ## 快速开始（约 5 分钟）
 
@@ -81,7 +86,7 @@ dsh plugin --profile web add link:/path/to/dsh-novel-forge
 
 典型会话流：
 
-```
+```text
 novel_project init → novel_project phase（看九阶段看板，按提示补齐入场条件）
 → novel_outline save_book → novel_character save（建语言基因卡）
 → novel_worldbook add（固化核心设定）→ novel_project phase stage:outline/volume（分卷）
@@ -134,12 +139,12 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 | `novel_glossary` | 术语表（add/remove/list） | 随上下文包注入，防专有名词乱译 |
 | `novel_clone_project` | 整书克隆为模板 | 阶段重置、提案与熔断计数清空；人物卡/世界书/账本/伏笔/术语表/场景契约/语言基因一并带走 |
 
-参数刻意只用了标量（字符串/整数/布尔），结构化数据用分隔行表达
-（如账本更新 `实体|键|值[|备注]`）——对量化小模型也友好。
+> **参数约定**：工具参数刻意只用了标量（字符串/整数/布尔），结构化数据用分隔行表达
+> （如账本更新 `实体|键|值[|备注]`）——对量化小模型也友好。
 
 ## 数据布局（一本书 = 会话工作区里的一个目录）
 
-```
+```text
 我的书/
 ├─ novel.json            # 机器状态：九阶段/批准/章节索引/cast/提案索引/熔断计数
 ├─ 大纲/全书大纲.md
