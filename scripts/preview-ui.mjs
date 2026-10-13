@@ -114,7 +114,7 @@ const MOCK = {
 			style: { built: true, chapters: 12 },
 		},
 		{
-			name: '黄子源', title: '黄子源', genre: '科幻仙侠', stage: 'revision', stageLabel: '修订',
+			name: '星舰飞升', title: '星舰飞升', genre: '科幻仙侠', stage: 'revision', stageLabel: '修订',
 			chapters: 26, approved: 24, castCount: 7, facts: 118, maxChapter: 26,
 			foreshadows: { total: 11, open: 4, overdue: 0 },
 			style: { built: true, chapters: 26 },
