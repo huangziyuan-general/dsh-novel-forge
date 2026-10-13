@@ -58,7 +58,10 @@ The failure modes of AI long-form writing aren't magic — each has an engineeri
 # from npm (published since 0.16.0; installs count toward dshmarket's "Most installed" board)
 dsh plugin --profile web add npm:dsh-novel-forge
 
-# from a public GitHub repo
+# from a public GitHub repo (⚠️ the github: shorthand goes through pnpm → SSH:
+# the machine needs a GitHub SSH key plus github.com in ~/.ssh/known_hosts, otherwise
+# updates fail with "Host key verification failed"; without SSH, use the npm source
+# above — pulling a public package needs no credentials at all)
 dsh plugin --profile web add github:huangziyuan-general/dsh-novel-forge
 
 # local dev (symlink, edits take effect immediately)
