@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  :root{
+    --bg:#0d1117; --panel:#11161d; --card:#161c24; --card2:#1b232d;
+    --border:#263041; --text:#c9d1d9; --dim:#8b949e; --faint:#6e7681;
+    --accent:#3fd1c4; --accent2:#5aa9ff; --warn:#f0a93b; --danger:#e5484d;
+    --ok:#3fb950; --purple:#b78cff;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    padding:28px;display:flex;flex-direction:column;gap:40px;align-items:center;}
+  .screen{width:1000px;background:var(--panel);border:1px solid var(--border);
+    border-radius:14px;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,.45)}
+  .topbar{display:flex;align-items:center;gap:10px;padding:14px 18px;
+    border-bottom:1px solid var(--border);background:linear-gradient(180deg,#141b24,#11161d)}
+  .logo{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,var(--accent),var(--accent2));
+    display:flex;align-items:center;justify-content:center;font-size:15px}
+  .brand{font-weight:700;letter-spacing:.5px}
+  .ver{font-size:11px;color:var(--faint);border:1px solid var(--border);padding:1px 7px;border-radius:20px}
+  .spacer{flex:1}
+  .pill{font-size:12px;color:var(--dim);border:1px solid var(--border);padding:3px 10px;border-radius:20px}
+  .gear{width:26px;height:26px;border-radius:7px;border:1px solid var(--border);
+    display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:14px}
+  .body{padding:18px}
+  .breadcrumb{font-size:13px;color:var(--dim);margin-bottom:14px}
+  .breadcrumb b{color:var(--text)}
+  .tabs{display:flex;gap:4px;margin:10px 0 16px;border-bottom:1px solid var(--border)}
+  .tab{padding:8px 14px;font-size:13px;color:var(--dim);cursor:default;border-bottom:2px solid transparent}
+  .tab.on{color:var(--text);border-bottom-color:var(--accent)}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}
+  .chip{font-size:12px;padding:5px 11px;border-radius:8px;background:var(--card2);
+    border:1px solid var(--border);color:var(--dim)}
+  .chip b{color:var(--text)}
+  .chip.ok{border-color:rgba(63,185,80,.4);color:var(--ok)}
+  .section{background:var(--card);border:1px solid var(--border);border-radius:10px;
+    padding:14px 16px;margin-bottom:14px}
+  .section h3{font-size:13px;color:var(--dim);font-weight:600;margin-bottom:10px;
+    text-transform:uppercase;letter-spacing:1px}
+  .row{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;color:var(--text)}
+  .row .k{color:var(--dim)}
+  .empty{color:var(--faint);font-size:13px;font-style:italic;padding:6px 0}
+  .book{display:flex;align-items:center;gap:14px;padding:13px 14px;border:1px solid var(--border);
+    border-radius:10px;background:var(--card);margin-bottom:10px}
+  .book .cover{width:42px;height:56px;border-radius:6px;flex:none;
+    display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(160deg,#33415a,#1d2733);color:var(--accent);font-size:20px}
+  .book .meta{flex:1}
+  .book .title{font-size:15px;font-weight:600}
+  .book .sub{font-size:12px;color:var(--dim);margin-top:3px}
+  .book .stat{font-size:12px;color:var(--faint);text-align:right;line-height:1.6}
+  .btn{font-size:13px;padding:7px 14px;border-radius:8px;border:1px solid var(--border);
+    background:var(--card2);color:var(--text);cursor:default}
+  .btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#06222a;
+    border:none;font-weight:700}
+  .btn.ghost{background:transparent}
+  .modal{margin:6px;border:1px solid var(--danger);border-radius:12px;overflow:hidden;
+    background:var(--card)}
+  .modal .head{background:rgba(229,72,77,.14);padding:13px 16px;font-weight:700;
+    color:#ff8a8e;display:flex;align-items:center;gap:9px;font-size:14px}
+  .modal .list{padding:12px 16px}
+  .reason{display:flex;gap:10px;font-size:13px;padding:7px 0;border-bottom:1px dashed var(--border)}
+  .reason:last-child{border-bottom:none}
+  .dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--danger);margin-top:6px}
+  .reason code{background:var(--card2);padding:1px 6px;border-radius:5px;color:var(--accent);font-size:12px}
+  .modal .foot{background:var(--card2);padding:10px 16px;font-size:12px;color:var(--dim)}
+  .finding{display:flex;gap:11px;align-items:flex-start;padding:11px 0;border-bottom:1px solid var(--border);font-size:13px}
+  .finding:last-child{border-bottom:none}
+  .sev{flex:none;width:9px;height:9px;border-radius:50%;margin-top:5px}
+  .sev.r{background:var(--danger)} .sev.y{background:var(--warn)} .sev.g{background:var(--ok)}
+  .finding .t{color:var(--text)} .finding .d{color:var(--dim);font-size:12px;margin-top:2px}
+  .diff{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12.5px;line-height:1.9}
+  .diff .del{background:rgba(229,72,77,.16);color:#ff9a9d;display:block;padding:2px 10px;border-radius:5px}
+  .diff .add{background:rgba(63,185,80,.16);color:#7ee787;display:block;padding:2px 10px;border-radius:5px}
+  .player{display:flex;align-items:center;gap:12px;padding:14px;background:var(--card2);
+    border-radius:10px;margin-bottom:14px}
+  .play{width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent2));
+    color:#06222a;display:flex;align-items:center;justify-content:center;font-size:18px;flex:none}
+  .player .info{flex:1} .player .ttl{font-size:14px;font-weight:600}
+  .player .sub{font-size:12px;color:var(--dim);margin-top:2px}
+  .chap{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);
+    border-radius:9px;margin-bottom:8px;font-size:13px}
+  .chap .no{color:var(--faint);width:34px}
+  .chap .nm{flex:1}
+  .chap .ic{width:22px;height:22px;border-radius:6px;border:1px solid var(--border);
+    display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:12px}
+  .tag{font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--border);color:var(--dim)}
+  .tag.c{color:var(--accent);border-color:rgba(63,209,196,.4)}
+  .note{font-size:12px;color:var(--faint);margin-top:8px;font-style:italic}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+</style>
+</head>
+<body>
+
+<!-- ============ SCREEN 1 : 项目列表 ============ -->
+<section class="screen" id="screen-1">
+  <div class="topbar">
+    <div class="logo">🔨</div><div class="brand">锻炉</div>
+    <div class="ver">v0.16.3</div><div class="spacer"></div>
+    <div class="pill">本会话 · 3 本</div><div class="gear">⚙</div>
+  </div>
+  <div class="body">
+    <div class="chips">
+      <div class="chip ok">全部 <b>3</b></div>
+      <div class="chip">玄幻</div><div class="chip">悬疑</div><div class="chip">仙侠</div>
+    </div>
+    <div class="book">
+      <div class="cover">🌙</div>
+      <div class="meta"><div class="title">示例 · 长夜将明</div>
+        <div class="sub">玄幻 · 一句话立意：废柴在长夜尽头拾起一把会说话的钥匙</div></div>
+      <div class="stat">86 章<br>28.4 万字<br>2 小时前</div>
+    </div>
+    <div class="book">
+      <div class="cover">🔍</div>
+      <div class="meta"><div class="title">示例 · 雾港谜案</div>
+        <div class="sub">悬疑 · 一句话立意：退潮时，港口多出一具不该存在的尸体</div></div>
+      <div class="stat">42 章<br>13.1 万字<br>昨天</div>
+    </div>
+    <div class="book">
+      <div class="cover">⚔️</div>
+      <div class="meta"><div class="title">示例 · 九霄剑歌</div>
+        <div class="sub">仙侠 · 一句话立意：断剑重铸之日，便是门派易主之时</div></div>
+      <div class="stat">120 章<br>41.0 万字<br>3 天前</div>
+    </div>
+    <div class="note">演示书目均为虚构内容，仅用于展示界面。</div>
+  </div>
+</section>
+
+<!-- ============ SCREEN 2 : 详情-基本信息（填满数据） ============ -->
+<section class="screen" id="screen-2">
+  <div class="topbar">
+    <div class="logo">🔨</div><div class="brand">锻炉</div>
+    <div class="ver">v0.16.3</div><div class="spacer"></div>
+    <div class="pill">示例 · 长夜将明</div><div class="gear">⚙</div>
+  </div>
+  <div class="body">
+    <div class="breadcrumb">← 返回 &nbsp; <b>示例 · 长夜将明</b> &nbsp;·&nbsp; 玄幻 &nbsp;·&nbsp; 已写 86 章</div>
+    <div class="tabs"><div class="tab on">基本信息</div><div class="tab">章节听书</div></div>
+    <div class="chips">
+      <div class="chip ok">有大纲</div><div class="chip">86 细纲</div><div class="chip">12 角色卡</div>
+      <div class="chip">9 世界书</div><div class="chip">23 术语</div><div class="chip">7 台账</div><div class="chip">31 伏笔</div>
+    </div>
+    <div class="grid2">
+      <div class="section">
+        <h3>档案</h3>
+        <div class="row"><span class="k">立意</span><span>长夜尽头拾起会说话的钥匙</span></div>
+        <div class="row"><span class="k">主角</span><span>林晚 · 冷峻短句型</span></div>
+        <div class="row"><span class="k">语言基因</span><span>绝不说「也许」</span></div>
+      </div>
+      <div class="section">
+        <h3>大纲</h3>
+        <div class="row"><span class="k">结构</span><span>三幕 · 86 章</span></div>
+        <div class="row"><span class="k">分卷</span><span>3 卷已定</span></div>
+        <div class="row"><span class="k">细纲批准</span><span>86 / 86</span></div>
+      </div>
+    </div>
+    <div class="section">
+      <h3>时间线 · 账本</h3>
+      <div class="row"><span class="k">事实台账</span><span>7 条 · 无冲突</span></div>
+      <div class="row"><span class="k">伏笔埋/收</span><span>31 条 · 1 条超期告警</span></div>
+      <div class="row"><span class="k">死人复活检查</span><span>0 处</span></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:4px">
+      <div class="btn primary">黄金三章诊断</div>
+      <div class="btn">全书体检</div>
+      <div class="btn ghost">导出整本</div>
+    </div>
+    <div class="note">所有数据本地存储，可直接进 Git / Obsidian，卸载插件不丢稿。</div>
+  </div>
+</section>
+
+<!-- ============ SCREEN 3 : 门禁拒绝（核心卖点） ============ -->
+<section class="screen" id="screen-3">
+  <div class="topbar">
+    <div class="logo">🔨</div><div class="brand">锻炉</div>
+    <div class="ver">v0.16.3</div><div class="spacer"></div>
+    <div class="pill">示例 · 长夜将明</div><div class="gear">⚙</div>
+  </div>
+  <div class="body">
+    <div class="breadcrumb">← 返回 &nbsp; <b>示例 · 长夜将明</b> &nbsp;·&nbsp; 写章落盘门禁</div>
+    <div class="modal">
+      <div class="head">⛔ 写章被拒：本章未通过落盘门禁</div>
+      <div class="list">
+        <div class="reason"><div class="dot"></div><div>细纲未批准：第 87 章细纲状态 = <code>pending</code>，需先 <code>novel_outline approve</code></div></div>
+        <div class="reason"><div class="dot"></div><div>章末钩子未检出：末字符为「，」而非 <code>？</code> / <code>！</code> / <code>……</code></div></div>
+        <div class="reason"><div class="dot"></div><div>重复句段超标：8 字 shingle 与前文重复率 <code>18%</code> &gt; 阈值 12%</div></div>
+        <div class="reason"><div class="dot"></div><div>契约偏离：出现禁项「提前揭示反派身份」</div></div>
+      </div>
+      <div class="foot">改完细纲 / 契约后重试，计数器自动清零；同章连拒 3 次触发熔断（拒写，非提醒）。</div>
+    </div>
+    <div class="note">门禁、机审、账本、内容门禁、契约指标、熔断——走代码强制，不靠模型自觉。</div>
+  </div>
+</section>
+
+<!-- ============ SCREEN 4 : 全书体检 ============ -->
+<section class="screen" id="screen-4">
+  <div class="topbar">
+    <div class="logo">🔨</div><div class="brand">锻炉</div>
+    <div class="ver">v0.16.3</div><div class="spacer"></div>
+    <div class="pill">示例 · 长夜将明</div><div class="gear">⚙</div>
+  </div>
+  <div class="body">
+    <div class="breadcrumb">← 返回 &nbsp; <b>示例 · 长夜将明</b> &nbsp;·&nbsp; 全书体检报告</div>
+    <div class="section">
+      <h3>一致性体检（零 token）</h3>
+      <div class="finding"><div class="sev r"></div><div><div class="t">死人复活：角色「周砚」第 44 章已阵亡，第 67 章再次出现对话</div>
+        <div class="d">建议：确认是伏笔回收还是笔误，若是回收请补台账 note</div></div></div>
+      <div class="finding"><div class="sev y"></div><div><div class="t">伏笔超期：「青铜钥匙」埋于第 3 章，计划第 30 章收，现第 52 章仍未收</div>
+        <div class="d">建议：在 55 章前安排回收，或下调 payoffChapter</div></div></div>
+      <div class="finding"><div class="sev y"></div><div><div class="t">章号断档：缺失第 58 章（第 57 → 59 直接跳）</div>
+        <div class="d">建议：补章或标记 intentional skip</div></div></div>
+      <div class="finding"><div class="sev g"></div><div><div class="t">账本一致：7 条事实无冲突</div></div></div>
+      <div class="finding"><div class="sev g"></div><div><div class="t">人物卡齐全：12 / 12 已建语言基因卡</div></div></div>
+    </div>
+    <div class="note">机审与模型审分离：以上为确定性证据，审稿结论需引用具体行号。</div>
+  </div>
+</section>
+
+<!-- ============ SCREEN 5 : 提案审批 ============ -->
+<section class="screen" id="screen-5">
+  <div class="topbar">
+    <div class="logo">🔨</div><div class="brand">锻炉</div>
+    <div class="ver">v0.16.3</div><div class="spacer"></div>
+    <div class="pill">示例 · 长夜将明</div><div class="gear">⚙</div>
+  </div>
+  <div class="body">
+    <div class="breadcrumb">← 返回 &nbsp; <b>示例 · 长夜将明</b> &nbsp;·&nbsp; 修订提案 P-20261013-a3f</div>
+    <div class="section">
+      <h3>润色提案（旁路引擎 · 旧版永不覆盖）</h3>
+      <div class="diff">
+        <span class="del">- 他也许会来。</span>
+        <span class="add">+ 他踏进门时，雪粒还挂在肩头。</span>
+        <span class="del">- 她感到有些害怕。</span>
+        <span class="add">+ 她攥紧袖中短刃，指节发白。</span>
+        <span class="del">- 这是一件很重要的事。</span>
+        <span class="add">+ 这事的分量，压得烛火都矮了半寸。</span>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:4px">
+      <div class="btn primary">应用（生成 v2）</div>
+      <div class="btn ghost">丢弃</div>
+      <div class="spacer" style="flex:1"></div>
+      <div class="tag c">去 AI 味 6 维 · 清爽</div>
+    </div>
+    <div class="note">所有修订走提案制：你在面板点「应用」才生效，原文 v1 永久保留。</div>
+  </div>
+</section>
+
+<!-- ============ SCREEN 6 : 章节听书 ============ -->
+<section class="screen" id="screen-6">
+  <div class="topbar">
+    <div class="logo">🔨</div><div class="brand">锻炉</div>
+    <div class="ver">v0.16.3</div><div class="spacer"></div>
+    <div class="pill">示例 · 长夜将明</div><div class="gear">⚙</div>
+  </div>
+  <div class="body">
+    <div class="breadcrumb">← 返回 &nbsp; <b>示例 · 长夜将明</b> &nbsp;·&nbsp; 章节听书</div>
+    <div class="player">
+      <div class="play">▶</div>
+      <div class="info"><div class="ttl">从第 1 章开始听</div>
+        <div class="sub">86 章 · 28.4 万字 · 读完一章自动接下一章</div></div>
+      <div class="btn ghost">停止</div>
+    </div>
+    <div class="chap"><div class="no">1</div><div class="nm">坠星之夜</div>
+      <div class="tag">349 字</div><div class="ic">📖</div><div class="ic">▶</div></div>
+    <div class="chap"><div class="no">2</div><div class="nm">会许愿的鱼鳞</div>
+      <div class="tag">412 字</div><div class="ic">📖</div><div class="ic">▶</div></div>
+    <div class="chap"><div class="no">3</div><div class="nm">钥匙开口的那一刻</div>
+      <div class="tag">528 字</div><div class="ic">📖</div><div class="ic">▶</div></div>
+    <div class="chap"><div class="no">4</div><div class="nm">长夜里的第二个人</div>
+      <div class="tag">477 字</div><div class="ic">📖</div><div class="ic">▶</div></div>
+    <div class="note">看听独立：每行可单独阅读或朗读；章号有缺口会自动跳到下一个存在的章。</div>
+  </div>
+</section>
+
+</body>
+</html>
