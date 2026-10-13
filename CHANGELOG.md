@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.17.1 (2026-10-13)
+
+- **英文版 README 入包**：`files` 白名单加 `README.en.md`——0.17.0 起仓库有两份 README
+  （中文 / English 互链），npm 包此前只带中文版。
+- **界面截图更新**：dark / real 两套共 12 张面板实渲染截图重新生成（`preview-ui.mjs`
+  同步微调）；README「界面一览」引用的就是这套图。
+
 ## v0.17.0 (2026-10-13)
 
 
