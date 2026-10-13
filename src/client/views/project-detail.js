@@ -16,7 +16,7 @@ import {
 	color, space, font, weight, hintStyle, okStyle, errStyle, warnStyle,
 	inputStyle, manuscriptStyle, stackStyle, tint, rowWrapStyle,
 } from '../styles.js';
-import { Card, Btn, Chip, Stat, Fold, Mono, Feedback } from '../ui.js';
+import { Card, Btn, Chip, StatTile, Fold, Mono, Feedback } from '../ui.js';
 import { phaseLabel } from '../../../lib/phases.js';
 import { ChapterListView } from './chapters.js';
 import { ProjectOverviewView } from './overview.js';
@@ -161,19 +161,13 @@ export function ProjectDetailView({ state: s }) {
 				? h('div', { style: { ...hintStyle, fontSize: font.caption, marginTop: space.sm, lineHeight: 1.7 } },
 					'查的是「死人复活 / 账本前后矛盾 / 伏笔超期未收 / 章号断档 / 人物卡缺失」这类机器判得出来的硬伤 —— 全部是纯本地计算，不花 token。')
 				: h('div', { style: { marginTop: space.md } },
-					h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: `${space.xs}px ${space.lg}px`, marginBottom: cont.issues?.length ? space.sm : 0 } },
-						Stat({ icon: '📄', value: cont.stats?.chapters ?? 0, unit: '章' }),
-						Stat({ icon: '🧾', value: cont.stats?.facts ?? 0, unit: '台账' }),
-						Stat({ icon: '🪡', value: cont.stats?.foreshadows ?? 0, unit: '伏笔' }),
-						Stat({ icon: '⚰️', value: cont.stats?.deaths ?? 0, unit: '死亡实体' }),
-						Stat({
-							icon: '⚠️', value: cont.stats?.errors ?? 0, unit: '硬伤',
-							tone: (cont.stats?.errors ?? 0) > 0 ? 'danger' : 'ok',
-						}),
-						Stat({
-							icon: '·', value: cont.stats?.warnings ?? 0, unit: '警告',
-							tone: (cont.stats?.warnings ?? 0) > 0 ? 'warn' : 'neutral',
-						}),
+					h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: space.sm, marginBottom: cont.issues?.length ? space.sm : 0 } },
+						StatTile({ value: cont.stats?.chapters ?? 0, label: '章节', tone: 'accent' }),
+						StatTile({ value: cont.stats?.facts ?? 0, label: '台账' }),
+						StatTile({ value: cont.stats?.foreshadows ?? 0, label: '伏笔' }),
+						StatTile({ value: cont.stats?.deaths ?? 0, label: '死亡实体' }),
+						StatTile({ value: cont.stats?.errors ?? 0, label: '硬伤', tone: (cont.stats?.errors ?? 0) > 0 ? 'danger' : 'ok' }),
+						StatTile({ value: cont.stats?.warnings ?? 0, label: '警告', tone: (cont.stats?.warnings ?? 0) > 0 ? 'warn' : 'neutral' }),
 					),
 					cont.issues?.length > 0
 						? h('div', null,
@@ -305,32 +299,30 @@ h('span', { style: { flex: '1 1 auto' } }),
 	// ── 本章编辑 ──
 	const chapterOptions = Array.from({ length: Math.max(1, (s.detail?.chapters ? Object.keys(s.detail.chapters).length : 0) + 1) }, (_, i) => i + 1);
 	const editBlock = Card({ tone: 'plain' },
+		// 头部：章节切换 + 写章 + 保存（原「✍️ 本章」常驻条并入，随稿纸一起放在待批准提案下方）
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' } },
-			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small } }, '✍️ 本章编辑'),
-			h('span', { style: { flex: '1 1 auto' } }),
+			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small } }, '✍️ 本章'),
 			h('select', {
 				'data-field': 'chapterNo', value: String(s.chapterNo),
 				'aria-label': '切换到第几章',
 				style: { ...inputStyle, width: 'auto', padding: '3px 6px' },
 			}, chapterOptions.map((no) => h('option', { key: no, value: String(no) }, `第 ${no} 章`))),
+			Btn({ size: 'sm', variant: 'ghost', action: 'write', disabled: s.batchBusy },
+				s.batchBusy ? '写作中…' : '🪶 写章'),
+			h('span', { style: { flex: '1 1 auto' } }),
+			Btn({ size: 'sm', variant: 'primary', action: 'save' }, '💾 保存'),
 		),
+		h('div', { style: { ...hintStyle, fontSize: font.caption, marginTop: space.xs, lineHeight: 1.6 } },
+			s.chapterNo > maxWritten ? '这一章还没落盘 —— 点「写章」直接过门禁链落盘' : '写章 = 生成新版本（旧稿保留）；润色 / 校对产物是提案'),
 
-		// 需要模型的三个动作：润色/校对走真端点，写章给可复制提示
-		h('div', { style: { ...rowWrapStyle(space.xs), marginTop: space.sm } },
-			Btn({
-				size: 'sm', variant: 'accent', action: 'polish',
-				disabled: revising !== null || s.chapterNo > maxWritten,
-			}, revising === 'polish' ? '润色中…' : '✨ 润色'),
-			Btn({
-				size: 'sm', variant: 'secondary', action: 'proofread',
-				disabled: revising !== null || s.chapterNo > maxWritten,
-			}, revising === 'proofread' ? '校对中…' : '🔍 校对'),
-			Btn({
-				size: 'sm', variant: 'ghost', action: 'write',
-				disabled: s.batchBusy,
-			}, s.batchBusy ? '写作中…' : '🪶 写章'),
+		// 润色 / 校对走真端点，产物是提案（点「应用」才生效）
+		h('div', { style: { ...rowWrapStyle(space.xs), marginTop: space.md } },
+			Btn({ size: 'sm', variant: 'accent', action: 'polish', disabled: revising !== null || s.chapterNo > maxWritten },
+				revising === 'polish' ? '润色中…' : '✨ 润色'),
+			Btn({ size: 'sm', variant: 'secondary', action: 'proofread', disabled: revising !== null || s.chapterNo > maxWritten },
+				revising === 'proofread' ? '校对中…' : '🔍 校对'),
 			h('span', { style: { ...hintStyle, fontSize: font.caption } },
-				s.chapterNo > maxWritten ? '这一章还没落盘 —— 点写章直接过门禁链落盘' : '写章=生成新版本（旧稿保留）；润色/校对的产物是提案'),
+				'产物是提案（在「待批准提案」里点「应用」才生成新版本）'),
 		),
 
 		s.error ? Feedback({ tone: 'err' }, s.error) : null,
@@ -340,7 +332,7 @@ h('span', { style: { flex: '1 1 auto' } }),
 		// 应用是用户主权（不拦），但「改出了死人复活 / 隐藏人物泄底」必须当场看见。
 		s.gateNotice ? h('div', {
 			role: 'alert',
-			style: { ...stackStyle, marginTop: space.sm, gap: space.xs },
+			style: { ...stackStyle(space.xs), marginTop: space.sm, gap: space.xs },
 		},
 			h('div', { style: warnStyle },
 				`⚠ 刚应用的第 ${s.gateNotice.chapter} 章 v${s.gateNotice.version} 有门禁提示：`),
@@ -375,7 +367,6 @@ h('span', { style: { flex: '1 1 auto' } }),
 		}),
 
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.xs, marginTop: space.sm, flexWrap: 'wrap' } },
-			Btn({ size: 'sm', variant: 'primary', action: 'save' }, '💾 保存'),
 			Btn({ size: 'sm', variant: 'ghost', action: 'refresh' }, '↻ 刷新'),
 			Btn({ size: 'sm', variant: 'ghost', action: 'export', disabled: s.exporting },
 				s.exporting ? '导出中…' : '⇩ 导出'),
@@ -459,13 +450,10 @@ h('span', { style: { flex: '1 1 auto' } }),
 
 		batch
 			? h('div', { style: { marginTop: space.lg } },
-				h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: `${space.xs}px ${space.lg}px`, marginBottom: space.sm } },
-					Stat({ icon: '✓', value: batch.stats?.committed ?? 0, unit: '落盘', tone: 'ok' }),
-					Stat({
-						icon: '✗', value: batch.stats?.failed ?? 0, unit: '被拦',
-						tone: (batch.stats?.failed ?? 0) > 0 ? 'danger' : 'neutral',
-					}),
-					Stat({ icon: '⚙', value: batch.concurrency ?? 1, unit: '并发' }),
+				h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: space.sm, marginBottom: space.sm } },
+					StatTile({ value: batch.stats?.committed ?? 0, label: '落盘', tone: 'ok' }),
+					StatTile({ value: batch.stats?.failed ?? 0, label: '被拦', tone: (batch.stats?.failed ?? 0) > 0 ? 'danger' : 'neutral' }),
+					StatTile({ value: batch.concurrency ?? 1, label: '并发' }),
 				),
 				...(batch.warnings ?? []).map((w, i) => h('div', { key: i, style: { ...hintStyle, fontSize: font.caption } }, `· ${w}`)),
 				h('div', { style: { marginTop: space.sm } }, ...(batch.results ?? []).map(batchRow)),

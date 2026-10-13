@@ -224,6 +224,14 @@ test('audit: 钩子/对话占比/重复率', () => {
     assert.equal(a2.endingHook.detected, false);
 });
 
+test('audit: 直引号对话必须计入对话占比（《遗物手账》226 个直引号四章全报 0% 的根因）', () => {
+    // 插件自己的写作规矩就是对话用直引号（U+0022）——旧正则 /[「“]/ 不认，四章
+    // dialogueRatio 全 0%，连带番茄平台审查「对话占比 15%–45%」直接判失败。
+    const body = para('夜风把灯笼吹得摇晃。林晚按住刀柄，慢慢走进院子。\n\n"谁？"她低声问。\n\n门外的人影停住了，没有回答。');
+    const a = computeAudit({ content: body, previous: [], terms: [] });
+    assert.ok(a.dialogueRatio > 0, '★ 直引号行必须计入对话——插件规矩的引号不许被检测器当空气');
+});
+
 test('audit: 与前文复读检测', () => {
     const dup = '少年握紧手中的铜镜，镜子背面刻着一个陌生的名字。'.repeat(3);
     const a = computeAudit({
@@ -246,7 +254,7 @@ test('auditVerdict: 字数驳回带「还差 N 字 + 本章目标」——只说
     const a = computeAudit({ content: '短。', previous: [], terms: [] });
     const v = auditVerdict(a, { minChapterChars: 2000, maxChapterChars: 4000 });
     const msg = v.problems.find((p) => p.includes('低于下限'));
-    assert.match(msg, /还差 1998 字/);
+    assert.match(msg, /建议补到 ≥2100 字，留 100 字余量/);
     assert.match(msg, /本章目标 3000 字左右/);
 });
 
@@ -258,7 +266,7 @@ test('auditVerdict: 字数驳回带段落级分布 + 定向补字配额（模型
     assert.match(msg, /各段字数：412\/96\/380\/226/, '分布必须逐段列出');
     // 「还差 1998 字」模型不会执行；换算成「第 2 段 +2000 字」才可执行
     assert.match(msg, /定向补字配额/, '必须给可执行的补字配额');
-    assert.match(msg, /第 2 段各 \+2000 字/, '配额要带段号与增量（只有第 2 段 < 150 字入选）');
+    assert.match(msg, /第 2 段各 \+2100 字/, '配额要带段号与增量（只有第 2 段 < 150 字入选，含 100 字余量）');
     assert.match(msg, /现在分别 96 字/, '要给出该段当前字数，模型好判断要加多少');
     assert.match(msg, /不必整章重写/, '必须给「不必整章重写」的行动指引');
     // 封顶：>24 段只列前 24 + 总段数
@@ -274,7 +282,7 @@ test('auditVerdict: 段落全是长段时不给配额，退化为「对照分布
     const v = auditVerdict(a, { minChapterChars: 2000, maxChapterChars: 4000 }, { paragraphChars: [412, 380, 226] });
     const msg = v.problems.find((p) => p.includes('低于下限'));
     assert.ok(!msg.includes('定向补字配额'), '没有 < 150 字的段就不该给配额表');
-    assert.match(msg, /定向加厚最薄的几段即可，不必整章重写/, '退化为旧文案（向后兼容）');
+    assert.match(msg, /对照分布定向加厚最薄的几段，补到 ≥2100 字（留 100 字余量）即稳妥过线，不必整章重写/, '退化为带余量的旧文案（向后兼容）');
 });
 
 test('auditVerdict: 不传段落分布时文案退化为不带分布（向后兼容）', () => {
@@ -298,6 +306,17 @@ test('detectHookKind: 章末强调标记不再吞检——「**三个！**」必
     assert.equal(detectHookKind('夜色平静地合拢，一切如常。'), null, '真没钩子的照旧报 null');
 });
 
+test('detectHookKind: 倒计时宣告与打断式收尾不许漏检（《遗物手账》第1/2章强钩子检出「无」）', () => {
+    assert.equal(detectHookKind('写下这两个词的那天晚上，陈鹤年最多还能活一天。'), 'countdown',
+        '★ 陈述句收口的倒计时宣告——四表层模式全瞎，强 cliffhanger 必须认出');
+    assert.equal(detectHookKind('我屏住呼吸。数到第七下，门被敲响了。'), 'countdown',
+        '★ 动作打断式收尾——「数到第N下」同时是倒计时与打断，任一归类都算检出');
+    assert.ok(['interrupt', 'countdown'].includes(detectHookKind('我屏住呼吸。数到第七下，门被敲响了。')));
+    assert.equal(detectHookKind('他答应三天后给信。夜里电话骤然响起。'), 'interrupt');
+    // 控制组：普通陈述不误报
+    assert.equal(detectHookKind('两人把账目核对完毕，各自回去休息。'), null);
+});
+
 test('auditVerdict: 过下限但未达目标 → 放行 + 非阻断提醒（不是驳回）', () => {
     // 2160 字：≥ 下限 2000、< 目标 3000；三段成篇、无重复、无硬伤
     const body = Array.from({ length: 3 }, () => '夜色压下来，她握紧了刀。'.repeat(60)).join('\n\n');
@@ -311,8 +330,8 @@ test('auditVerdict: 覆盖率缺失项过多时警告封顶（只列前 10 + 等
     const terms = Array.from({ length: 15 }, (_, i) => `要素${i}`);
     const a = computeAudit({ content: '正文。', previous: [], terms });
     const v = auditVerdict(a, { minChapterChars: 1, maxChapterChars: 999999 });
-    const w = v.warnings.find((x) => x.includes('未在正文出现'));
-    assert.match(w, /共 15 项|（15 项）/);
+    const w = v.warnings.find((x) => x.includes('字面未逐字出现'));
+    assert.match(w, /（15 项/);
     assert.match(w, /等 5 项/);
 });
 
@@ -502,7 +521,7 @@ test('retrieval: bigrams 的 BMP 中文行为不变', () => {
 
 // ── import backfill / diagnose 词库外置 ──────────────────────────────────────
 
-test('import: roughOutline 生成含钩子与人物信息的回补粗纲', () => {
+test('import: roughOutline 生成含钩子与人物信息的回补粗纲（含必写场景契约段）', () => {
     const md = roughOutline({
         n: 2, title: '布鞋', chars: 900,
         opening: '门前放着一只湿透的布鞋', tail: '她忽然吹熄了灯。',
@@ -512,9 +531,13 @@ test('import: roughOutline 生成含钩子与人物信息的回补粗纲', () =>
     assert.ok(md.includes('导入回补'));
     assert.ok(md.includes('钩子：suspense'));
     assert.ok(md.includes('林晚'));
+    // 契约段：新书（含导入书）默认 outlineContract=strict，粗纲必须能过 save_chapter 的契约段检查
+    assert.ok(md.includes('## 本章必写场景'));
+    assert.ok(md.includes('- 开场复现：门前放着一只湿透的布鞋'));
+    assert.ok(md.includes('- 章末收束：她忽然吹熄了灯。'));
     // 无钩子/无人物时的回退文案
     const bare = roughOutline({ n: 1, title: 'x', chars: 10, opening: '', tail: '', hookKind: null, cast: [] });
-    assert.ok(bare.includes('未检出钩子'));
+    assert.ok(bare.includes('（未识别，读正文末尾两段）'));
     assert.ok(bare.includes('未识别'));
 });
 
@@ -839,6 +862,42 @@ test('content-gate: 占位符阻断、人称混用警告', () => {
 
     const mixed = contentGate({ content: ['我推开门。', '我看见他在擦刀。', '我问他为什么。', '我说了不该说的话。', '我把灯吹熄了。', '他说他不知道。', '他站起来。', '她看向窗外。', '他把手按在刀上。', '她走了。', '他回头。'].join('\n\n'), chapter: 1 });
     assert.ok(mixed.warnings.some((w) => w.code === 'person-mixed'));
+
+    // 对话引语里的「他/她」不是叙述视角（《遗物手账》第 2 章实证：纯第一人称全文
+    // 被引语里的「他」误判成混用，诱导无谓改稿）——计数前必须剥对话跨度。
+    const dialogueOnly = contentGate({ content: [
+        '我推开门，风灌了进来。', '我数了数抽屉里的银钱，数目不对。', '我合上账本，指尖发凉。',
+        '我把灯芯捻短，坐回椅子上。', '我想起白天那位爷的眼神，后背一阵发紧。',
+        '「掌柜的，他昨天来过吗？」我问。', '「他没说话，放下东西就走。」伙计答。',
+        '「她呢？那个穿斗篷的女人。」', '「她也来过，站了很久。」', '我让他把门闩好。',
+    ].join('\n\n'), chapter: 1 });
+    assert.ok(!dialogueOnly.warnings.some((w) => w.code === 'person-mixed'),
+        '★ 引语里的他/她不计入叙述人称——纯第一人称叙述不许报混用');
+
+    // 叙述句首的「他」也常是第一人称笔法：「。他把钥匙放到桌上」是叙述者转述他人动作，
+    // 甚至可以有整段无「我」的场景交代段（真机 M7 回归内容实证）——孤段/被「我」段隔开
+    // 的他段不是视角切换；连续 ≥3 段无我的他起段 + 第一人称在场才是真混用。
+    const scattered = contentGate({ content: [
+        '我提着灯走进殡房，账本摊在第三十七页。',
+        '陈嘉树站在门边，指节发白。他把钥匙放到桌上，正压住一页潦草的字。',
+        '我问他这钥匙从哪里来。',
+        '"这到底是什么？"我问。他没有立刻回答。',
+        '火盆里的炭塌了一角。我把灯挪近，看清那页末尾还有半行小字。',
+        '陈嘉树摇头。他把册子合上，说天亮再查。',
+        '我把冷掉的茶泼在地上，重新研墨。',
+        '我数到第七下，门被敲响了。',
+    ].join('\n\n'), chapter: 1 });
+    assert.ok(!scattered.warnings.some((w) => w.code === 'person-mixed'),
+        '★ 第一人称叙述里孤立的「他」段（转述/交代）不许报混用');
+    const switched = contentGate({ content: [
+        '我推开门，风灌了进来。', '我数了数抽屉里的银钱，数目不对。', '我把灯芯捻短，坐回椅子上。',
+        '我把账本压在枕头底下，吹了灯。我想不明白她为什么这时候来。', '我竖着耳朵听了半宿，没睡着。',
+        '林晚站在廊下。她把伞收了，抖掉水珠。她看了看天色。', '她走进正厅，脚步很轻。她把伞放在架上。',
+        '掌柜从柜台后抬头。他看了她一眼，又低下头去。他把算盘拨得噼啪响。',
+        '她在厅里站定。她看着那块匾，很久没有说话。她终于开口问了价。',
+    ].join('\n\n'), chapter: 1 });
+    assert.ok(switched.warnings.some((w) => w.code === 'person-mixed'),
+        '★ 连续 ≥3 段无我的第三人称叙述 + 第一人称在场 = 真混用，要报');
 });
 
 test('content-gate: 关键词提取过滤虚词，账本状态推演带历史值', () => {
@@ -1004,6 +1063,21 @@ test('★ 禁项解析：前置否定句式不得把否定词本身当禁词（�
     assert.ok(r.banned.includes('墨银'), '前置否定的宾语才是禁词');
     const subjFirst = parseBanRules('现代词汇不得出现');
     assert.ok(subjFirst.banned.includes('现代词汇'), '主语前置句式（「X不得出现」）照旧收X');
+});
+
+test('★ 禁项解析：范围限定括号是说明不是禁词（《遗物手账》第3章整章被拦的根因）', () => {
+    // 真机原文：括号限定禁令的推进程度——"钥匙证人"/"这到底是什么"是允许写到的小节点，
+    // 旧实现把它们收进禁词表，正文一句自然修辞「这到底是什么」命中即 write_chapter/rejected
+    //（白烧一整轮生成）。
+    const r = parseBanRules('不得让陈嘉树与父亲达成和解（只推进到"钥匙证人"与"这到底是什么"）');
+    assert.ok(!r.banned.includes('钥匙证人') && !r.banned.includes('这到底是什么'),
+        '★ 排除行里（只|仅|限|推进到…）引导的括号片段不是禁词本体');
+    assert.ok(r.conditional.includes('钥匙证人') && r.conditional.includes('这到底是什么'),
+        '路标词归条件型（允许且通常必须出现）');
+    // 控制组：范围括号之外的引号词照旧成禁词
+    const ctrl = parseBanRules('- 不得让"门后的人"提前现身\n- 禁止使用「储物戒指」（仅限"断刃"伏笔回收章）');
+    assert.ok(ctrl.banned.includes('门后的人'), '无范围括号的排除句照旧禁');
+    assert.ok(ctrl.banned.includes('储物戒指'), '禁词本体重申不受行尾括号影响');
 });
 
 test('★ 禁项解析：「不得让沈无咎说出…」禁的是那句话，不是人物（主角名当禁词=必误判）', () => {
