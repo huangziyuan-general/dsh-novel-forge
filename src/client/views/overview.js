@@ -9,7 +9,7 @@
 // 账本的价值在「按章推进」，平铺成一串灰字就看不出这件事了。
 import { h } from '../react.js';
 import { color, space, font, weight, hintStyle, tint, stackStyle } from '../styles.js';
-import { Card, Chip, Stat, Fold, Empty, Section, Mono, KV } from '../ui.js';
+import { Card, Chip, StatTile, Fold, Empty, Section, Mono, KV, Btn } from '../ui.js';
 import { genreLabel } from '../genre.js';
 
 const preStyle = {
@@ -85,14 +85,14 @@ export function ProjectOverviewView({ state: s }) {
 
 	// ── 沉淀统计：一眼看清「这本书攒了什么」──
 	const tiles = Card({ tone: 'inset', pad: space.md },
-		h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: `${space.sm}px ${space.xl}px` } },
-			Stat({ icon: '🗺', value: el.outline?.full ? '有' : '无', unit: '大纲', tone: el.outline?.full ? 'ok' : 'warn' }),
-			Stat({ icon: '📑', value: outlineCount, unit: '细纲' }),
-			Stat({ icon: '👤', value: chars.length, unit: '角色卡' }),
-			Stat({ icon: '📖', value: el.worldbookCount ?? 0, unit: '世界书' }),
-			Stat({ icon: '🔤', value: el.glossaryCount ?? 0, unit: '术语' }),
-			Stat({ icon: '🧾', value: facts.length, unit: '台账' }),
-			Stat({ icon: '🪡', value: foreshadows.length, unit: '伏笔' }),
+		h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: `${space.sm}px ${space.sm}px` } },
+			StatTile({ icon: '🗺', value: el.outline?.full ? '有' : '无', label: '大纲', tone: el.outline?.full ? 'ok' : 'warn', size: 'sm' }),
+			StatTile({ icon: '📑', value: outlineCount, label: '细纲', size: 'sm' }),
+			StatTile({ icon: '👤', value: chars.length, label: '角色卡', size: 'sm' }),
+			StatTile({ icon: '📖', value: el.worldbookCount ?? 0, label: '世界书', size: 'sm' }),
+			StatTile({ icon: '🔤', value: el.glossaryCount ?? 0, label: '术语', size: 'sm' }),
+			StatTile({ icon: '🧾', value: facts.length, label: '台账', size: 'sm' }),
+			StatTile({ icon: '🪡', value: foreshadows.length, label: '伏笔', size: 'sm' }),
 		),
 	);
 
@@ -113,15 +113,17 @@ export function ProjectOverviewView({ state: s }) {
 		});
 
 	// ── 设定 ──
-	const settingBlock = h('div', { style: stackStyle(space.sm) },
-		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.md, flexWrap: 'wrap' } },
-			Stat({ icon: '📖', value: el.worldbookCount ?? 0, unit: '条世界书' }),
-			Stat({ icon: '🔤', value: el.glossaryCount ?? 0, unit: '条术语' }),
-		),
-		(el.worldbookCount ?? 0) + (el.glossaryCount ?? 0) === 0
-			? Empty({ icon: '🧭', title: '设定还是空的', hint: '在会话里让 AI 调 novel_world 沉淀世界观；也可以在「世界书」里手动加。' })
-			: null,
-	);
+	// 顶部「沉淀统计」已含世界书/术语的计数，这里不再重复数字，改做**入口**：
+	// 有沉淀就给一句状态 + 跳世界书的常驻按钮，无沉淀就给空态引导——避免中段显空、节奏匀称。
+	const settingHas = (el.worldbookCount ?? 0) + (el.glossaryCount ?? 0) > 0;
+	const settingBlock = settingHas
+		? Card({ tone: 'inset', pad: space.md },
+			h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' } },
+				h('span', { style: { ...hintStyle, fontSize: font.small, flex: '1 1 240px', minWidth: 0 } },
+					`已沉淀 ${el.worldbookCount ?? 0} 条世界书 · ${el.glossaryCount ?? 0} 条术语。设定越细，写章越不容易崩人物与地名。`),
+				Btn({ variant: 'ghost', size: 'sm', action: 'goto-lorebook', id: s.selected }, '📖 去世界书'),
+			))
+		: Empty({ icon: '🧭', title: '设定还是空的', hint: '在会话里让 AI 调 novel_world 沉淀世界观；也可以在「世界书」里手动加。' });
 
 	// ── 时间线（账本事实按章分组，竖轴样式）──
 	const byChapter = new Map();

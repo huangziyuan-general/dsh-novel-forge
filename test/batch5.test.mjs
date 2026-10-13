@@ -508,13 +508,13 @@ test('batch-draft: planDraftBatch 逐类拦截（已写/无细纲/未批/熔断�
     const p3 = planDraftBatch({ novel: { chapters: {}, approvals: { outline: {} }, gateFailures: {} }, from: 2, count: 1, availableOutlines: [2], approvedOutlines: [] });
     assert.match(p3.items[0].reason, /未批准/);
 
-    // force 放行未批准与熔断（但「已有正文」永远不放行——那是修订，走提案）
+    // force 放行未批准（但「已有正文」与「熔断」仍不放行——前者走提案、后者需改细纲/场景契约清零，避免被反复硬压改写绕过）
     const p4 = planDraftBatch({
         novel, from: 1, count: 4, availableOutlines: [1, 2, 3, 4], approvedOutlines: [], force: true,
     });
     assert.equal(p4.items.find((i) => i.chapter === 1).blocked, true);
-    assert.equal(p4.items.find((i) => i.chapter === 4).blocked, false);
-    assert.deepEqual(p4.ready, [2, 3, 4]);
+    assert.equal(p4.items.find((i) => i.chapter === 4).blocked, true, '熔断不认 force：force 下仍拦截，逼回去改设定');
+    assert.deepEqual(p4.ready, [2, 3]);
 
     // 章号不连续要提醒（衔接只能靠细纲）
     const p5 = planDraftBatch({ novel: { chapters: {}, approvals: { outline: { 1: true, 3: true } }, gateFailures: {} }, from: 1, count: 3, availableOutlines: [1, 3], approvedOutlines: [1, 3] });
@@ -554,7 +554,18 @@ test('batch-draft: mapWithConcurrency 保序、限并发、可取消', async () 
         if (n === 2) throw new Error('boom');
         return n;
     }).catch(() => 'threw');
-    assert.equal(mixed, 'threw', 'mapWithConcurrency 本身不吞异常（吞异常是调用方的责任）');
+    assert.ok(mixed instanceof Array, '异常必须收进 results，不得 reject 整批（《遗物手账》审查 P0-1：导出函数不得依赖调用方自带 try/catch）');
+    assert.ok(mixed[0] === 1 && mixed[2] === 3, '未抛错的项结果原样保留');
+    assert.ok(mixed[1] instanceof Error && mixed[1].message === 'boom', '抛错项以 Error 实例占位');
+
+    // 同步抛错同样收进 results（旧实现同步 throw 会炸掉整个 worker → Promise.all reject）
+    const sync = await mapWithConcurrency(['a', 'b', 'c'], 2, (item) => {
+        if (item === 'b') throw new Error('同步炸');
+        return item.toUpperCase();
+    });
+    assert.deepEqual(sync[0], 'A');
+    assert.ok(sync[1] instanceof Error && sync[1].message === '同步炸', 'fn 同步抛错也要被收编');
+    assert.equal(sync[2], 'C');
 
     // 取消：不再启动新任务
     const ac = new AbortController();
@@ -1370,4 +1381,34 @@ test('★ commitChapter 成功合入：本章计数清零、并发字段存活�
     assert.equal(saved.chapters['7'].path, out.path, '本章记录合入最新文档');
     assert.ok(io.files.has(out.path), '正文文件已落盘');
     assert.equal(saved.stage, 'writing', '成功路径才推进阶段');
+});
+
+// ── 熔断不认 force（E2 收紧）：tripped 后 force:true 也必须 throw ──────────────
+
+test('★ commitChapter 熔断：tripped 后 force:true 照样拒绝（不 bypass、不递增计数）', async () => {
+    const { commitChapter } = await import('../lib/chapter-commit.js');
+    const book = '熔断不认force书';
+    const meta = `${book}/novel.json`;
+    const io = memIo({
+        [meta]: JSON.stringify({
+            title: book, genre: '仙侠', logline: '', stage: 'chapter', phases: {},
+            approvals: { outline: { 7: true } },
+            chapters: {}, cast: [],
+            gateFailures: { 7: 3, '7:last': { code: 'audit', detail: '字数不足', at: 't0' } },
+        }),
+        [`${book}/大纲/细纲/第7章.md`]: '# 第7章 试探\n\n- 对峙：来客与林晚僵持。',
+    });
+    const p = pathsFor(book);
+    const novel = JSON.parse(io.files.get(meta));
+    const before = io.files.get(meta);
+    await assert.rejects(
+        () => commitChapter({
+            config: TEST_CFG, io, p, book, novel, n: 7, title: '试探',
+            content: CHAPTER_TEXTS[1], summary: '试探之章', force: true,
+        }),
+        /熔断/,
+        '★ force 放行的是内容判定（细纲门禁/内容门禁/禁项），不是熔断——墨骨录实证：force 循环硬压与不 force 一模一样',
+    );
+    assert.equal(novel.gateFailures['7'], 3, '熔断拒绝发生在计数递增之前，不涨计数');
+    assert.equal(io.files.get(meta), before, '被熔断拦下的调用不写盘（盘上状态原样）');
 });

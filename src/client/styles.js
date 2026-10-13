@@ -57,8 +57,6 @@ export const color = {
 	//    浅色下 #e1e5ee、深色下 #43454a，两个主题里当文字都等于看不见。
 	//    真正的"最弱文字"是 `label-caption`。
 	textDim: V('label-caption', 'rgba(128,128,128,.7)'),
-	/** 落在填充块上的文字（主按钮、阶段当前段）。 */
-	onFill: V('label-primary-foreground', '#fff'),
 
 	// 表面：卡片/面板沿用宿主 layer 层（与 dsh 其它界面一致）；
 	// 「卡片里再嵌一层」（输入框、胶囊、进度槽、版本徽标）走 mix() 染色。
@@ -69,8 +67,8 @@ export const color = {
 	surface1: V('bg-layer-1', 'rgba(128,128,128,.04)'),
 	surface2: V('bg-layer-2', 'rgba(128,128,128,.07)'),
 	surface3: V('bg-layer-3', 'rgba(128,128,128,.10)'),
-	inset: mix('label-primary', 6),
-	insetStrong: mix('label-primary', 10),
+	inset: mix('label-primary', 9),
+	insetStrong: mix('label-primary', 15),
 	hover: V('interactive-bg-hover', 'rgba(128,128,128,.12)'),
 	/** 按下态（给 `:active` 用）。宿主有专门 token，比"hover 再深一档"更准。 */
 	pressed: V('interactive-bg-active', 'rgba(128,128,128,.18)'),
@@ -82,14 +80,23 @@ export const color = {
 	border4: V('border-l4', 'rgba(128,128,128,.34)'),
 
 	// 语义：强调 / 成功 / 警告 / 危险
-	accent: V('link', '#4d6bfe'),
-	accentHover: V('interactive-bg-hover-accent', 'rgba(77,107,254,.12)'),
+	// ⚠️ 强调色 = 品牌暖金（呼应「锻炉」意象），**自创、不跟随宿主 link 蓝**，
+	// 让面板有独立产品感。金是中亮度色，单一金值无法两主题同时过 4.5:1
+	//（浅色要暗金、深色要亮金）→ 前景金走主题变量：css.js 在面板根注入
+	// --nf-accent（浅 #a86200 / 深 #f3a62a），这里只给带回退值的引用（回退=浅色档）；
+	// 纯填充装饰另有 brand 系常量，不受主题切换影响。
+	accent: 'var(--nf-accent, #a86200)',
 	ok: V('state-success-primary', '#2f9e44'),
 	warn: V('state-warn-primary', '#e08c00'),
 	danger: V('state-error-primary', '#e5484d'),
-	/** 宿主主按钮填充（深色主题下是近白、浅色主题下是近黑——跟宿主按钮一致）。 */
-	primaryFill: V('button-primary-fill', '#4d6bfe'),
-	primaryHover: V('button-primary-hover', 'rgba(77,107,254,.86)'),
+	/** 品牌金（主按钮 / 强调色条的单一事实来源，索引：`brand` 主色）。 */
+	brand: '#e0890f',       // 主金（中调，深浅主题都醒目）
+	brandTop: '#f3a62a',    // rest 渐变顶端（更亮一档）
+	brandBright: '#f6b042', // :hover
+	brandDeep: '#c9740a',   // :active
+	/** 压在品牌金上的文字（深暖黑）。白字压金在浅深两主题都 <4.5:1（金色中亮度，
+	 *  与主题无关）；深字压三态金底 5.1–8.8:1 全过——与品牌金配对的是深字，不是白字。 */
+	onGold: '#231303',
 
 	// 字体族（宿主变量 + 本地回退）
 	mono: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
@@ -101,12 +108,21 @@ export const color = {
  */
 export const tint = (c, pct) => `color-mix(in srgb, ${c} ${pct}%, transparent)`;
 
+/**
+ * 主题感知的层级阴影（商业感的真正来源；之前「不用阴影」是面板发平的主因）。
+ * 用 CSS 变量表达：浅色一套、深色一套，由 `css.js` 注入并随宿主主题切换。
+ * 这里只给**带回退值**的引用——即使 css.js 没注入，卡片也有一层干净的低调阴影。
+ * 浅色回退刻意「上亮下暗」：顶边一道 0.7α 白高光 + 柔和投影，是 Linear/Notion 同款。
+ */
+const ELEV1 = 'var(--nf-elev-1, 0 1px 2px rgba(15,17,21,.05), 0 2px 8px rgba(15,17,21,.06))';
+const ELEV2 = 'var(--nf-elev-2, 0 2px 6px rgba(15,17,21,.08), 0 8px 20px rgba(15,17,21,.08))';
+
 // ── ② 尺度 ──────────────────────────────────────────────────────────────────
 
 /** 间距刻度：只用这几个数，不要在视图里随手写 5px / 7px / 9px。 */
 export const space = { xs: 4, sm: 6, md: 8, lg: 12, xl: 16, xxl: 20 };
 /** 圆角刻度。 */
-export const radius = { sm: 6, md: 8, lg: 12, pill: 999 };
+export const radius = { sm: 8, md: 10, lg: 14, pill: 999 };
 /** 字号刻度。 */
 export const font = { caption: 11, small: 12, body: 13, lead: 14, title: 15, hero: 18 };
 export const weight = { normal: 400, medium: 500, semibold: 600, bold: 700 };
@@ -136,11 +152,14 @@ export const headerStyle = {
 	borderBottom: `1px solid ${color.border2}`,
 };
 
-/** 头部品牌图标块（28×28 圆角方块，染色底）。 */
+/** 头部品牌图标块（28×28 圆角方块，渐变底 + 微高光）。字色走 onGold：
+ *  深色主题下底是亮金 #f3a62a，白图标只剩 ≈2:1，深字两主题都 ≥3:1（图形线）。 */
 export const brandMarkStyle = {
 	flex: 'none', width: '28px', height: '28px', borderRadius: radius.md,
 	display: 'flex', alignItems: 'center', justifyContent: 'center',
-	fontSize: '15px', background: tint(color.accent, 14),
+	fontSize: '15px',
+	background: `linear-gradient(135deg, ${tint(color.accent, 22)}, ${color.accent})`,
+	color: color.onGold, boxShadow: ELEV1,
 };
 
 /** 头部标题（一行：标题 + 版本 chip）。 */
@@ -155,16 +174,10 @@ export const badgeStyle = {
 	fontSize: font.caption, fontFamily: color.mono, lineHeight: '16px',
 };
 
-/** 区块标题（比正文重一档 + 上间距，不用再加一行灰字注释）。 */
-export const sectionTitleStyle = {
-	display: 'flex', alignItems: 'center', gap: space.sm,
-	fontWeight: weight.semibold, fontSize: font.small, color: color.text2,
-	marginTop: space.xs,
-};
-
 /**
  * 卡片。`tone` 决定描边与底色，`pad` 覆盖内边距。
- * 不用阴影（宿主右侧栏本来就是浅浮层，阴影在浅色主题下会脏）。
+ * 带一层低调的层级阴影（ELEV1，浅/深两套由 css.js 注入 --nf-elev-*，这里只给
+ * 带回退值的引用）——旧版「不用阴影」已随层级化改版废止。
  */
 export const card = ({ tone = 'plain', pad = space.lg } = {}) => {
 	const tones = {
@@ -180,6 +193,7 @@ export const card = ({ tone = 'plain', pad = space.lg } = {}) => {
 		flex: 'none', boxSizing: 'border-box',
 		border: `1px solid ${t.border}`, background: t.background,
 		borderRadius: radius.lg, padding: `${pad}px`,
+		boxShadow: ELEV1,
 	};
 };
 
@@ -212,9 +226,12 @@ export const btnSizes = { sm: btnLayout({ size: 'sm' }), md: btnLayout({ size: '
  */
 export const btnSkin = {
 	primary: {
-		rest: { background: color.primaryFill, color: color.onFill, borderColor: 'transparent' },
-		hover: { background: V('button-primary-hover', 'rgba(77,107,254,.86)'), color: color.onFill },
-		active: { background: V('button-primary-dimmed', color.primaryFill), color: color.onFill },
+		rest: {
+			background: `linear-gradient(180deg, ${color.brandTop}, ${color.brand})`,
+			color: color.onGold, borderColor: 'transparent', boxShadow: ELEV1,
+		},
+		hover: { background: color.brandBright, color: color.onGold, boxShadow: ELEV2 },
+		active: { background: color.brandDeep, color: color.onGold },
 	},
 	secondary: {
 		rest: { background: color.inset, color: color.text, borderColor: color.border2 },
@@ -335,6 +352,22 @@ export const footerStyle = {
 	margin: 0, color: color.textDim, fontSize: font.caption,
 	flex: 'none', lineHeight: 1.7,
 };
+
+/**
+ * 仪表盘数字卡（详情/体检页的「章节 / 伏笔 / 硬伤」这类指标）。
+ * 大号等宽数字 + 弱标签，扫读时先看数——典型的商业后台观感。
+ */
+export const statTileStyle = {
+	display: 'flex', flexDirection: 'column', gap: '1px',
+	padding: `${space.md}px ${space.md}px`, borderRadius: radius.lg,
+	background: color.surface1, border: `1px solid ${color.border2}`,
+	boxShadow: ELEV1, minWidth: '66px', flex: '1 1 0',
+};
+export const statTileNum = {
+	fontWeight: weight.bold, fontSize: font.hero, lineHeight: 1.1,
+	fontVariantNumeric: 'tabular-nums', letterSpacing: '.3px', color: color.text,
+};
+export const statTileLabel = { fontSize: font.caption, color: color.text3, lineHeight: 1.4 };
 
 /** 元素列表容器（统一竖向节奏）。 */
 export const stackStyle = (gap = space.sm) => ({ display: 'flex', flexDirection: 'column', gap: `${gap}px` });

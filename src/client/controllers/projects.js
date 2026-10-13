@@ -174,6 +174,11 @@ export function createProjectsController(ctx) {
 		if (myOpen !== seq.open) return; // 失败路径同样不再追拉旧书的目录/要素/提案
 		notify();
 		await Promise.all([loadChapterList(id), loadElements(id), ctx.loadProposals(id)]);
+		if (myOpen !== seq.open) return; // 期间已切书：定位逻辑作废，避免把 A 书的章号盖到 B 书
+		// 默认定位到最新已落盘章（而非第 1 章）：打开书通常是要「接着写」
+		const maxNo = (state.chapterList ?? []).reduce((m, c) => Math.max(m, c.no ?? 0), 0);
+		if (maxNo > 1 && state.chapterNo === 1) await ctx.loadChapter(maxNo);
+		notify();
 	};
 
 	const createProject = async () => {

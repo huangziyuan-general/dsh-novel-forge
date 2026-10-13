@@ -178,7 +178,7 @@ export function ProjectListView({ state: s }) {
 									? h('div', { style: { display: 'flex', gap: space.sm, marginTop: space.sm } },
 										h('input', {
 											'data-field': 'clone-value', value: s.clone.value,
-											placeholder: '新书目录名（如：万刃-模板）', 'aria-label': '新书目录名',
+											placeholder: '新书目录名（如：示例书-模板）', 'aria-label': '新书目录名',
 											style: { ...inputStyle, flex: '1 1 auto' },
 										}),
 										Btn({ variant: 'primary', action: 'clone-confirm', disabled: s.cloning },
