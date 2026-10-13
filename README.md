@@ -58,7 +58,9 @@ AI 长篇写作的通病不是玄学，每一个都有对应的工程解法。�
 # 从 npm（0.16.0 起已发布；安装量计入 dshmarket「Most installed」榜）
 dsh plugin --profile web add npm:dsh-novel-forge
 
-# 从 GitHub 公开仓库
+# 从 GitHub 公开仓库（⚠️ github: 简写经 pnpm 走 SSH——机器要配好 GitHub SSH key
+# 且 ~/.ssh/known_hosts 里有 github.com 主机指纹，否则更新报 Host key verification failed；
+# 没配 SSH 就用上面的 npm 源，公共仓库拉取无需任何凭据）
 dsh plugin --profile web add github:huangziyuan-general/dsh-novel-forge
 
 # 本地开发（符号链接，改码即生效）
