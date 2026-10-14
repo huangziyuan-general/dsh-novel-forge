@@ -84,6 +84,10 @@ export function initialState() {
 		undoStack: [], baseline: '', draftModified: false,
 		// 未保存离开确认：null | {kind:'back'} | {kind:'chapter', no:number}
 		discardPending: null,
+		// 面板保存被门禁拦下时的原文（409 GATE_REJECTED）。非空 = 编辑区显示
+		// 「仍要保存（跳过内容门禁·记审计）」二次确认——门禁不许静默绕过，也不许
+		// 只报一句「保存失败」把人堵死。换章/换书/保存成功后复位。
+		saveBlocked: '',
 		// 会话疲劳横幅「复制交接摘要」的已复制反馈（换书/重新打开详情时复位）
 		copiedHandoff: false,
 		// 会话疲劳横幅「开新会话并归档」的两段确认（第一击 arm、第二击才发；换书复位）

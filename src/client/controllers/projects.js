@@ -145,7 +145,7 @@ export function createProjectsController(ctx) {
 		state.elements = null; state.discardPending = null; state.rename = null; state.listDeleteId = null; state.clone = null;
 		// deleteState 属于「上一本书的删除确认」：漏清会让 B 书的「删除」单击直接生效
 		//（两步确认跨书泄漏）。gateNotice/listDeleting 同理，都是上一本书的残留。
-		state.deleteState = null; state.gateNotice = null; state.listDeleting = false;
+		state.deleteState = null; state.gateNotice = null; state.saveBlocked = ''; state.listDeleting = false;
 		state.proposals = []; state.proposalsError = null; state.proposalBusy = null; state.proposalDetail = null; // 展开的全文也属于上一本书
 		state.copiedHandoff = false; // 交接摘要的「已复制」反馈同样属于上一本书
 		state.rotatePending = false; // 轮换的两段确认同样属于上一本书
@@ -216,7 +216,7 @@ export function createProjectsController(ctx) {
 	const goBack = async () => {
 		player.stop(); state.view = 'projects'; state.selected = null; state.detail = null;
 		state.discardPending = null; state.draftModified = false; state.rename = null; state.listDeleteId = null; state.clone = null;
-		state.deleteState = null; state.gateNotice = null;
+		state.deleteState = null; state.gateNotice = null; state.saveBlocked = '';
 		await refreshProjects();
 	};
 

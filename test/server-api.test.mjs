@@ -272,7 +272,10 @@ before(() => {
         effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
         webServer: { register: (def) => { registrations.push(def); return () => {}; } },
     };
-    registerServerApi(ctx, { workspaceRoot: root, scanTopK: 8 }, {
+    // minChapterChars 给一个**低但存在**的值：REST 面的机审判据必须真的生效（不配 =
+    // `chars < undefined` 恒假 = 面板保存永远不被字数拦，测试就骗过了这条洞）。
+    // 取 10 而不是生产的 2000，是为了让夹具正文保持可读——机制同一条，数字不必同款。
+    registerServerApi(ctx, { workspaceRoot: root, scanTopK: 8, minChapterChars: 10, maxChapterChars: 5000 }, {
         homedir: fakeHome,
         sessionProbe: () => rotateProbeResult ?? { sessions: null, workspace: null, full: false },
         // R-建会话-9 用：getter 惰性读模块级变量，用例内换夹具不污染其他用例
@@ -745,13 +748,18 @@ test('R3 POST chapters/:no 非正整数章节号 → 400，盘上无「第NaN章
     assert.deepEqual(strays, [], `盘上不得出现脏章节文件：${strays.join(',')}`);
 });
 
+// 面板保存的夹具正文：机审要求「≥3 段」且字数过线（配置里 minChapterChars=10），
+// 单段夹具会被段落数判驳回——夹具必须镜像真机判据，不能为了省事绕过。
+const PASSAGE = '夜色像墨，她推开了义庄的门。\n\n门槛内的香灰被夜风吹起一角。\n\n来客蹲在阶上，把湿布鞋放在那里。';
+
 test('R3b GET chapters/:no 与 POST 同款守卫：脏章号 400，而不是静默返回空正文', async () => {
     const created = await createBook('守卫对称书');
     assert.equal(created.statusCode, 200);
-    await drive({
+    const posted = await drive({
         method: 'POST', url: `${PREFIX}/projects/守卫对称书/chapters/1`,
-        body: { title: '第一章', text: '正文内容。' },
+        body: { title: '第一章', text: PASSAGE },
     });
+    assert.equal(posted.statusCode, 200, posted.body);
     for (const bad of ['abc', '1.5', '-2', '0']) {
         const res = await drive({ method: 'GET', url: `${PREFIX}/projects/守卫对称书/chapters/${encodeURIComponent(bad)}` });
         assert.equal(res.statusCode, 400, `GET 章节号「${bad}」必须 400，实际 ${res.statusCode}`);
@@ -761,22 +769,42 @@ test('R3b GET chapters/:no 与 POST 同款守卫：脏章号 400，而不是静�
     }
     const ok = await drive({ method: 'GET', url: `${PREFIX}/projects/守卫对称书/chapters/1` });
     assert.equal(ok.statusCode, 200, '合法章号照常读');
-    assert.equal(ok.json.value, '正文内容。');
+    // 面板存章与工具存章同一口径：落盘统一补一个行尾换行（旧实现原样写，无尾换行）
+    assert.equal(ok.json.value, `${PASSAGE}\n`);
 });
 
-// ── R4：合法保存章节 → 审计链有 user 的一笔（H5 修复）──────────────────
+// ── R4：面板保存走与 novel_write_chapter 同一套判定（旧版是全插件唯一旁路）────
 
-test('R4 保存章节落盘正文 + novel.json 记账 + audit.jsonl 有 rest/chapter_save(actor=user)', async () => {
+test('R4 面板保存章节：空稿 400、低于下限 409 不落盘、合格稿落盘并审计 actor=user', async () => {
     const created = await createBook('审计书');
     assert.equal(created.statusCode, 200);
 
+    // ① 空稿：旧实现连这关都没有——0 字章节直接落盘 + 索引登记 + 版本 +1
+    const empty = await drive({
+        method: 'POST', url: `${PREFIX}/projects/审计书/chapters/1`, body: { title: '空', text: '   \n' },
+    });
+    assert.equal(empty.statusCode, 400, empty.body);
+    assert.equal(empty.json.error.code, 'EMPTY_CHAPTER');
+
+    // ② 低于下限 → 409（不是 500：内容判定与 io 故障必须分码，否则面板把"字数不够"
+    //    显示成"服务故障"），且**盘上不留任何东西**
+    const short = await drive({
+        method: 'POST', url: `${PREFIX}/projects/审计书/chapters/1`, body: { title: '太短', text: '太短。' },
+    });
+    assert.equal(short.statusCode, 409, short.body);
+    assert.equal(short.json.error.code, 'GATE_REJECTED');
+    assert.match(short.json.error.message, /低于下限/);
+    assert.equal(fs.existsSync(path.join(root, '审计书', '正文', '第1章-太短-v1.md')), false, '★ 被拦下的保存一个字都不许落盘');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, '审计书', 'novel.json'), 'utf8')).chapters?.['1'], undefined, '被拦下的保存不得登记章节索引');
+
+    // ③ 合格稿 → 200 + 版本化落盘 + 索引 + 审计
     const res = await drive({
-        method: 'POST', url: `${PREFIX}/projects/审计书/chapters/1`,
-        body: { title: '雨夜来客', text: '夜色像墨，她推开了义庄的门。' },
+        method: 'POST', url: `${PREFIX}/projects/审计书/chapters/1`, body: { title: '雨夜来客', text: PASSAGE },
     });
     assert.equal(res.statusCode, 200, res.body);
     assert.equal(res.json.ok, true);
     assert.equal(res.json.value.chapter.latest, 1);
+    assert.ok(res.json.value.chars >= 40, `chars 走机审同口径（剥空白），实际 ${res.json.value.chars}`);
     assert.ok(fs.existsSync(path.join(root, '审计书', '正文', '第1章-雨夜来客-v1.md')), '正文必须按版本化命名落盘');
 
     const meta = JSON.parse(fs.readFileSync(path.join(root, '审计书', 'novel.json'), 'utf8'));
@@ -790,14 +818,55 @@ test('R4 保存章节落盘正文 + novel.json 记账 + audit.jsonl 有 rest/cha
     assert.equal(save.chapter, 1);
     assert.equal(save.version, 1);
     assert.equal(typeof save.chars, 'number');
+    assert.equal(save.forced, false, '常规保存 forced=false');
+    assert.deepEqual(save.blocked, [], '没放行任何硬伤时 blocked 为空数组');
 
-    // 第二版：旧版保留（改稿永远新增版本，不覆盖）
-    const res2 = await drive({ method: 'POST', url: `${PREFIX}/projects/审计书/chapters/1`, body: { title: '雨夜来客', text: '改：夜色更浓。' } });
+    // ④ 第二版：旧版保留（改稿永远新增版本，不覆盖）
+    const res2 = await drive({ method: 'POST', url: `${PREFIX}/projects/审计书/chapters/1`, body: { title: '雨夜来客', text: `改：${PASSAGE}` } });
     assert.equal(res2.statusCode, 200, res2.body);
     assert.equal(res2.json.value.chapter.latest, 2);
     assert.ok(fs.existsSync(path.join(root, '审计书', '正文', '第1章-雨夜来客-v1.md')));
     assert.ok(fs.existsSync(path.join(root, '审计书', '正文', '第1章-雨夜来客-v2.md')));
-    assert.equal(rows.length, readAudit('审计书').length - 1, '第二版应再各追加一条审计');
+    assert.ok(readAudit('审计书').length > rows.length, '第二版要再追加审计');
+});
+
+test('★ R4b 面板保存不抹标题：不带 title 存一次，索引与文件名都沿用原标题', async () => {
+    await createBook('标题书');
+    const first = await drive({
+        method: 'POST', url: `${PREFIX}/projects/标题书/chapters/1`, body: { title: '点卯册', text: PASSAGE },
+    });
+    assert.equal(first.statusCode, 200, first.body);
+    // 旧实现：面板每次 POST 都送 `第 N 章` 当 title，chapterRecord 无兜底 → 存一次抹一次
+    const second = await drive({
+        method: 'POST', url: `${PREFIX}/projects/标题书/chapters/1`, body: { title: '第 1 章', text: `再改：${PASSAGE}` },
+    });
+    assert.equal(second.statusCode, 200, second.body);
+    const meta = JSON.parse(fs.readFileSync(path.join(root, '标题书', 'novel.json'), 'utf8'));
+    assert.equal(meta.chapters['1'].title, '点卯册', '★ 占位标题不得覆盖真标题');
+    assert.ok(fs.existsSync(path.join(root, '标题书', '正文', '第1章-点卯册-v2.md')), '文件名同样沿用原标题');
+});
+
+test('★ R4c 内容门禁对面板同样生效：占位符 409，显式 force 才放行且回显 + 留痕', async () => {
+    await createBook('旁路面板书');
+    const withTodo = '她推开门。\n\nTODO 这里补一段对峙。\n\n香灰被风吹起。';
+    const blocked = await drive({
+        method: 'POST', url: `${PREFIX}/projects/旁路面板书/chapters/1`, body: { title: '草稿', text: withTodo },
+    });
+    assert.equal(blocked.statusCode, 409, blocked.body);
+    assert.match(blocked.json.error.message, /未完成稿标记/);
+    assert.equal(fs.existsSync(path.join(root, '旁路面板书', '正文', '第1章-草稿-v1.md')), false);
+
+    const forced = await drive({
+        method: 'POST', url: `${PREFIX}/projects/旁路面板书/chapters/1`, body: { title: '草稿', text: withTodo, force: true },
+    });
+    assert.equal(forced.statusCode, 200, forced.body);
+    assert.equal(forced.json.value.forced, true);
+    assert.ok((forced.json.value.blocked ?? []).some((m) => /未完成稿/.test(m)), '★ 放行的硬伤必须原样回显，不许静默');
+    const rows = readAudit('旁路面板书');
+    assert.ok(rows.some((r) => r.action === 'write_chapter/content_gate_forced'), 'force 放行要进审计链');
+    const save = rows.filter((r) => r.action === 'rest/chapter_save').at(-1);
+    assert.equal(save.forced, true);
+    assert.deepEqual(save.blocked, ['placeholder']);
 });
 
 // ── R5：createServerFsio 的 mode 语义（H1 修复，REST 永不静默覆盖）──────
@@ -939,8 +1008,8 @@ test('R6b 并发经端点提交不再丢更新：两边的写入都留得下来�
 
     // 同一章并发保存：两个版本都要在（版本号从重读后的最新索引推出，正文文件互不覆盖）
     const [s1, s2] = await Promise.all([
-        drive({ method: 'POST', url: `${PREFIX}/projects/并发提交书/chapters/1`, body: { title: '一章', text: '版本甲' } }),
-        drive({ method: 'POST', url: `${PREFIX}/projects/并发提交书/chapters/1`, body: { title: '一章', text: '版本乙' } }),
+        drive({ method: 'POST', url: `${PREFIX}/projects/并发提交书/chapters/1`, body: { title: '一章', text: `甲：${PASSAGE}` } }),
+        drive({ method: 'POST', url: `${PREFIX}/projects/并发提交书/chapters/1`, body: { title: '一章', text: `乙：${PASSAGE}` } }),
     ]);
     assert.equal(s1.statusCode, 200, s1.body);
     assert.equal(s2.statusCode, 200, s2.body);
@@ -1045,31 +1114,36 @@ test('R7 /continuity 归并 health 体检：控制字符路径 / NaN→null 残�
 test('R-疲劳 详情按 ?session= 聚合首稿趋势并给交接摘要（面板横幅数据面）', async () => {
     await createBook('疲劳检测');
     // 模拟 agent 会话 s1 的写章审计行（0.15.1 起 audit() 带 session 字段）；
-    // 无 session 的行（旧版本 / REST 面存章）不计入——退化场景是 agent 长会话连写。
+    // 无 session 的行（旧版本 / REST 面存章）不计入本会话，但进全书参照池。
     const bookDir = path.join(root, '疲劳检测');
     const auditPath = path.join(bookDir, '.novel', 'audit.jsonl');
     fs.mkdirSync(path.dirname(auditPath), { recursive: true });
     const lines = [
         { ts: 't', session: 's1', action: 'write_chapter/rejected', chapter: 2, reason: '正文 800 字，低于下限 2000', actor: 'agent' },
-        { ts: 't', session: 's1', action: 'write_chapter/saved', chapter: 2, chars: 2000, actor: 'agent' },
-        { ts: 't', session: 's1', action: 'write_chapter/saved', chapter: 3, chars: 900, actor: 'agent' },
-        { ts: 't', action: 'write_chapter/saved', chapter: 4, chars: 2100, actor: 'agent' },
+        { ts: 't', session: 's1', action: 'write_chapter/saved', chapter: 2, chars: 2400, actor: 'agent' },
+        { ts: 't', session: 's1', action: 'write_chapter/saved', chapter: 3, chars: 2300, actor: 'agent' },
+        { ts: 't', session: 's1', action: 'write_chapter/saved', chapter: 4, chars: 900, actor: 'agent' },
+        { ts: 't', session: 's1', action: 'write_chapter/saved', chapter: 5, chars: 800, actor: 'agent' },
+        { ts: 't', action: 'write_chapter/saved', chapter: 6, chars: 2100, actor: 'agent' },
     ];
     fs.writeFileSync(auditPath, lines.map((j) => JSON.stringify(j)).join('\n') + '\n');
-    // 基线来自 novel.json 的章节 chars：注进两章有效数值
     const metaPath = path.join(bookDir, 'novel.json');
     const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-    meta.chapters = { 2: { chars: 2000 }, 3: { chars: 2100 } };
+    meta.chapters = { 2: { chars: 2400 }, 3: { chars: 2300 }, 4: { chars: 900 }, 5: { chars: 800 } };
     fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
 
     const hit = await drive({ method: 'GET', url: `${PREFIX}/projects/${encodeURIComponent('疲劳检测')}?session=s1` });
     assert.equal(hit.statusCode, 200, hit.body);
-    assert.equal(hit.json.value.session.chapters, 2, '只统计 s1 的 saved 章');
-    assert.equal(hit.json.value.session.firstAvg, 850, '首稿=每章第一次出现的行（ch2 取 rejected 的 800）');
-    assert.equal(hit.json.value.session.baselineAvg, 2050, '基线=章节 chars 均值');
-    assert.ok(hit.json.value.session.warn.includes('低于全书基线'), '首稿退化 → 警示');
+    assert.equal(hit.json.value.session.chapters, 4, '只统计 s1 的 saved 章');
+    assert.equal(hit.json.value.session.firstAvg, 1200, '首稿=每章第一次出现的行（ch2 取 rejected 的 800，不是落盘的 2400）');
+    assert.deepEqual(hit.json.value.session.firstSeries.map((s) => s.chars), [800, 2300, 900, 800], '首稿序列按章号升序，面板/模型看的是趋势');
+    assert.equal(hit.json.value.session.bookFirstAvg, 2100, '参照=全书**其它**会话的首稿均值（同口径，不再是成稿基线）');
+    assert.equal(hit.json.value.session.referenceChapters, 1);
+    assert.ok(hit.json.value.session.warn.includes('首稿逐章变短'), '会话内退化 → 警示');
+    assert.ok(hit.json.value.session.warn.includes('不是成稿字数'), '警示文案必须标口径');
     assert.ok(hit.json.value.session.handoff.includes('疲劳检测'), '交接摘要带书名');
-    assert.ok(hit.json.value.session.handoff.includes('第 3 章'), '交接摘要指到下一章');
+    assert.ok(hit.json.value.session.handoff.includes('第 5 章'), '交接摘要指到最近一章');
+    assert.ok(hit.json.value.session.handoff.includes('第 6 章'), '交接摘要指到下一章');
 
     // 不带 session 参数：无 session 字段（面板无横幅）
     const plain = await drive({ method: 'GET', url: `${PREFIX}/projects/${encodeURIComponent('疲劳检测')}` });
@@ -1646,4 +1720,21 @@ test('R-轮换-5 缺 session → 400 INVALID_FIELD（要归档哪个会话必须
     assert.equal(res.statusCode, 400);
     assert.equal(res.json.error.code, 'INVALID_FIELD');
     rotateProbeResult = undefined;
+});
+
+test('S-5 polish/draft-batch 的 body.session 形状校验：结构性怪值 400（server-http validSessionId 收口）', async () => {
+    const badSession = 'bad id with spaces/../';
+    // polish：engine 缺席时 503 先于 body 校验；带 session 怪值时必须 400 INVALID_FIELD 先于 503
+    await createBook('护栏本');
+    const resPolish = await drive({ method: 'POST', url: `${PREFIX}/projects/护栏本/chapters/1/polish`, body: { session: badSession } });
+    assert.equal(resPolish.statusCode, 400, `polish：session 怪值应 400，实际 ${resPolish.statusCode}：${resPolish.body}`);
+    assert.equal(resPolish.json.error.code, 'INVALID_FIELD');
+
+    const resDraft = await drive({ method: 'POST', url: `${PREFIX}/projects/护栏本/draft-batch`, body: { session: badSession } });
+    assert.equal(resDraft.statusCode, 400, `draft-batch：session 怪值应 400，实际 ${resDraft.statusCode}：${resDraft.body}`);
+    assert.equal(resDraft.json.error.code, 'INVALID_FIELD');
+
+    // 正常 session id 不被误杀（合法字符白名单）
+    const resOk = await drive({ method: 'POST', url: `${PREFIX}/projects/护栏本/chapters/1/polish`, body: { session: 's-abc123:456' } });
+    assert.notEqual(resOk.statusCode, 400, `合法 session 不应 400，实际 ${resOk.statusCode}：${resOk.body}`);
 });
