@@ -49,8 +49,10 @@ DSH（DeepSeek Harness）小说创作插件。设计主线：**代码强制 > �
 10. **项目跟会话走**：`novel.json.sessions` 是「拥有这本书的会话」集合，判据一律走
    `lib/store.js` 的 `bookInSession` / `isUnclaimed` / `addBookSession`（服务端与面板共用）。
    创建类工具（init / import / clone）写创建会话；`requireBook` 负责补录当前会话
-   （`rememberSession`，静默失败不阻断写作）。**「本会话有项目才显示 tab」**由
-   `src/client/session-watch.js` 负责：会话 id 只从 `ctx.sessions.list` 读，不猜 URL / 不抠 DOM。
+   （`rememberSession`，静默失败不阻断写作）。**锻炉 tab 自 0.13.x 起无条件常驻**——
+   「本会话有项目才显示内容」的过滤在面板控制器内部，不再走 tab 门控；
+   `src/client/session-watch.js` 已退出线上入口，仅保留为「将来收回按会话门控」的
+   现成通道（会话 id 只从 `ctx.sessions.list` 读、不猜 URL / 不抠 DOM 的纪律仍属它）。
 11. **UI 失败必须可见**：面板在右侧栏里，渲染失败由错误边界（`ForgeBoundary`）就地给出报错文案，
    自动打开失败必须留 `console.warn` + guide 页手动通道；**禁止静默**。
 

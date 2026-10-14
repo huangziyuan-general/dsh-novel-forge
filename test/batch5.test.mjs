@@ -423,7 +423,7 @@ test('engine-tasks: 打标产出标签；模型不给标签时报错而不是塞
 
 // ── G1：检索纯函数 ─────────────────────────────────────────────────────────
 
-test('retrieval: bigrams 中文二元切分；ftsQuery 加引号防注入语法', () => {
+test('retrieval: bigrams 中文二元切分；ftsQuery 保留字符过滤防注入语法', () => {
     assert.deepEqual(bigrams('斗笠人'), ['斗笠', '笠人']);
     assert.deepEqual(bigrams('a b'), ['ab'], '空白不参与切分');
     assert.deepEqual(bigrams('刀'), []);
@@ -432,10 +432,13 @@ test('retrieval: bigrams 中文二元切分；ftsQuery 加引号防注入语法'
     assert.equal(ftsQuery('斗笠 码头'), '"斗笠" OR "笠码" OR "码头"');
     assert.equal(ftsQuery('刀'), '"刀"', '单字查询退化为整词');
     assert.equal(ftsQuery(''), '');
-    // 查询里的引号必须转义（FTS5 双引号内用 "" 表示字面引号），否则语法会炸
+    // 审查 L2：防注入从「引号转义」收紧为「保留字符不进 gram」——旧实现把 `"` 转义成
+    // `""` 后语法不炸，但引号本身成了检索字（查「斗笠"人」会去找字面含引号的文本）。
+    // 现在 gram 内根本不含保留字符，`"..."` 包裹内没有可逃逸的引号，注入面同样关死。
     const nasty = ftsQuery('a"b');
-    assert.ok(nasty.includes('""'), '引号要转义');
-    assert.ok(!/^"[^"]*"$/.test(nasty) || nasty.includes('""'));
+    assert.equal(nasty, '"ab"', '引号被剔除后照常连字成 gram');
+    assert.ok(!nasty.includes('""'), '不再依赖引号转义');
+    assert.ok(!ftsQuery('斗笠"人').split(' OR ').some((p) => p.slice(1, -1).includes('"')), '每个 gram 的引号内都是纯文本');
     assert.equal(normalizeForIndex('  多   空格  '), '多 空格');
 });
 
@@ -1411,4 +1414,87 @@ test('★ commitChapter 熔断：tripped 后 force:true 照样拒绝（不 bypas
     );
     assert.equal(novel.gateFailures['7'], 3, '熔断拒绝发生在计数递增之前，不涨计数');
     assert.equal(io.files.get(meta), before, '被熔断拦下的调用不写盘（盘上状态原样）');
+});
+
+// ── 审查批 L1：检查点并发守卫（saveCk 读盘让路 + 版本守卫写）──────────────────
+
+test('batch-draft: 别人的运行中检查点不被覆盖——startedAt 不再被并发刷新', async () => {
+    const book = '检查点让路书';
+    const meta = `${book}/novel.json`;
+    // 另一个进程 3 分钟前启动的运行中检查点（未过期）：本批无论跑多久都不得动它，
+    // 否则 resume 侧的 10 分钟防重入窗口被反复重置（审查 L1 的 409 误拒根因）。
+    const foreignStartedAt = new Date(Date.now() - 3 * 60_000).toISOString();
+    const ckPath = `${book}/.novel/batch-checkpoint.json`;
+    const io = memIo({
+        [meta]: JSON.stringify({
+            title: book, stage: 'chapter', phases: {},
+            approvals: { outline: { 1: true } },
+            chapters: {}, cast: [], proposals: [], gateFailures: {},
+        }),
+        [`${book}/大纲/细纲/第1章.md`]: '# 第1章\n\n- 场景一。',
+        [ckPath]: JSON.stringify({
+            book, from: 1, count: 2, concurrency: 1, force: false,
+            status: 'running', startedAt: foreignStartedAt, completed: [1], failed: [],
+        }),
+    });
+    const engine = {
+        async run(_c, { prompt }) {
+            const n = Number(prompt.match(/【第 (\d+) 章/)[1]);
+            return { ok: true, finishKind: 'stop', attempts: 1, route: { provider: 'p', model: 'm', source: 'default' }, text: CHAPTER_TEXTS[n] };
+        },
+    };
+    const result = await runDraftBatch({
+        engine, config: TEST_CFG, io, p: pathsFor(book), book,
+        novel: JSON.parse(io.files.get(meta)), from: 1, count: 1, concurrency: 1,
+    });
+    assert.equal(result.stats.committed, 1, '让路只让检查点，不拦正路：批量照常完成');
+    const ck = JSON.parse(io.files.get(ckPath));
+    assert.equal(ck.startedAt, foreignStartedAt, '他人的运行中检查点原样保留（startedAt 不被本批刷新）');
+    assert.deepEqual(ck.completed, [1], 'completed 同样保持他人的，不合并不覆盖');
+});
+
+test('batch-draft: 盘上检查点已过期（>10min）时正常接管', async () => {
+    const book = '检查点接管书';
+    const meta = `${book}/novel.json`;
+    const ckPath = `${book}/.novel/batch-checkpoint.json`;
+    const staleStartedAt = new Date(Date.now() - 11 * 60_000).toISOString();
+    const io = memIo({
+        [meta]: JSON.stringify({
+            title: book, stage: 'chapter', phases: {},
+            approvals: { outline: { 1: true } },
+            chapters: {}, cast: [], proposals: [], gateFailures: {},
+        }),
+        [`${book}/大纲/细纲/第1章.md`]: '# 第1章\n\n- 场景一。',
+        [ckPath]: JSON.stringify({
+            book, from: 1, count: 1, concurrency: 1, force: false,
+            status: 'running', startedAt: staleStartedAt, completed: [], failed: [],
+        }),
+    });
+    const engine = {
+        async run() {
+            return { ok: true, finishKind: 'stop', attempts: 1, route: { provider: 'p', model: 'm', source: 'default' }, text: CHAPTER_TEXTS[1] };
+        },
+    };
+    await runDraftBatch({
+        engine, config: TEST_CFG, io, p: pathsFor(book), book,
+        novel: JSON.parse(io.files.get(meta)), from: 1, count: 1, concurrency: 1,
+    });
+    const ck = JSON.parse(io.files.get(ckPath));
+    assert.notEqual(ck.startedAt, staleStartedAt, '过期检查点被本批接管（startedAt 换新）');
+    assert.equal(ck.status, 'done', '跑完后状态落 done（resume 侧不再 409）');
+});
+
+// ── 审查批 L2：FTS5 保留字符不进 gram ─────────────────────────────────────────
+
+test('retrieval: bigrams/ftsQuery 对保留字符——引号不再是检索字', () => {
+    assert.deepEqual(bigrams('斗笠"人'), ['斗笠', '笠人'], '引号被剔除后照常连字');
+    assert.deepEqual(bigrams('a(b)c'), ['ab', 'bc'], '括号同');
+    assert.ok(!bigrams('a"b(c)d*e:f^g,h').some((g) => /["(){}[\]*:^,]/.test(g)), '保留字符集合全数不进 gram');
+    for (const part of ftsQuery('斗笠"人').split(' OR ')) {
+        const inner = part.replace(/^"/, '').replace(/"$/, '');
+        assert.ok(!inner.includes('"'), `gram 引号内不得再有引号：${part}`);
+    }
+    assert.equal(ftsQuery('"""'), '', '全是保留字符的查询 → 空表达式（fallback 不做 quote(raw)）');
+    assert.equal(ftsQuery('   '), '', '纯空白照旧空表达式');
+    assert.equal(ftsQuery('"搜"索'), '"搜索"', '剔除引号后正常出 gram（单字 fallback 同样剔除保留字符）');
 });
