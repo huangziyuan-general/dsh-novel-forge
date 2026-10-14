@@ -36,6 +36,15 @@ function scriptedFetch(sequence) {
         const step = sequence[Math.min(i, sequence.length - 1)];
         i += 1;
         if (step && step.reject) return Promise.reject(new Error(step.reject));
+        // 失败响应（ok:false + error.code）：面板按 code 分流（409 GATE_REJECTED 给二次
+        // 确认，500 只报错），所以替身必须能造出带 code 的错误——只回 ok:true 的替身
+        // 会把「按 code 分流」这段逻辑永远测不到。
+        if (step && step.error) {
+            return Promise.resolve({
+                status: step.status ?? 400,
+                json: () => Promise.resolve({ ok: false, error: step.error }),
+            });
+        }
         return Promise.resolve({ json: () => Promise.resolve({ ok: true, value: step && 'value' in step ? step.value : [] }) });
     };
     return { fetch, requests };
@@ -347,7 +356,7 @@ test('★ 创建项目带会话戳：POST /projects body 里有 session', async 
 
 test('★ 疲劳横幅「创建新会话并交接」：单击即 POST /session/create，成功后自动复制交接摘要', async () => {
     const seq = scriptedFetch([
-        { value: { title: '星海拾骨', stage: 'planning', chapters: {}, session: { chapters: 9, firstAvg: 800, baselineAvg: 2000, warn: '低于全书基线', handoff: '交接摘要内容', canCreate: true } } },
+        { value: { title: '星海拾骨', stage: 'planning', chapters: {}, session: { chapters: 9, firstAvg: 800, bookFirstAvg: 2000, referenceChapters: 12, firstSeries: [{ chapter: 7, chars: 2300 }, { chapter: 8, chars: 900 }], warn: '本会话首稿逐章变短', handoff: '交接摘要内容', canCreate: true } } },
         { value: '' }, // 第 1 章正文
         { value: [] }, { value: [] },
         { value: { created: true, createdSessionId: 's-new-1', workspaceMatched: true } },
@@ -370,7 +379,7 @@ test('★ 疲劳横幅「创建新会话并交接」：单击即 POST /session/c
 test('★ 会话疲劳一键轮换：第一击只 arm 不发请求，第二击才 POST /session/rotate 并带会话 id', async () => {
     // 501 降级形态由 server 侧契约覆盖（scriptedFetch 只能回 ok:true）——这里锁两段确认与请求形状
     const seq = scriptedFetch([
-        { value: { title: '星海拾骨', stage: 'planning', chapters: {}, session: { chapters: 9, firstAvg: 800, baselineAvg: 2000, warn: '低于全书基线', handoff: '交接摘要', rotate: true } } },
+        { value: { title: '星海拾骨', stage: 'planning', chapters: {}, session: { chapters: 9, firstAvg: 800, bookFirstAvg: 2000, referenceChapters: 12, firstSeries: [{ chapter: 7, chars: 2300 }, { chapter: 8, chars: 900 }], warn: '本会话首稿逐章变短', handoff: '交接摘要', rotate: true } } },
         { value: '' }, // 第 1 章正文
         { value: [] }, { value: [] }, // elements / 章节目录（openProject 并行追拉）
         { value: { rotated: true, newSessionId: 's-new-1', archived: true } }, // POST /session/rotate（尾值重复，落在队尾必被 POST 拿到）
@@ -392,6 +401,35 @@ test('★ 会话疲劳一键轮换：第一击只 arm 不发请求，第二击�
     assert.equal(JSON.parse(post.init.body).session, 's1', '要归档的就是面板所在会话');
     assert.ok(controller.state.notice.includes('已开新会话并归档旧会话'), '成功提示要指路：去会话列表打开新会话');
     assert.equal(controller.state.rotatePending, false, '发完复位');
+});
+
+test('★ 面板保存被门禁拦下：原文进 saveBlocked，第二击才带 force，且不再送占位标题', async () => {
+    const seq = scriptedFetch([
+        { value: { title: '星海拾骨', stage: 'writing', chapters: { 1: { chars: 2400, title: '雨夜来客' } } } },
+        { value: '夜色像墨，她推开了义庄的门。' },   // loadChapter
+        { value: [] }, { value: [] }, { value: [] },   // 章节目录 / elements / 提案队列
+        { status: 409, error: { code: 'GATE_REJECTED', message: '机审未通过，未保存：正文 1450 字，低于下限 2000' } },
+        { value: { chapter: { latest: 2 }, chars: 2410 } },
+    ]);
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch: seq.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    const posts = () => seq.requests.filter((r) => /\/chapters\/1$/.test(r.url) && r.init?.method === 'POST');
+
+    await controller.handleAction('save', { dataset: {} });
+    assert.equal(posts().length, 1, '第一击只发一次保存');
+    const body1 = JSON.parse(posts()[0].init.body);
+    assert.equal(body1.force, undefined, '★ 第一击不带 force——放行必须是显式二次确认');
+    assert.ok(!('title' in body1), '★ 不再送「第 N 章」占位标题（旧实现每存一次就把真标题抹掉一次）');
+    assert.match(controller.state.saveBlocked, /低于下限 2000/, '门禁原文要摆出来');
+    assert.equal(controller.state.error, '', '门禁拦下不是服务故障，不该混进 error');
+    assert.ok(!String(controller.state.notice).includes('已保存'), '★ 被拦下不是保存成功，不许写「已保存」提示');
+
+    await controller.handleAction('save-force', { dataset: {} });
+    assert.equal(posts().length, 2, '第二击才带 force 重发');
+    assert.equal(JSON.parse(posts()[1].init.body).force, true);
+    assert.equal(controller.state.saveBlocked, '', '放行成功后清掉拦停提示');
 });
 
 test('★ 认领未归属的书：POST /projects/claim 带 session 与 ids', async () => {
@@ -1746,7 +1784,7 @@ test('★ 动作契约对账：视图发出的每个 data-action 控制器都有
 
 test('★ 详情请求带会话 + 疲劳横幅数据落 state；copy-handoff 无剪贴板给可行动错误', async () => {
     const seq = scriptedFetch([
-        { value: { id: '书C', title: '书C', chapters: { 9: { chars: 2000 } }, session: { chapters: 9, firstAvg: 850, baselineAvg: 2100, warn: '本会话首稿均长 850 字——建议开新会话', handoff: '继续《书C》：已写至第 9 章。' } } },
+        { value: { id: '书C', title: '书C', chapters: { 9: { chars: 2000 } }, session: { chapters: 9, firstAvg: 850, bookFirstAvg: 2100, referenceChapters: 9, firstSeries: [{ chapter: 8, chars: 850 }], warn: '本会话首稿均长 850 字——建议开新会话', handoff: '继续《书C》：已写至第 9 章。' } } },
         { value: '' },
         { value: [] }, { value: {} }, { value: [] },
     ]);

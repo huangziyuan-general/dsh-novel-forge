@@ -125,7 +125,10 @@ export function createEventsController(ctx) {
 			case 'draft-batch-resume': await ctx.runBatch({ resume: true }); break;
 			case 'diagnose': await ctx.loadDiagnosis(); break;
 			case 'import-demo': case 'import-file': needsModel('请在会话中调用 novel_import 导入'); break;
-			case 'save': await ctx.saveChapter(); break;
+			case 'save': state.saveBlocked = ''; await ctx.saveChapter(); break;
+			// 门禁拦下后的二次确认：只有这一条路径带 force（内容门禁类判定可放行，
+			// 字数/账本/熔断服务端仍硬拦）——不做默认放行，也不许静默跳过。
+			case 'save-force': await ctx.saveChapter({ force: true }); break;
 			// M14 修复：刷新会重拉当前章、覆盖编辑器——有未保存改动时走同一套
 			// 「确认丢弃」流程（与切章一致），不再静默把草稿冲掉
 			case 'refresh':

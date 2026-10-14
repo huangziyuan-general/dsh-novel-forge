@@ -61,7 +61,12 @@ function SessionFatigueBanner({ session, copied }) {
 		h('div', { style: { display: 'flex', alignItems: 'baseline', gap: space.sm, flexWrap: 'wrap' } },
 			h('span', { style: { fontWeight: weight.semibold } }, '⚠ 会话疲劳'),
 			h('span', { style: hintStyle },
-				`本会话已写 ${session.chapters} 章 · 首稿均长 ${session.firstAvg} 字（全书基线 ${session.baselineAvg}）`),
+				`本会话已写 ${session.chapters} 章 · 首稿均长 ${session.firstAvg} 字`
+				// 口径必须写出来：首稿＝门禁驳回前的初稿，不是成稿字数（0.18.0——旧文案只写
+				// 「全书基线」，读者把 1459 当成"放行了短章"，实际那是被顶回来之前的初稿）
+				+ '（首稿＝门禁驳回前的初稿，非成稿'
+				+ (session.bookFirstAvg > 0 ? ` · 其它会话首稿均值 ${session.bookFirstAvg} 字` : '')
+				+ '）'),
 		),
 		h('div', { style: { ...hintStyle, marginTop: space.xs } },
 			'对话历史堆积会稀释输出质量。书的状态全在盘上——换会话零损失。'),
@@ -314,6 +319,17 @@ h('span', { style: { flex: '1 1 auto' } }),
 		),
 		h('div', { style: { ...hintStyle, fontSize: font.caption, marginTop: space.xs, lineHeight: 1.6 } },
 			s.chapterNo > maxWritten ? '这一章还没落盘 —— 点「写章」直接过门禁链落盘' : '写章 = 生成新版本（旧稿保留）；润色 / 校对产物是提案'),
+
+		// 保存被门禁拦下：原文必须摆出来（判定逐条可执行），并给一次显式放行。
+		// 面板保存与 novel_write_chapter 共用同一套判定，这里不是新规则，是那条规则的可见面。
+		s.saveBlocked ? h('div', { style: { marginTop: space.sm } },
+			Feedback({ tone: 'err' }, s.saveBlocked),
+			h('div', { style: { ...rowWrapStyle(space.xs), marginTop: space.xs } },
+				Btn({ size: 'sm', variant: 'secondary', action: 'save-force' }, '仍要保存（跳过内容门禁·记审计）'),
+				h('span', { style: { ...hintStyle, fontSize: font.caption } },
+					'字数不足、账本冲突这类硬判定，「仍要保存」也顶不开'),
+			),
+		) : null,
 
 		// 润色 / 校对走真端点，产物是提案（点「应用」才生效）
 		h('div', { style: { ...rowWrapStyle(space.xs), marginTop: space.md } },

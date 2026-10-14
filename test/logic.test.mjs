@@ -14,9 +14,9 @@ import { scanSensitive, CENSOR_KEYS } from '../lib/censor.js';
 import { applyFactUpdates, queryFacts, factsDigest, assertLedgerChapter, factsAt, statusTimeline, foreshadowSetup, foreshadowPayoff, openForeshadows, foreshadowDigest, overdueForeshadows } from '../lib/ledger.js';
 import { computeAudit, auditVerdict, paragraphCharProfile, chapterCharTarget, thickenQuota } from '../lib/audit.js';
 import { detectHookKind, stripEmphasis } from '../lib/hook.js';
-import { sceneCapacityShortfall, SCENE_CAPACITY_CHARS } from '../lib/gate-metrics.js';
+import { outlineCapacityEstimate, sceneCharBudget, countSceneBeats, SCENE_BASE_CHARS, SCENE_BEAT_CHARS, SCENE_BEATS_CAP } from '../lib/gate-metrics.js';
 import { matchWorldEntries, buildContextPack, renderPack, declaredCoverageTerms } from '../lib/contextpack.js';
-import { pathsFor, defaultNovel, chapterRecord, normalizeWorldEntry, bookInSession, isUnclaimed, addBookSession, nextWorldEntryId, sameEntryId, migrateNovel, SCHEMA_VERSION, containedBookPath } from '../lib/store.js';
+import { pathsFor, defaultNovel, chapterRecord, normalizeWorldEntry, deriveEntryKeywords, resolveWorldTrigger, bookInSession, isUnclaimed, addBookSession, nextWorldEntryId, sameEntryId, migrateNovel, SCHEMA_VERSION, containedBookPath } from '../lib/store.js';
 import { validProposalId } from '../lib/proposals.js';
 import { scanAiFlavor } from '../lib/noai.js';
 import { roughOutline, splitIntoChapters, isChapterHeading } from '../lib/import.js';
@@ -29,7 +29,7 @@ import { bigrams } from '../lib/retrieval.js';
 import { validateContinuity, isDeathRecord, deathTimeline } from '../lib/continuity.js';
 import { contentGate, setupKeywords, factStatesAt } from '../lib/content-gate.js';
 import { validatePolishEdits } from '../lib/polish.js';
-import { hasControlChars, stripControlChars, controlCharPaths, numericNullFields, ghostProposals, ghostIndexChapters, healthIssues, sessionFatigue, bookCharBaseline } from '../lib/health.js';
+import { hasControlChars, stripControlChars, controlCharPaths, numericNullFields, ghostProposals, ghostIndexChapters, healthIssues, sessionFatigue, bookCharBaseline, firstDraftByChapter } from '../lib/health.js';
 import { auditLine } from '../lib/fsio.js';
 
 // ── versioning ──────────────────────────────────────────────────────────────
@@ -440,7 +440,7 @@ test('store: 会话归属——bookInSession / isUnclaimed / addBookSession', ()
     assert.equal(bookInSession({ title: 'legacy' }, 's1'), false);
 });
 
-test('store: 世界书条目校验', () => {
+test('store: 世界书条目校验（无兜底通道的调用方仍须给词或显式常驻）', () => {
     assert.throws(() => normalizeWorldEntry({ keywords: [], content: 'x' }), /关键词/);
     assert.throws(() => normalizeWorldEntry({ keywords: ['k'], content: '' }), /content/);
     let list = [];
@@ -448,6 +448,27 @@ test('store: 世界书条目校验', () => {
     assert.throws(() => normalizeWorldEntry({ id: 'W1', keywords: ['x'], content: 'y' }, list), /重复/);
     const always = normalizeWorldEntry({ keywords: [], content: '核心', always: true }, []);
     assert.equal(always.always, true);
+});
+
+test('★ store: 世界书触发词兜底——先抽本书已知实体名，抽不到转常驻（真机首发报错的根修）', () => {
+    // 只从候选名池挑，不凭空造词（自己拼 2-4gram 会把「的/了」送进触发词）
+    assert.deepEqual(
+        deriveEntryKeywords('顾氏集团的四成股权被冻结令明天生效，沈夜是幕后推手。', ['沈夜', '顾氏集团', '冻结令', '周伯']),
+        ['顾氏集团', '冻结令', '沈夜'], '命中内容的最长者优先，未命中的（周伯）不进');
+    assert.deepEqual(deriveEntryKeywords('本书是女频题材。', ['沈夜']), [], '内容里没有已知实体 → 空');
+    assert.deepEqual(deriveEntryKeywords('沈夜与雨', ['沈夜', '雨']), ['沈夜'], '单字名不当触发词（命中面太宽）');
+
+    const given = resolveWorldTrigger({ keywords: ['灵潮'], content: 'x', names: ['灵潮'] });
+    assert.deepEqual([given.keywords, given.always, given.warning], [['灵潮'], false, ''], '给了词 → 原样通过，不走兜底');
+    assert.equal(resolveWorldTrigger({ keywords: [], always: true, content: 'x' }).warning, '', '显式常驻 → 原样通过');
+    const derived = resolveWorldTrigger({ keywords: [], content: '顾氏集团股权', names: ['顾氏集团'] });
+    assert.deepEqual(derived.keywords, ['顾氏集团']);
+    assert.equal(derived.always, false);
+    assert.match(derived.warning, /自动取词/);
+    const fallback = resolveWorldTrigger({ keywords: [], content: '本书是番茄女频题材', names: ['沈夜'] });
+    assert.deepEqual(fallback.keywords, []);
+    assert.equal(fallback.always, true, '抽不到词 → 转常驻（而不是抛错）');
+    assert.match(fallback.warning, /always:true 常驻注入/, '兜底必须有可见警告（禁止静默）');
 });
 
 // ── noai ────────────────────────────────────────────────────────────────────
@@ -1485,30 +1506,62 @@ test('补字配额：没有缺口或没有短段 → null（不硬凑指令）',
     assert.equal(thickenQuota([], 300), null);
 });
 
-test('★ 细纲门禁前移：场景数连机审下限都撑不到 → 报差额并要求拆场景', () => {
-    // 真机第 91 章：4 个必写场景 × 480 = 1920 < 下限 2000 → 十次尝试卡在 1905 字
-    const four = ['## 本章必写场景', '- 出井：井绳断了', '- 井上摊账：对质', '- 熔断重置：真相', '- 回营：收尾'].join('\n');
-    const s = sceneCapacityShortfall({ outline: four, minChars: 2000, target: 3000 });
-    assert.ok(s, '4 个场景连下限都撑不到，必须拦下');
-    assert.equal(s.sceneCount, 4);
-    assert.equal(s.capacityChars, 4 * SCENE_CAPACITY_CHARS);
-    assert.equal(s.needed, Math.ceil(3000 / SCENE_CAPACITY_CHARS), '建议场景数按目标算（照目标拆才写得舒服）');
-    // 场景给够 → 通过
-    const seven = ['## 本章必写场景', ...Array.from({ length: 7 }, (_, i) => `- 场景${i + 1}：要点`)].join('\n');
-    assert.equal(sceneCapacityShortfall({ outline: seven, minChars: 2000, target: 3000 }), null);
+test('★ 细纲容量估算（0.18.0 重标口径）：拍数进判据，「加拍」而不是「加场景」', () => {
+    // 旧口径 sceneCount×480 在真机 151 章上误驳率 63%（拦 35 章、22 章实际首稿 ≥2000），
+    // 且场景数对首稿字数的解释力 R²=0.033——4 场景的细纲实测 median 2087 字。
+    // 新口径：场景数×300 + 拍×160（真机精确率 87%）。
+    const thin = ['## 本章必写场景', '- 出井：井绳断了', '- 井上摊账：对质', '- 熔断重置：真相', '- 回营：收尾'].join('\n');
+    const est = outlineCapacityEstimate({ outline: thin, minChars: 2000 });
+    assert.equal(est.sceneCount, 4);
+    assert.equal(est.beats, 4, '每条只有标题级描述＝各 1 拍');
+    assert.equal(est.estimated, 4 * SCENE_BASE_CHARS + 4 * SCENE_BEAT_CHARS);
+    assert.ok(est.estimated < 2000, '4 场景 4 拍撑不到下限');
+    assert.equal(est.thinScenes.length, 4, '四个场景全点名（补拍的位置要说清）');
+    assert.ok(est.neededBeats >= 1, '给出还差几拍');
+
+    // 真机反例：同样 4 个场景，但每条描述写透了（墨骨录第 2 章形态，实测首稿 2616 字）
+    // → 新口径必须放行。旧口径在这里是误驳（4×480=1920 < 2000）。
+    const dense = [
+        '## 本章必写场景',
+        '- 点卯册：晨起韩岐取册，对光验出「王贵」二字浮墨不透背、描红无提按，册尾「代记：周四奎」——报时造假实锤',
+        '- 王贵的住舱：中埠货船尾舱，账册搬空、床板拆搜重钉、新锈钉帽，夹缝里半页上货单渝字三百十一号+指甲月牙暗记',
+        '- 提审周四奎：签押房对质，三样证据戳住，周四奎「上头教小的做什么」咬死不崩，押下再磨',
+        '- 明日卯时来抬人：梁九送百两香仪逼尸，杜衡欲松口被韩岐截住；梁九「手稳」威胁离场；章末问句收钩',
+    ].join('\n');
+    const est2 = outlineCapacityEstimate({ outline: dense, minChars: 2000 });
+    assert.equal(est2.sceneCount, 4, '场景数没变');
+    assert.ok(est2.beats > 4, '但拍数上去了（描述里的动作分隔符）');
+    assert.ok(est2.estimated >= 2000, `★ 密集描述的 4 场景细纲不得再被误驳（实测 ${est2.estimated}）`);
 });
 
-test('细纲门禁前移：不误驳——没写场景段 / 场景段解析不出 / 场景够用 三种情形都放行', () => {
-    // 自由文本细纲（老书写法，没写「本章必写场景」段）→ 不判
-    assert.equal(sceneCapacityShortfall({ outline: '第2章：来客。出场：林晚。事件：收殓尸体。', minChars: 2000, target: 3000 }), null);
-    // 段在但解析不出条目（格式漂移）→ 不判（与 computeGateMetrics 同策略：只警告不阻断）
-    assert.equal(sceneCapacityShortfall({ outline: '## 本章必写场景\n\n', minChars: 2000, target: 3000 }), null);
-    // 目标很大但下限很小（玩具配置）→ 结构上限 ≥ 下限即放行，不拿目标当驳回线
-    assert.equal(sceneCapacityShortfall({ outline: '## 本章必写场景\n1. 只有一个场景\n', minChars: 300, target: 2700 }), null);
-    // 下限本身够小 → 单场景也过
-    assert.equal(sceneCapacityShortfall({ outline: '## 本章必写场景\n- 甲：乙', minChars: SCENE_CAPACITY_CHARS, target: 3000 }), null);
-    // 没给下限 → 不判（`x >= undefined` 恒为 false，会凭空造出误驳）
-    assert.equal(sceneCapacityShortfall({ outline: '## 本章必写场景\n1. 只有一个场景\n', target: 3000 }), null);
+test('★ 逐场景字数预算：把「本章 3000 字」翻译成「这一场 ≈N 字」', () => {
+    const outline = ['## 本章必写场景', '- 甲案：井绳断了', '- 乙案：对质摊账'].join('\n');
+    const budget = sceneCharBudget({ outline, target: 3000, minChars: 2000 });
+    assert.equal(budget.length, 2);
+    assert.equal(budget[0].title, '甲案');
+    assert.ok(budget.every((b) => Number.isInteger(b.suggested) && b.suggested > 0));
+    const sum = budget.reduce((a, b) => a + b.suggested, 0);
+    assert.ok(sum >= 3000 * 0.9 && sum <= 3000 * 1.2, `预算合计要贴着目标（实际 ${sum}）`);
+    // 没写场景段 → 不编预算（briefing 退化为通用段落规格）
+    assert.equal(sceneCharBudget({ outline: '第2章：来客。出场：林晚。', target: 3000, minChars: 2000 }), null);
+    assert.equal(sceneCharBudget({ outline, target: 0 }), null, '没有目标就不判');
+});
+
+test('细纲容量估算：不误判——没写场景段 / 段里没条目 / 没给下限', () => {
+    assert.equal(outlineCapacityEstimate({ outline: '第2章：来客。出场：林晚。事件：收殓尸体。', minChars: 2000 }), null);
+    assert.equal(outlineCapacityEstimate({ outline: '## 本章必写场景\n\n', minChars: 2000 }), null);
+    assert.equal(outlineCapacityEstimate({ outline: '## 本章必写场景\n- 甲：乙', minChars: Number.NaN }), null, '没给下限不判（否则凭空造出差额）');
+    // 单场景 + 低下限（玩具配置）→ 放行，不拿目标当驳回线
+    const one = outlineCapacityEstimate({ outline: '## 本章必写场景\n1. 只有一个场景\n', minChars: 300 });
+    assert.equal(one.estimated >= 300, true);
+    assert.equal(one.thinScenes.length, 0, '已过下限＝没有要补的');
+});
+
+test('countSceneBeats：拍数封顶、编号式描述也算', () => {
+    assert.equal(countSceneBeats({ desc: '' }), 1, '只有标题＝1 拍');
+    assert.equal(countSceneBeats({ desc: '晨起取册、对光验墨、册尾代记' }), 3, '两个分隔符＝3 拍');
+    assert.equal(countSceneBeats({ desc: '1. 甲 2. 乙 3. 丙' }), 4, '编号列拍同样算');
+    assert.equal(countSceneBeats({ desc: 'a、b、c、d、e、f、g、h' }), SCENE_BEATS_CAP, '封顶：描述再长也不无限加容量');
 });
 
 test('★ 交付纪律：写前简报带「收尾怎么走」段——收尾=纯文字汇报，禁止 present（防收尾死锁）', async () => {
@@ -2425,37 +2478,101 @@ test('auditLine: session 字段只在给准时出现（历史行无 session 的�
     assert.equal('session' in noS, false, 'REST 面/旧形状不得带 session 键');
 });
 
-test('health: 会话疲劳——首稿退化警示优先于章数阈值，别会话/非写章行不计入', () => {
+// ── 会话疲劳（0.18.0 重写判据）：同口径 + 会话内趋势，不再拿首稿除成稿 ──────
+
+test('health: firstDraftByChapter——每章取第一次出现的行，非写章行不计入', () => {
     const lines = [
+        { session: 's1', action: 'ledger/update', chapter: 10 },
         { session: 's1', action: 'write_chapter/rejected', chapter: 10, reason: '正文 800 字，低于下限 2000' },
         { session: 's1', action: 'write_chapter/saved', chapter: 10, chars: 2000 },
         { session: 's1', action: 'write_chapter/saved', chapter: 11, chars: 900 },
-        { session: 'other', action: 'write_chapter/saved', chapter: 12, chars: 2100 },
-        { session: 's1', action: 'ledger/update', chapter: 10 },
-        { noSessionAtAll: true, action: 'write_chapter/saved', chapter: 13, chars: 2050 },
+        { action: 'write_chapter/saved', chapter: 12, chars: 2050 },
+        { session: 's1', action: 'write_chapter/saved', chapter: 13, chars: null },
+        'not json',
     ].map((j) => JSON.stringify(j)).join('\n');
-    const f = sessionFatigue(lines, 's1', 2100);
-    assert.equal(f.sessionChapters, 2, '只有 s1 的两个 saved 章');
-    assert.equal(f.sessionFirstAvg, 850, '首稿=每章第一次出现的行（ch10 取 rejected 的 800）');
-    assert.equal(f.baselineAvg, 2100);
-    assert.ok(f.warn.includes('低于全书基线'), '首稿退化警示优先');
+    const m = firstDraftByChapter(lines);
+    assert.equal(m.get(10).chars, 800, '首稿＝第一次出现的行（rejected 的 800，不是落盘的 2000）');
+    assert.equal(m.get(11).chars, 900);
+    assert.equal(m.get(12).session, null, '历史行没有 session 字段→不归属任何会话，但仍进全书参照池');
+    assert.equal(m.has(13), false, 'chars=null（NaN→null 盘面残留）不入库');
 });
 
-test('health: 会话疲劳——首稿健康但连续章数超阈值，改发章数警示', () => {
-    const many = Array.from({ length: 9 }, (_, i) => JSON.stringify({
-        session: 's2', action: 'write_chapter/saved', chapter: i + 1, chars: 2100,
+test('★ health: 会话疲劳——真机形状（首稿 1197/1717、落盘 2046/2429）不得告警', () => {
+    // 旧判据＝本会话首稿均值 ÷ 全书**成稿**均值 < 0.7。门禁把 1197 的初稿顶到 2046 落盘，
+    // 比值 0.65 → 第 1 章落盘就误报「会话疲劳」（用户报障形状：写到第三章就疲劳）。
+    // 量纲错配修好后，这条形状必须静默。
+    const lines = [
+        { session: 's1', action: 'write_chapter/rejected', chapter: 1, reason: '正文 1197 字，低于下限 2000' },
+        { session: 's1', action: 'write_chapter/saved', chapter: 1, chars: 2046 },
+        { session: 's1', action: 'write_chapter/rejected', chapter: 2, reason: '正文 1717 字，低于下限 2000' },
+        { session: 's1', action: 'write_chapter/saved', chapter: 2, chars: 2429 },
+    ].map((j) => JSON.stringify(j)).join('\n');
+    const f = sessionFatigue(lines, 's1');
+    assert.equal(f.sessionChapters, 2);
+    assert.equal(f.sessionFirstAvg, 1457);
+    assert.equal(f.bookFirstAvg, null, '全书没有**其它**会话的首稿 → 没有参照物');
+    assert.equal(f.warn, null, '★ 门禁把短初稿顶上去 ≠ 会话疲劳');
+});
+
+test('★ health: 会话疲劳——会话内首稿逐章变短（真机 1939→558 形状）必须告警', () => {
+    const mk = (chapter, chars) => JSON.stringify({ session: 's1', action: 'write_chapter/saved', chapter, chars });
+    const lines = [2400, 2300, 2200, 1200, 1000, 900].map((c, i) => mk(i + 1, c)).join('\n');
+    const f = sessionFatigue(lines, 's1');
+    assert.equal(f.reason, 'trend', '趋势判据优先');
+    assert.match(f.warn, /前 3 章平均 2300 字 → 最近 3 章平均 1033 字/);
+    assert.match(f.warn, /首稿＝门禁驳回前的初稿字数，不是成稿字数/, '文案必须标口径');
+    assert.equal(f.sessionFirstSeries.length, 6);
+    // 前后同水平 → 不警（哪怕绝对值不高）
+    const flat = [1500, 1520, 1480, 1510, 1490, 1505].map((c, i) => mk(i + 1, c)).join('\n');
+    assert.equal(sessionFatigue(flat, 's1').warn, null, '稳定但偏短＝模型水位问题，不是会话疲劳');
+});
+
+test('health: 会话疲劳——水平判据要有跨会话参照，样本不足/新书一律不判', () => {
+    const others = [2400, 2300, 2200].map((c, i) => JSON.stringify({ session: 'other', action: 'write_chapter/saved', chapter: i + 1, chars: c }));
+    const own = [1500, 1400, 1300].map((c, i) => JSON.stringify({ session: 's2', action: 'write_chapter/saved', chapter: i + 4 + i, chars: c }));
+    const f = sessionFatigue([...others, ...own].join('\n'), 's2');
+    assert.equal(f.reason, 'level');
+    assert.equal(f.bookFirstAvg, 2300);
+    assert.equal(f.referenceChapters, 3);
+    assert.match(f.warn, /低于其它会话首稿均值 2300 字的 70%/);
+    // 本会话只有 2 章 → 样本不足，不判水平
+    assert.equal(sessionFatigue([...others, own[0], own[1]].join('\n'), 's2').warn, null);
+    // 没有其它会话（新书）→ 没有参照物，不判
+    assert.equal(sessionFatigue(own.join('\n'), 's2').warn, null, '★ 新书的「全书基线」就是本会话自己，换会话零收益');
+});
+
+test('★ health: 会话疲劳——外部用户真机 20 章连写（首稿一路上行）只出章数兜底、不出趋势', () => {
+    // 2026-10-14《战神归来》session-75375843 实录首稿序列（audit.jsonl 原样）：
+    // 前 4 章 1650/1267/1258/1692 被字数线退回，第 5 章起模型摸到线 → 后段 2100–2655。
+    // 这是「越写越好」的形状，绝不能被判成退化；旧算法反而在 ch1–ch2 就告警。
+    const series = [1650, 1267, 1258, 1692, 2032, 2271, 2138, 2117, 2416, 2193,
+        2655, 2428, 2256, 1894, 2120, 2180, 2366, 2334, 2312, 2552];
+    const lines = series.map((chars, i) => JSON.stringify({
+        session: 's-real', action: 'write_chapter/saved', chapter: i + 1, chars,
     })).join('\n');
-    const f2 = sessionFatigue(many, 's2', 2100);
-    assert.equal(f2.sessionChapters, 9);
-    assert.equal(f2.sessionFirstAvg, 2100);
-    assert.ok(f2.warn.includes('连续写 9 章'), '章数阈值警示');
-    assert.equal(f2.warn.includes('低于全书基线'), false);
+    const f = sessionFatigue(lines, 's-real');
+    assert.equal(f.reason, 'chapters', '只有章数兜底，没有趋势/水平告警');
+    assert.ok(f.sessionFirstSeries[0].chars < f.sessionFirstSeries.at(-1).chars, '首稿在上行');
+    assert.equal(f.bookFirstAvg, null, '全程单会话 → 没有跨会话参照');
 });
 
-test('health: 会话疲劳——无基线/空会话不警示，bookCharBaseline 滤掉 null 残留', () => {
-    assert.equal(sessionFatigue('', 's1', 2100).sessionFirstAvg, null);
-    assert.equal(sessionFatigue('{}\n{}\n', 's1', 2100).sessionFirstAvg, null);
-    assert.equal(sessionFatigue(JSON.stringify({ session: 's1', action: 'write_chapter/saved', chapter: 1, chars: 1900 }), 's1', 0).warn, null, '无基线不判退化');
+test('health: 会话疲劳——连写章数兜底警示（首稿健康也要换会话，但不许声称已退化）', () => {
+    const many = Array.from({ length: 9 }, (_, i) => JSON.stringify({
+        session: 's3', action: 'write_chapter/saved', chapter: i + 1, chars: 2100,
+    })).join('\n');
+    const f = sessionFatigue(many, 's3');
+    assert.equal(f.sessionChapters, 9);
+    assert.equal(f.reason, 'chapters');
+    assert.match(f.warn, /连续写 9 章/);
+    // 外部用户真机 20 章连写：首稿 1650→2552 一路上行，章数兜底若把"稀释输出质量"当既成
+    // 事实说出来，就是替模型编一个不存在的病（趋势判据才管退化）。
+    assert.doesNotMatch(f.warn, /会稀释输出质量/, '★ 章数兜底只讲上下文成本，不宣称质量已退化');
+    assert.match(f.warn, /以本会话首稿趋势为准/);
+});
+
+test('health: 会话疲劳——空审计/坏行不炸，bookCharBaseline 只作展示口径', () => {
+    assert.equal(sessionFatigue('', 's1').sessionFirstAvg, null);
+    assert.equal(sessionFatigue('{}\n{}\n', 's1').sessionFirstAvg, null);
     assert.equal(bookCharBaseline({ chapters: { 1: { chars: 2000 }, 2: { chars: 2200 }, 3: { chars: null } } }), 2100, 'NaN→null 残留被滤掉');
     assert.equal(bookCharBaseline({ chapters: {} }), 0);
 });
