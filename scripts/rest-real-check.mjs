@@ -149,6 +149,13 @@ try {
             console.log('SKIP  ⑩ 疲劳回放（未给 REAL_CHECK_AUDIT=audit.jsonl 路径）');
         }
     }
+    // ⑪ 面板三连拦不熔断（skipBreaker 语义真 HTTP 面）：机审 409 连点不推进熔断计数，
+    // 第 4 次仍是机审文案而非熔断锁死（熔断解锁条件对人工编辑不可达，审查 M 2026-10-14）。
+    {
+        let fourth;
+        for (let i = 0; i < 4; i += 1) fourth = await j(ch(1), { text: onePara });
+        check('⑪ 面板三连拦后第 4 次仍为机审 409（非熔断锁死）', fourth.status === 409 && /机审未通过/.test(String(fourth.json?.error?.message ?? '')) && !/熔断|连续驳回/.test(String(fourth.json?.error?.message ?? '')), `status=${fourth.status} msg=${String(fourth.json?.error?.message ?? '').slice(0, 40)}`);
+    }
 } finally {
     server.close();
     fs.rmSync(root, { recursive: true, force: true });

@@ -291,6 +291,52 @@ test('briefing：上下文包按预算组装并带出人物卡与世界书', asy
     assert.deepEqual(r.dropped, []);
 });
 
+test('★ 世界书缺触发词不再报错：先抽本书实体名，抽不到转常驻（真机首发红色报错根修）', async () => {
+    const wb = tool('novel_worldbook');
+    await tool('novel_project').execute({ action: 'init', book: '世界书兜底书', title: '世界书兜底书' }, exec);
+    await tool('novel_character').execute({ action: 'save', book: '世界书兜底书', name: '沈夜', card: '外在：归来的前夫' }, exec);
+
+    // ① 内容里有本书已知实体 → 自动取词（不再抛「需要至少一个关键词」）
+    const derived = await wb.execute({ action: 'add', book: '世界书兜底书', content: '沈夜手里握着顾氏集团四成股权的冻结令。' }, exec);
+    assert.ok(derived.entry.keywords.includes('沈夜'), '★ 从本书 cast 里自动取到触发词');
+    assert.equal(derived.entry.always, false);
+    assert.match(derived.warnings.join(''), /自动取词/, '兜底必须留可见警告');
+
+    // ② 全书级设定（题材/主线）天然没有触发词 → 转常驻 + 警告，而不是报错
+    const fallback = await wb.execute({ action: 'add', book: '世界书兜底书', content: '本书为番茄女频题材，前妻线是核心爽点，主角绝不原谅。' }, exec);
+    assert.equal(fallback.entry.always, true);
+    assert.match(fallback.warnings.join(''), /常驻注入/);
+
+    // ③ 给了词就走原路，不带警告
+    const given = await wb.execute({ action: 'add', book: '世界书兜底书', keywords: '冻结令', content: '冻结令明天生效。' }, exec);
+    assert.deepEqual(given.entry.keywords, ['冻结令']);
+    assert.equal(given.warnings, undefined);
+
+    // ④ update 显式清空关键词同样走兜底（不抛错）
+    const upd = await wb.execute({ action: 'update', book: '世界书兜底书', id: given.entry.id, keywords: '', content: '冻结令已生效，沈夜掌握主动。' }, exec);
+    assert.ok(upd.entry.keywords.includes('沈夜') || upd.entry.always === true, 'update 的兜底与 add 同一条路');
+});
+
+test('★ 写前简报给逐场景字数预算（把「本章目标 N 字」翻译成「这一场 ≈M 字」）', async () => {
+    await tool('novel_project').execute({ action: 'init', book: '预算书', title: '预算书' }, exec);
+    await tool('novel_outline').execute({
+        action: 'save_chapter', book: '预算书', chapter: 1,
+        outline: '## 本章必写场景\n- 甲案：井绳断了\n- 乙案：对质摊账\n',
+    }, exec);
+    const r = await tool('novel_briefing').execute({ book: '预算书', chapter: 1 }, exec);
+    const sec = r.sections.find((s) => s.name === '本章字数目标');
+    assert.ok(sec, '「本章字数目标」段必须在场');
+    assert.match(sec.content, /本章逐场景字数预算/);
+    assert.ok(sec.content.includes('「甲案」') && sec.content.includes('「乙案」'), '预算按细纲场景逐条给出');
+    // 自由文本细纲（无场景段）→ 不编预算，退化为通用段落规格
+    // （新书默认 outlineContract=strict 会驳回无段细纲，这里走 warn 档模拟存量旧书）
+    await tool('novel_project').execute({ action: 'init', book: '预算书B', title: '预算书B' }, exec);
+    await setOutlineContract('预算书B', 'warn');
+    await tool('novel_outline').execute({ action: 'save_chapter', book: '预算书B', chapter: 1, outline: '第1章：来客。出场：林晚。' }, exec);
+    const rb = await tool('novel_briefing').execute({ book: '预算书B', chapter: 1 }, exec);
+    assert.ok(!rb.sections.find((s) => s.name === '本章字数目标').content.includes('逐场景字数预算'), '没有场景段就不造预算表');
+});
+
 test('写章：机审通过 → 版本化落盘 → 账本落账 → 门禁放行记录', async () => {
     const r = await tool('novel_write_chapter').execute({
         book: '星海拾骨', chapter: 1, title: '雨夜来客',
@@ -1049,12 +1095,13 @@ test('★ P2-2 场景契约跨章提醒：save_chapter 带出上一章禁项（�
     assert.ok(r2.note.includes('现代词汇') && r2.note.includes('写账人'), '禁项与隐藏人物都要点名');
     assert.ok(r2.note.includes('不会自动延续'), '提醒要说清「延续则重申、解除则放行」的显式决定');
 
-    // 第 1 章 save_chapter（无上一章契约）→ 不打扰
+    // 第 1 章 save_chapter（无上一章契约）→ 不得造出「上一章契约」提醒
     const r1 = await outline.execute({
         action: 'save_chapter', book: '遗物手账', chapter: 1,
         outline: '## 本章必写场景\n1. 雨夜收殓：无名尸体进门\n2. 账本初现：陈鹤年记账\n',
     }, exec);
-    assert.equal(r1.note, undefined, '第 1 章没有上一章契约，不得造出提醒');
+    assert.ok(!(typeof r1.note === 'string' && r1.note.includes('上一章')),
+        `第 1 章没有上一章契约，不得造出跨章提醒（实际 note：${JSON.stringify(r1.note)}）`);
 });
 
 test('★ A3/A4 细纲禁项：命中即拒绝落盘（判定权归代码）', async () => {
@@ -1075,7 +1122,7 @@ test('★ A3/A4 细纲禁项：命中即拒绝落盘（判定权归代码）', a
     );
 });
 
-test('★ 细纲门禁前移（真机配置）：场景数连下限都撑不到 → save_chapter 直接驳回', async () => {
+test('★ 细纲门禁前移（真机配置）：声明量撑不到下限 → save_chapter 驳回并要求加拍', async () => {
     assert.equal(hasSdk, true, '缺宿主 SDK symlink：先 npm run setup-dev');
     // 真机标准配置（2000–4000）下另挂一套工具：smoke 默认 CFG 下限只有 300，触发不了这条门禁
     const reg = [];
@@ -1085,22 +1132,34 @@ test('★ 细纲门禁前移（真机配置）：场景数连下限都撑不到 
     await reg.find((t) => t.name === 'novel_project')
         .execute({ action: 'init', book: '细纲容量书', title: '细纲容量书' }, exec);
 
-    // 真机第 91 章形态：4 个必写场景 × 480 = 1920 < 下限 2000 → 十次尝试卡在 1905 字
+    // 4 个场景、每条只有一拍（真机第 91 章形态）→ 估算 4×300+4×160=1840 < 下限 2000
     await assert.rejects(
         () => outline2.execute({
             action: 'save_chapter', book: '细纲容量书', chapter: 1,
             outline: '## 本章必写场景\n1. 出井：井绳断了\n2. 井上摊账：对质\n3. 熔断重置：真相\n4. 回营：收尾\n',
         }, exec),
-        (e) => /必写场景只有 4 个/.test(e.message)
-            && /连机审下限 2000 字都到不了/.test(e.message)
-            && /至少 7 个/.test(e.message),
-        '★ 场景撑不到下限必须在写章之前驳回，文案要给出「拆到几个」这个可执行数字',
+        (e) => /4 个必写场景、共 4 拍/.test(e.message)
+            && /估算只有约 1840 字/.test(e.message)
+            && /还差约 \d+ 拍/.test(e.message)
+            && /加拍比加场景有用/.test(e.message)
+            && /第1个「出井」/.test(e.message),
+        '★ 驳回文案必须点名「哪个场景只有一拍」并给还差几拍（旧文案开的药方是「拆到 7 个场景」——场景数对首稿字数 R²=0.033，打错靶子）',
     );
 
-    // 拆够场景（照目标 3000 / 单场景 480 → 7 个）→ 放行
+    // 场景数不变、把描述写透（真机墨骨录第 2 章形态，实测首稿 2616 字）→ 放行。
+    // 旧口径（4×480=1920<2000）在这里误驳。
+    const dense = '## 本章必写场景\n'
+        + '- 点卯册：晨起韩岐取册，对光验出「王贵」二字浮墨不透背、描红无提按，册尾「代记：周四奎」\n'
+        + '- 王贵的住舱：账册搬空、床板拆搜重钉、新锈钉帽，夹缝里半页上货单+指甲月牙暗记\n'
+        + '- 提审周四奎：签押房对质，三样证据戳住，周四奎咬死不崩，押下再磨\n'
+        + '- 明日卯时抬人：梁九送百两香仪逼尸，杜衡欲松口被韩岐截住；梁九「手稳」威胁离场\n';
+    const okDense = await outline2.execute({ action: 'save_chapter', book: '细纲容量书', chapter: 1, outline: `${dense}\n` }, exec);
+    assert.equal(okDense.action, 'save_chapter', '★ 密集描述的 4 场景细纲不得再被误驳');
+
+    // 拆够场景（每条仍只有一拍，7×300+7×160=3220 ≥ 2000）→ 放行
     const enough = ['## 本章必写场景', ...Array.from({ length: 7 }, (_, i) => `- 场景${i + 1}：要点`)]
         .join('\n');
-    const ok = await outline2.execute({ action: 'save_chapter', book: '细纲容量书', chapter: 1, outline: `${enough}\n` }, exec);
+    const ok = await outline2.execute({ action: 'save_chapter', book: '细纲容量书', chapter: 3, outline: `${enough}\n` }, exec);
     assert.equal(ok.action, 'save_chapter');
 
     // strict 下：无段自由文本直接驳回（容量门禁/契约指标不能被静默旁路）

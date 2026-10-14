@@ -50,6 +50,14 @@ export async function apiFetch(path, init) {
 		// 典型场景：dsh 重启后旧页面的请求被 401 成 text/plain，或代理回了 HTML
 		throw new Error(`响应不是 JSON（HTTP ${response.status}）—— 页面可能过期，硬刷新（Cmd+Shift+R）后再试`);
 	}
-	if (!payload.ok) throw new Error(payload.error?.message ?? `HTTP ${response.status}`);
+	if (!payload.ok) {
+		// code 必须挂在 Error 上一起抛：调用方要按错误族分流（409 GATE_REJECTED 是
+		// 「内容没过门禁」，给二次确认；500 IO_FAILURE 是服务故障，只报错不给重试按钮）。
+		// 只抛 message 的话，分流就得靠正则匹配中文文案——那正是会静默漂移的写法。
+		const gateError = new Error(payload.error?.message ?? `HTTP ${response.status}`);
+		gateError.code = payload.error?.code ?? '';
+		gateError.status = response.status;
+		throw gateError;
+	}
 	return payload.value;
 }
