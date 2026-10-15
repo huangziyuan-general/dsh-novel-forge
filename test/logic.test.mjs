@@ -803,6 +803,35 @@ test('continuity: 死亡判定认死亡词、排反例，取最早死亡章', ()
     assert.equal(t.get('赵擎').chapter, 5, '第一死才算数，后文不改变死亡时点');
 });
 
+test('continuity: 数值口径漂移——短值数词不一致警告，长叙述/同值/第X章不误报（0.19.0 十年vs十一载实证）', () => {
+    const novel = { cast: [], chapters: {} };
+    const drift = validateContinuity({ novel, facts: [
+        { entity: '孙满仓', key: '守账年限', value: '十年', chapter: 31 },
+        { entity: '孙满仓', key: '守账年限', value: '十一年', chapter: 41 },
+    ] });
+    const w = drift.issues.find((i) => i.code === 'numeric-drift');
+    assert.ok(w !== undefined, '十年 vs 十一年必须可见');
+    assert.equal(w.severity, 'warning', '口径漂移是警告不是硬伤');
+
+    const same = validateContinuity({ novel, facts: [
+        { entity: '孙晴', key: '年龄', value: '十六岁', chapter: 1 },
+        { entity: '孙晴', key: '年龄', value: '十六岁', chapter: 40 },
+    ] });
+    assert.ok(!same.issues.some((i) => i.code === 'numeric-drift'), '同值多章不报');
+
+    const withChapterRef = validateContinuity({ novel, facts: [
+        { entity: '林晚', key: '进度', value: '第3章', chapter: 3 },
+        { entity: '林晚', key: '进度', value: '第5章', chapter: 5 },
+    ] });
+    assert.ok(!withChapterRef.issues.some((i) => i.code === 'numeric-drift'), '「第X章」剔除后无口径冲突');
+
+    const longValue = validateContinuity({ novel, facts: [
+        { entity: '矿账', key: '塌方记录', value: '十年五次开闸、三年前义庄取页皆其手，另有七次塌方日期待对', chapter: 60 },
+        { entity: '矿账', key: '塌方记录', value: '七次塌方、四十九条命', chapter: 61 },
+    ] });
+    assert.ok(!longValue.issues.some((i) => i.code === 'numeric-drift'), '长叙述值不做数词抽取（无分词器，噪声爆炸）');
+});
+
 test('continuity: 死人复活报硬伤；细纲有闪回标记则降级为警告', () => {
     const novel = { cast: ['林晚', '赵擎'], chapters: {
         1: { title: 'a', path: 'b/正文/第1章-a-v1.md', latest: 1, files: [{ file: 'b/正文/第1章-a-v1.md' }], summary: 's' },
