@@ -848,7 +848,7 @@ test('★ R4b 面板保存不抹标题：不带 title 存一次，索引与文�
 
 test('★ R4c 内容门禁对面板同样生效：占位符 409，显式 force 才放行且回显 + 留痕', async () => {
     await createBook('旁路面板书');
-    const withTodo = '她推开门。\n\nTODO 这里补一段对峙。\n\n香灰被风吹起。';
+    const withTodo = '她推开门。\n\n（待补：这里补一段对峙。）\n\n香灰被风吹起。';
     const blocked = await drive({
         method: 'POST', url: `${PREFIX}/projects/旁路面板书/chapters/1`, body: { title: '草稿', text: withTodo },
     });
