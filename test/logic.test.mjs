@@ -298,12 +298,30 @@ test('paragraphCharProfile: 按空行分段、与 chars 同口径（非空白字
     assert.deepEqual(paragraphCharProfile(''), [], '空文空分布');
 });
 
-test('detectHookKind: 章末强调标记不再吞检——「**三个！**」必须认出感叹钩子（真机同型吞检连犯 16 例）', () => {
-    assert.equal(detectHookKind('她数完第三遍，只有三个！'), 'exclaim', '裸感叹基准');
-    assert.equal(detectHookKind('她数完第三遍，只有**三个！**'), 'exclaim', '★ 粗体包裹的感叹——旧检测器瞎');
+test('detectHookKind: 章末强调标记不再吞检——语义钩不被排版标记绑架（真机同型吞检连犯 16 例）', () => {
+    // 0.19.0：纯感叹收尾从钩子除名（断章公式，反向激励实锤——《开局觉醒加特林》
+    // 100+ 章「一句宣言+叹号」同构率近乎 100%）——stripEmphasis 的吞检修复用语义钩形态钉住。
+    assert.equal(detectHookKind('她数完第三遍，只有三个！'), null, '裸感叹不再是钩子（断章公式归 noai.formula 维）');
     assert.equal(detectHookKind('**他到底是谁？**'), 'question', '★ 粗体包裹的问句');
     assert.equal(detectHookKind('__井里有人——__'), 'ellipsis', '★ 下划线强调不挡省略号');
     assert.equal(detectHookKind('夜色平静地合拢，一切如常。'), null, '真没钩子的照旧报 null');
+});
+
+test('noai formula 维: 断章公式计分——章末短宣言叹号命中 + 高占比封顶（真机 55% 实测标定）', () => {
+    const formulaText = ['他推门进去，看见桌上放着一封信。', '信封上的字迹很旧，他认出了那个名字。', '是爷爷！'].join('\n\n');
+    const r = scanAiFlavor(formulaText);
+    assert.equal(r.categories.formula.endFormula, true, '章末「是爷爷！」命中断章公式');
+    assert.ok(r.categories.formula.score >= 60, `断章位命中应得高分，实际 ${r.categories.formula.score}`);
+    const plain = scanAiFlavor(['他推门进去，看见桌上放着一封信，信封上的字迹很旧，像是很多年前的笔迹。', '他把信收进怀里，转身下楼，楼道里的灯坏了很多年，扶手冰凉。', '他没有回头，雨下了一整夜。'].join('\n\n'));
+    assert.equal(plain.categories.formula.endFormula, false, '陈述收尾不命中');
+    assert.ok(plain.categories.formula.score < 20, `健康文本应低分，实际 ${plain.categories.formula.score}`);
+});
+
+test('audit latinRuns: 英文残留检出——folded 案例回归（≥4 连续字母，单双字母不误伤）', () => {
+    const a1 = computeAudit({ content: '他把残页folded好，放进怀里。天色已晚，他加快脚步。她转过头，看了他一眼。\n\n窗外起了风，吹得灯苗乱晃。他想起白天的事，心里发沉，蹲下身系紧了鞋带。\n\n远处传来一声狗叫，他站起身，朝着镇子的方向走去，影子被灯拉得很长。' });
+    assert.deepEqual(a1.latinRuns, ['folded'], 'folded 必须被检出');
+    const a2 = computeAudit({ content: '他买了A股，查了X光，吃了维生素C，然后继续写字。天色已晚，他加快脚步。她转过头，看了他一眼。\n\n窗外起了风，吹得灯苗乱晃。他想起白天的事，心里发沉，蹲下身系紧了鞋带。\n\n远处传来一声狗叫，他站起身，朝着镇子的方向走去，影子被灯拉得很长。' });
+    assert.deepEqual(a2.latinRuns, [], 'A/X/C 等单双字母合法，不误伤');
 });
 
 test('detectHookKind: 倒计时宣告与打断式收尾不许漏检（《遗物手账》第1/2章强钩子检出「无」）', () => {
