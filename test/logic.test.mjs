@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 
 import { sanitizeTitle, chapterFileName, parseChapterFileName, nextVersion, nextSuffixedId } from '../lib/versioning.js';
-import { gateChapterWrite, advanceStage, resetStage } from '../lib/gate.js';
+import { gateChapterWrite, advanceStage, resetStage, volumeSection, outlineDivergence } from '../lib/gate.js';
 import { PHASE_IDS, canonicalPhase, checkPhaseEntry, enterPhase, phaseBoard, renderPhaseBoard } from '../lib/phases.js';
 import { detectVolumePlan } from '../lib/phase-io.js';
 import { breakerState, recordRejection, recordSuccess, clearBreaker, breakerDigest } from '../lib/circuit-breaker.js';
@@ -892,6 +892,44 @@ test('content-gate: 到期伏笔零回应且开了新钩 → 阻断；回应了�
     const notDue = contentGate({ content: withNewHook, chapter: 4, foreshadows: [{ id: 'F9', setup: '旧钟', chapter: 1, plan: 9, payoffChapter: null }] });
     assert.ok(!notDue.warnings.some((w) => w.code === 'debt-unanswered'));
     assert.ok(!notDue.blocking.some((b) => b.code === 'debt-unanswered-with-new-hook'));
+});
+
+test('content-gate: 开钩未登记 → 非阻断警告；登记过 setup 的本章或无钩章不提示（0.19.0《开局觉醒加特林》15 钩零登记实证）', () => {
+    // 章末带语义钩（「忽然」在悬念词表），台账没有第 7 章的 setup → 点名
+    const hooked = `${'她把灯芯挑亮，院子里静得能听见霜落。'.repeat(6)}\n\n门外忽然传来三下叩响。`;
+    const unregistered = contentGate({ content: hooked, chapter: 7, foreshadows: [{ id: 'F1', setup: '旧钟', chapter: 2, plan: 9, payoffChapter: null }] });
+    assert.equal(unregistered.ok, true, '非阻断');
+    const w = unregistered.warnings.find((x) => x.code === 'open-hook-unregistered');
+    assert.ok(w !== undefined, '开钩未登记必须可见');
+    assert.ok(w.message.includes('foreshadow_setup'), '警告带登记指引');
+
+    // 本章有 setup 登记 → 不提示
+    const registered = contentGate({ content: hooked, chapter: 7, foreshadows: [{ id: 'F2', setup: '叩门的人', chapter: 7, plan: 12, payoffChapter: null }] });
+    assert.ok(!registered.warnings.some((x) => x.code === 'open-hook-unregistered'), '已登记不点名');
+
+    // 无语义钩（陈述收尾，无悬念词）→ 不提示
+    const calm = `${'她把灯芯挑亮，院子里静得能听见霜落。'.repeat(6)}\n\n她收好针线，回屋睡下。`;
+    const noHook = contentGate({ content: calm, chapter: 7, foreshadows: [] });
+    assert.ok(!noHook.warnings.some((x) => x.code === 'open-hook-unregistered'), '无钩不点名');
+});
+
+test('gate volumeSection/outlineDivergence: 卷段定位 + 2-gram 重合度（0.19.0 大纲一致性校验的纯函数底座）', () => {
+    const outline = [
+        '### 卷一 白石城·废兵觉醒（1-40章）',
+        '矿上招工入猎妖队，矿洞猎妖首战立威。',
+        '### 卷二 青岚兵院·弹种演化（41-90章）',
+        '武院天才争锋；郡内大比对轰沈家。',
+    ].join('\n');
+    assert.equal(volumeSection(outline, 25), ['### 卷一 白石城·废兵觉醒（1-40章）', '矿上招工入猎妖队，矿洞猎妖首战立威。'].join('\n'), '第 25 章落在卷一段');
+    assert.ok(volumeSection(outline, 60).includes('郡内大比'), '第 60 章落在卷二段');
+    assert.equal(volumeSection(outline, 100), null, '超出全部卷区间 → null（静默跳过校验）');
+    assert.equal(volumeSection('没有分卷结构的大纲', 5), null, '无卷头 → null');
+
+    // 同方向：细纲与卷规划共用实体词 → 高重合；拐线 → 低重合
+    const same = outlineDivergence('武院天才争锋；郡内大比对轰沈家。', '## 本章必写场景\n- 天才争锋：武院大比名单公布，郡内大比对轰沈家的策略敲定');
+    assert.ok(same.jaccard > 0.15, `共用实体词应高重合，实际 ${same.jaccard}`);
+    const diverged = outlineDivergence('武院天才争锋；郡内大比对轰沈家。', '## 本章必写场景\n- 矿账查契：押契原件保人画押存疑，井底封石深处传来求救号');
+    assert.ok(diverged.jaccard < 0.15, `拐线细纲应低重合，实际 ${diverged.jaccard}`);
 });
 
 test('content-gate: 占位符阻断、人称混用警告', () => {
