@@ -4,6 +4,11 @@
 
 ![release](https://img.shields.io/github/v/release/huangziyuan-general/dsh-novel-forge) ![license](https://img.shields.io/github/license/huangziyuan-general/dsh-novel-forge) [![tests](https://img.shields.io/github/actions/workflow/status/huangziyuan-general/dsh-novel-forge/ci.yml?branch=main&label=tests)](https://github.com/huangziyuan-general/dsh-novel-forge/actions/workflows/ci.yml)
 
+**如果这个项目帮你把长篇写稳了，顺手点个 ⭐ 支持一下 —— 你的 star 是继续维护的动力：**
+[github.com/huangziyuan-general/dsh-novel-forge](https://github.com/huangziyuan-general/dsh-novel-forge)
+
+[![Star History Chart](https://api.star-history.com/svg?repos=huangziyuan-general/dsh-novel-forge&type=Date)](https://star-history.com/#huangziyuan-general/dsh-novel-forge&Date)
+
 DeepSeek Harness（DSH）的小说创作插件。设计主线只有一条：
 
 > **代码强制 > 提示词自觉。** 凡是"靠模型自觉"的约束都会失效——
@@ -20,6 +25,9 @@ DeepSeek Harness（DSH）的小说创作插件。设计主线只有一条：
 | **章节听书**<br><img src="assets/mockups/png/dark-3-章节听书.png" width="100%"> | **世界书**<br><img src="assets/mockups/png/dark-4-世界书.png" width="100%"> |
 
 > 以上是 `lib/client.js` 的**真实渲染**（非手绘 mock）：`npm run preview` 生成预览页后跑 `assets/mockups/shoot-real.cjs` 即可复现，浅色/深色两套随宿主主题。
+
+> 看完了演示觉得有用？这就是它每天在你写长篇时替你挡下的事。顺手点个 ⭐ 让更多人看见：
+> [github.com/huangziyuan-general/dsh-novel-forge](https://github.com/huangziyuan-general/dsh-novel-forge)
 
 AI 长篇写作的通病不是玄学，每一个都有对应的工程解法。本插件把其中"有明确对错"的部分做进代码：
 
