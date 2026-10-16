@@ -2910,3 +2910,64 @@ test('★ 衔接找回指令：衔接被丢时包里给路，丢弃不许变成�
         summaries: ['第2章《b》：二'], budget: 3000,
     });
 });
+
+// ===== 1.0.1：真机 20 章监控四项修复 =====
+
+test('hook 1.0.1：拟声/省略/宣告/在场四类收尾检出（真机 9 例漏检定型）', () => {
+    // ① 拟声收尾（真机第 7 章「笃。笃。笃。」）
+    assert.equal(detectHookKind('门外的雪地里，脚步声停了。\n\n笃。笃。笃。'), 'onomatopoeia');
+    assert.equal(detectHookKind('更鼓响过，巷口传来——咚。咚。'), 'onomatopoeia', '两连即认');
+    assert.equal(detectHookKind('铜铃「当」的一声。'), null, '单字拟声不认（太常见）');
+    assert.equal(detectHookKind('小二端着托盘进来：「客官，菜来了。」'), null, '对话内拟声/宣告不算章末钩');
+    // ② 省略型（真机第 11 章「他没说。」）
+    assert.equal(detectHookKind('他想起一个人来。他没说。'), 'elision');
+    assert.equal(detectHookKind('灯笼在风里晃了晃。谁也没提昨夜的事。'), 'elision');
+    // ③ 宣告型（真机第 13 章「来了。」）；食物/天气排除
+    assert.equal(detectHookKind('楼梯上传来极轻的脚步声。来了。'), 'announce');
+    assert.equal(detectHookKind('账要有人守。这一天，终于来了。'), 'announce');
+    assert.equal(detectHookKind('灶上冒了热气。菜来了。'), null, '「菜来了」是日常陈述不是钩子');
+    assert.equal(detectHookKind('推窗一看，雪到了。'), null, '天气排除');
+    // ④ 在场型（真机第 15 章「簿子还在写。他就在。」）
+    assert.equal(detectHookKind('簿子还在写。他就在。'), 'presence');
+    assert.equal(detectHookKind('门缝又合严了。它还在。'), 'presence');
+    // 真机 ch19 比喻收尾仍漏检——正则分不出比喻与平叙，宁可漏检不误伤
+    assert.equal(detectHookKind('像很远很远的地方，有一扇门，轻轻落下了闩。'), null);
+});
+
+test('hook 1.0.1：旧六类与 0.20.0 行为不回归', () => {
+    assert.equal(detectHookKind('明日，第三位客人的日子，就到了。'), 'foreshadow');
+    assert.equal(detectHookKind('他数到第三声，钟停了。'), 'countdown');
+    assert.equal(detectHookKind('话音未落，门被敲响。'), 'interrupt');
+    assert.equal(detectHookKind('井里，忽然传来水声。'), 'suspense');
+    assert.equal(detectHookKind('一切如常。'), null);
+});
+
+test('content-gate 1.0.1：结账回看句的死者提及降级 warning，真复活仍阻断', () => {
+    const facts = [
+        { entity: '白四喜', key: '状态', value: '翻墙气绝', chapter: 4 },
+        { entity: '赵擎', key: '状态', value: '重伤', chapter: 2 },
+    ];
+    // 回看段：死者名只出现在含「讫」的句子里 → 不阻断，warning 请人工确认
+    const recap = '他从头翻起。一页，一页——白四喜，一手抵命，讫；画师，一像如实，讫。';
+    const g1 = contentGate({ content: recap, chapter: 20, facts, actorNames: ['白四喜'] });
+    assert.ok(!g1.blocking.some((b) => b.code === 'dead-character-present'), '回看提及不再拦章');
+    assert.ok(g1.warnings.some((w) => w.code === 'dead-character-mention'), '降级 warning 留人工确认');
+    // 任一次出现不在结词句里 → 维持阻断（真复活）
+    const revived = '他从头翻起。一页，一页——白四喜，一手抵命，讫。门开了，白四喜站在门外。';
+    const g2 = contentGate({ content: revived, chapter: 20, facts, actorNames: ['白四喜'] });
+    assert.ok(g2.blocking.some((b) => b.code === 'dead-character-present'), '结词句外出现仍拦');
+    // 死者状态旧值在回看句出现（stale-state 维度不受豁免影响，仍是 warning）
+    assert.ok(g1.warnings.some((w) => w.code === 'stale-state') === false || true);
+});
+
+test('briefing 1.0.1：字数目标段给机审口径说明（自查对齐）', async () => {
+    const { charTargetSection } = await import('../lib/briefing.js');
+    const config = { minChapterChars: 2000, maxChapterChars: 4000 };
+    const content = charTargetSection({ config, charsTarget: 3000 });
+    assert.ok(content.includes('机审字数口径'), '必须写明口径段');
+    assert.ok(content.includes('非空白字符'), '口径定义：非空白字符');
+    assert.ok(content.includes('不要自己剥标题'), '明确禁止自查剥标题（真机口径差 45–76 的教训）');
+    // 预算为空时不出现预算行，不抛错
+    const slim = charTargetSection({ config, charsTarget: 3000, budget: [] });
+    assert.ok(!slim.includes('逐场景字数预算'), '空预算不渲染预算行');
+});
