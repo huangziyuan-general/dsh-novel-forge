@@ -125,6 +125,19 @@ npm test            # node --test test/（纯逻辑单测 + 假 fs 冒烟 + head
 
 宿主 SDK 路径来自本机 DSH checkout（scripts/setup-dev-links.mjs 内含路径），不要提交 node_modules。
 
+## 发版流程（五步，固定顺序）
+
+```bash
+# 1. bump：package.json + src/client/index.js PLUGIN_VERSION（两处必须一致，build 会校验）
+# 2. npm run build && npm test && npm run audit（硬故障 0）
+# 3. git add -A（先核对暂存区：书稿/tmp/监控日志必须在 .gitignore）→ commit → tag → push
+# 4. gh release create vX.Y.Z --title "X.Y.Z" --notes-file <CHANGELOG 对应段>
+# 5. npm publish
+```
+
+**release 标题只用版本号**（用户钦定，不要长文标题）；notes 取 CHANGELOG 对应段（遵守不变量 12 隐私铁律）。发布前安全审计：暂存区逐条核对无书稿/工作面文件，发现未忽略的样书目录先补 .gitignore 再 add。
+
+
 ## 数据落盘（一本书 = 一个目录，位于会话工作区）
 
 见 README.md「数据布局」。机器可读状态只有 novel.json / facts.json / 伏笔.json /
