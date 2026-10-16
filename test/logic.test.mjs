@@ -212,7 +212,9 @@ test('ledger: 伏笔改期——同 id 未回收允许更新 plan；已回收拒
 const para = (t) => `${t}\n\n`;
 
 test('audit: 钩子/对话占比/重复率', () => {
-    const withHook = para('夜风把灯笼吹得摇晃。林晚按住刀柄，慢慢走进院子。\n\n「谁？」她低声问。\n\n门外的人影停住了，却不知是敌是友。');
+    // 0.19.2：对话行用中文双引号（横排合规引号）——直角引号「」不再计入对话占比
+    // （它只用于竖排版，且是 AI 检测特征），本用例改成 "…" 形态。
+    const withHook = para('夜风把灯笼吹得摇晃。林晚按住刀柄，慢慢走进院子。\n\n"谁？"她低声问。\n\n门外的人影停住了，却不知是敌是友。');
     const a1 = computeAudit({ content: withHook, previous: [], terms: ['林晚'] });
     assert.equal(a1.endingHook.detected, true);
     assert.ok(['question', 'suspense'].includes(a1.endingHook.kind));
@@ -307,6 +309,16 @@ test('detectHookKind: 章末强调标记不再吞检——语义钩不被排版�
     assert.equal(detectHookKind('夜色平静地合拢，一切如常。'), null, '真没钩子的照旧报 null');
 });
 
+test('detectHookKind: 修辞性问句（句号收尾）按 question 检出——《第七夜班》第 2 章真机漏检样例（E3）', () => {
+    assert.equal(detectHookKind('小满把照片攥得更紧了。沈一觉看了一眼表，零点零一分，又看了一眼门。三声之内，应，还是不应。'), 'question', '★ 「，还是不应。」句号问句');
+    assert.equal(detectHookKind('他望着那扇门。走，还是不走。'), 'question', '★ 「，还是不走。」');
+    assert.equal(detectHookKind('七日之内，启事填格；四十九夜之前，位子要人。那么这一页呢。三声之内，谁动过我哥的账。'), 'question', '★ 特指问「，谁…账。」——第 9 章闭环验证抓出的 E3b');
+    assert.equal(detectHookKind('他把钥匙搁在柜台上。接下来，该由谁守夜。'), 'question', '★ 「，该由谁守夜。」特指问');
+    assert.equal(detectHookKind('他最终还是走了。'), null, '陈述句「还是」不误判（问式白名单）');
+    assert.equal(detectHookKind('他记得很清楚，谁先来谁先拿。'), null, '★ 间接引语里的「谁」不误判（无问号语气的陈述收尾）');
+    assert.equal(detectHookKind('夜色平静地合拢。'), null, '普通陈述句照旧 null');
+});
+
 test('noai formula 维: 断章公式计分——章末短宣言叹号命中 + 高占比封顶（真机 55% 实测标定）', () => {
     const formulaText = ['他推门进去，看见桌上放着一封信。', '信封上的字迹很旧，他认出了那个名字。', '是爷爷！'].join('\n\n');
     const r = scanAiFlavor(formulaText);
@@ -324,6 +336,31 @@ test('audit latinRuns: 英文残留检出——folded 案例回归（≥4 连续
     assert.deepEqual(a2.latinRuns, [], 'A/X/C 等单双字母合法，不误伤');
 });
 
+test('★ 0.19.2 引号规范：直角引号「『』」检出 + 判定策略（block/warn/off/默认）', () => {
+    const cfg = { minChapterChars: 100, maxChapterChars: 4000 };
+    // 正文 >100 字且 ≥3 段，把字数/段落数问题压掉，让断言只落在引号判定上
+    const body = '他推门进来。\n「坐。」老周说。\n『别动。』他补了一句。\n\n窗外起了风，吹得灯苗乱晃。他想起白天的事，心里发沉，蹲下身系紧了鞋带，又等了半晌。\n\n巷口传来更鼓声，两下，他攥紧了手里的油纸包，慢慢走向镇子方向，影子被灯拉得很长，一直拖到桥洞底下。';
+    const corner = computeAudit({ content: body });
+    assert.equal(corner.cornerQuotes, 4, '「」『』共 4 处直角引号必须被统计');
+    assert.equal(corner.dialogueRatio, 0, '★ 直角引号行不算对话（横排合规引号才是）');
+    // block（默认）：引号进 problems，阻断
+    const block = auditVerdict(corner, { ...cfg, quoteStyle: 'block' });
+    assert.ok(block.problems.some((p) => p.includes('直角引号')), 'block 进 problems');
+    assert.equal(block.ok, false, 'block 必然不过（引号进 problems）');
+    // 默认不传 quoteStyle = block
+    assert.ok(auditVerdict(corner, cfg).problems.some((p) => p.includes('直角引号')), '默认即 block');
+    // warn：引号本身不阻断（只进 warnings），但其它判定（字数等）独立生效
+    const warn = auditVerdict(corner, { ...cfg, quoteStyle: 'warn' });
+    assert.ok(warn.warnings.some((p) => p.includes('直角引号')), 'warn 进 warnings');
+    assert.ok(!warn.problems.some((p) => p.includes('直角引号')), '★ warn 不进 problems（引号本身不阻断）');
+    // off：不判
+    const off = auditVerdict(corner, { ...cfg, quoteStyle: 'off' });
+    assert.ok(!off.problems.some((p) => p.includes('直角引号')) && !off.warnings.some((p) => p.includes('直角引号')), 'off 不判');
+    // 合规正文（中文双引号）不触发，且算进对话占比
+    const good = computeAudit({ content: body.replace(/[「」『』]/g, (c) => (c === '「' || c === '『') ? '\u201c' : '\u201d') });
+    assert.equal(good.cornerQuotes, 0, '中文双引号不是直角引号');
+    assert.ok(good.dialogueRatio > 0, '中文双引号行计入对话占比');
+});
 test('detectHookKind: 倒计时宣告与打断式收尾不许漏检（《遗物手账》第1/2章强钩子检出「无」）', () => {
     assert.equal(detectHookKind('写下这两个词的那天晚上，陈鹤年最多还能活一天。'), 'countdown',
         '★ 陈述句收口的倒计时宣告——四表层模式全瞎，强 cliffhanger 必须认出');
@@ -1069,7 +1106,7 @@ import {
     setContract, removeContract, contractFor,
 } from '../lib/scene-contract.js';
 import { normalizeVoice, renderVoiceCard, voiceConsistency, isEmptyVoice } from '../lib/voice.js';
-import { parseScenes, parseBanRules, computeGateMetrics } from '../lib/gate-metrics.js';
+import { parseScenes, parseBanRules, computeGateMetrics, sceneMatched } from '../lib/gate-metrics.js';
 
 test('B3 契约归一：中文别名、清单容错、字段补齐', () => {
     const c = normalizeContract({ chapter: 3, 场景: '雨夜断刃', 出场: '林晚、赵擎,陆寒', 隐藏: ['陆寒'], 禁项: '储物戒指' });
@@ -1156,7 +1193,9 @@ test('A3/A4 细纲解析：序号/加粗/列表/复选框都要认（格式漂�
 
 test('A3/A4 禁项分流：排除型算偏离度，需求型/条件型不算（彼踩过的坑）', () => {
     const r = parseBanRules('- 不得让陆寒出场\n- 禁止使用「储物戒指」\n- 不得省略「断刃」\n- 不得无铺垫引入「密信」');
-    assert.ok(r.banned.includes('陆寒'));
+    // 0.19.1（E12）：「不得让X出场」是登场禁令不是提及禁令——X 降条件型，
+    // 字面 includes 分不出在场与回忆性提及，误禁拦章的代价大于漏禁
+    assert.ok(r.conditional.includes('陆寒'));
     assert.ok(r.banned.includes('储物戒指'));
     assert.ok(!r.banned.includes('断刃'), '★ 需求型（不得省略）不是禁词——写到了才是对的');
     assert.ok(r.requirements.includes('断刃'));
@@ -1169,6 +1208,16 @@ test('★ 禁项解析：前置否定句式不得把否定词本身当禁词（�
     assert.ok(r.banned.includes('墨银'), '前置否定的宾语才是禁词');
     const subjFirst = parseBanRules('现代词汇不得出现');
     assert.ok(subjFirst.banned.includes('现代词汇'), '主语前置句式（「X不得出现」）照旧收X');
+});
+
+test('★ 禁项解析：允许性例词（只写/应写/只能写）是应该出现的写法——《第七夜班》第7章真机自相矛盾拦截根因（E10）', () => {
+    const r = parseBanRules('- 旧报纸只写「多年前的旧报」\n- 概念词「灯苗」一概不出现');
+    assert.ok(!r.banned.includes('多年前的旧报'), '★ 「只写X」是许可语境，X 是应出现的写法');
+    assert.ok(r.banned.includes('灯苗'), '真禁词照旧收');
+    const r2 = parseBanRules('- 旧报纸只许以「多年前的旧报」指称');
+    assert.ok(!r2.banned.includes('多年前的旧报'), '既有「只许以…指称」句式回归保护');
+    const r3 = parseBanRules('- 报纸只能写「旧报」');
+    assert.ok(!r3.banned.includes('旧报'), '「只能写」同属许可语境');
 });
 
 test('★ 禁项解析：范围限定括号是说明不是禁词（《遗物手账》第3章整章被拦的根因）', () => {
@@ -1192,7 +1241,8 @@ test('★ 禁项解析：「不得让沈无咎说出…」禁的是那句话，�
     assert.ok(r.conditional.includes('沈无咎') && r.conditional.includes('裴昭'), '人名提示人工复核');
     assert.ok(r.banned.includes('拓印有半枚'), '真正想禁的引号宾语照收禁词');
     const appear = parseBanRules('- 不得让陆寒出场');
-    assert.ok(appear.banned.includes('陆寒'), '「不得让X登场/出场」才是人名即禁词（不许在本章露面）');
+    assert.ok(!appear.banned.includes('陆寒') && appear.conditional.includes('陆寒'),
+        '0.19.1（E12）：登场禁令的人名降条件型——在场性人工复核，提及不算命中');
 });
 
 test('★ 禁项解析：枚举与许可语境——「禁止现代词汇（法医、指纹…等）」逐项生效，「只许以X指称」不是禁词', () => {
@@ -1212,7 +1262,9 @@ test('★ 禁项解析：裸词表行逐项生效（禁项段最朴素写法；�
 });
 
 test('A3/A4 契约指标：覆盖率/漏写/偏离度/场景豁免', () => {
-    const outline = '## 本章必写场景\n1. 雨夜相遇：林晚在码头遇见赵擎\n2. 断刃现世：断刃从江底浮起\n\n## 本章禁止偏离项\n- 不得让陆寒出场\n';
+    // drift 源用真禁词（「禁止使用X」——排除型）；登场禁令（不得让陆寒出场）经 E12
+    // 降条件型，不计偏离度——下方专设断言钉住这个行为
+    const outline = '## 本章必写场景\n1. 雨夜相遇：林晚在码头遇见赵擎\n2. 断刃现世：断刃从江底浮起\n\n## 本章禁止偏离项\n- 禁止使用「储物戒指」\n- 不得让陆寒出场\n';
     const full = computeGateMetrics({ content: '雨夜，林晚在码头遇见赵擎。断刃从江底浮起。', outline });
     assert.equal(full.available, true);
     assert.equal(full.coverage, 100);
@@ -1224,10 +1276,14 @@ test('A3/A4 契约指标：覆盖率/漏写/偏离度/场景豁免', () => {
     assert.deepEqual(partial.missedScenes, ['断刃现世']);
     assert.equal(partial.passed, false, '漏场景＝不通过');
 
-    const hit = computeGateMetrics({ content: '陆寒从雾里走出来，断刃从江底浮起。', outline });
-    assert.deepEqual(hit.bannedHits, ['陆寒']);
+    const hit = computeGateMetrics({ content: '陆寒从雾里走出来，断刃从江底浮起。储物戒指也亮了一下。', outline });
+    assert.deepEqual(hit.bannedHits, ['储物戒指']);
     assert.equal(hit.drift, 100);
     assert.equal(hit.passed, false);
+    // E12 回归钉：登场禁令人名出现在正文（提及/在场）不算命中禁项
+    const mention = computeGateMetrics({ content: '雨夜，林晚在码头遇见赵擎。断刃从江底浮起。她想起陆寒说过的话。', outline });
+    assert.ok(!mention.bannedHits.includes('陆寒'), '登场禁令的人名命中不进 bannedHits（条件型人工复核）');
+    assert.equal(mention.passed, true);
 
     const none = computeGateMetrics({ content: '随便一段。', outline: '没有契约段的大纲' });
     assert.equal(none.available, false, '没写契约段＝不参与判定（可选增强，不像彼那样 fail-closed）');
@@ -1237,6 +1293,124 @@ test('A3/A4 契约指标：覆盖率/漏写/偏离度/场景豁免', () => {
     const broken = computeGateMetrics({ content: '随便一段。', outline: '## 本章必写场景\n\n## 本章禁止偏离项\n- 不得让陆寒出场\n' });
     assert.equal(broken.available, false);
     assert.match(broken.note, /解析不出/, '段存在但解析不出要给提示（不阻断，写不了章的代价更大）');
+});
+
+// ── 0.19.1 真机实验修复回归钉（E1/E2/E4/E7/E9/E11/E12/E16/E18/E19）──
+
+test('★ 0.19.1 E1：大纲方向闸双判据——同线细纲 jaccard 低但词命中率高，不警告', () => {
+    const vol = '卷一（1-49章）：沈一觉接班便利店夜班，守则逐夜增加，七笔旧账逐户开核，守夜人空缺三月，门三声灯一盏，账要平。';
+    const outline = '# 第41章\n\n## 本章必写场景\n- 守则第 48 条：零点洇出，账外有账账外有人，账箱里多出一张纸，守夜的店门安静，账本翻开。';
+    const d = outlineDivergence(vol, outline);
+    assert.ok(d.jaccard < 0.15, `概括 vs 细化粒度差下 jaccard 必低（实测 ${d.jaccard}）`);
+    assert.ok(d.termHitRate >= 0.02, `同线细纲词命中率应过阈（实测 ${d.termHitRate}）——双判据下不触发拐线警告`);
+    const off = outlineDivergence(vol, '# 第41章\n\n## 本章必写场景\n- 灵舰跃迁：星港 dispatcher 校准曲率引擎，量子风暴逼近舰队。');
+    assert.ok(off.termHitRate < 0.02, `真拐线词命中率崩（实测 ${off.termHitRate}）——双低才警告`);
+});
+
+test('★ 0.19.1 E2：契约禁项不进覆盖率要素表（要素表与禁项要求相反）', () => {
+    const terms = declaredCoverageTerms({
+        outline: '灯苗在细纲里被提到，守夜要写足',
+        castNames: [],
+        worldEntries: [{ id: 'w', keywords: ['灯苗', '守夜'], content: '' }],
+        forbidden: ['灯苗'],
+    });
+    assert.ok(!terms.includes('灯苗'), '禁项词从要素表剔除——模型不再收到矛盾指令');
+    assert.ok(terms.includes('守夜'), '非禁项世界书词照收');
+});
+
+test('★ 0.19.1 E4：人物短称覆盖——全名不在但去姓短称在正文出现不算 missing', () => {
+    const a = computeAudit({ content: '小满把账页翻开等着。', terms: ['陈小满'], castNames: ['陈小满'] });
+    assert.deepEqual(a.coverage.missing, [], '对话惯例用短称，全名缺失不应再报');
+    const b = computeAudit({ content: '小满把账页翻开等着。', terms: ['陈小满'] });
+    assert.deepEqual(b.coverage.missing, ['陈小满'], '不传 castNames 时维持原判（向后兼容）');
+    const c = computeAudit({ content: '小满把账页翻开等着。', terms: ['守夜人'], castNames: [] });
+    assert.deepEqual(c.coverage.missing, ['守夜人'], '世界书关键词不享受短称放宽');
+});
+
+test('★ 0.19.1 E7：西里尔/希腊残留检测（真机「самая」漏检回归）', () => {
+    const a = computeAudit({ content: '他把纸folded好，纸上写着 самая простая。', terms: [] });
+    assert.ok(a.latinRuns.includes('folded'), '拉丁残留照抓');
+    assert.ok(a.latinRuns.includes('самая'), '西里尔残留不再漏检');
+    const b = computeAudit({ content: 'A股、X光、维生素C都是合法写法。', terms: [] });
+    assert.deepEqual(b.latinRuns, [], '合法单双字母不误伤');
+});
+
+test('★ 0.19.1 E9/E17：场景描述的拍/字数元信息清洗（拍短语不再进关键词）', () => {
+    const scenes = parseScenes('- 郑板揭启事（约 550 字）：郑板到店揭下旧报，别签落地，浆糊痕未干（拍：揭纸/别签/浆糊痕/看手）');
+    assert.equal(scenes[0].title, '郑板揭启事', '标题里的字数预算括号也清洗');
+    assert.equal(scenes[0].desc, '郑板到店揭下旧报，别签落地，浆糊痕未干', '拍括号在解析源头清洗');
+    const matched = sceneMatched('郑板到店揭下旧报，别签落地，浆糊痕还在纸角。', scenes[0]);
+    assert.equal(matched, true, '场景写全时不再因拍短语字面缺失判漏写');
+    const clean2 = parseScenes('- 某场：主体句（拍：甲/乙/丙）');
+    assert.ok(!clean2[0].desc.includes('拍'), '拍括号整体剥离，不混入关键词');
+    // 冒号前拍括号（monitor-log 第 6/17/27 章实际格式：「开柜取纸（拍：…）（约 550 字）：柜面旧痕」）
+    // 旧版 colon 贪婪匹配把「（拍」吞进 title 侧，stripSceneMeta 只清 title/desc 各自，
+    // 残片「（拍」匹配不上完整括号对 → 标题里带「（拍」，覆盖率误判。
+    const colonBefore = parseScenes('- 开柜取纸（拍：揭纸/别签/浆糊痕）（约 550 字）：柜面旧痕');
+    assert.equal(colonBefore[0].title, '开柜取纸', '★ 冒号前拍括号必须在 colon 分割前整行清洗');
+    assert.equal(colonBefore[0].desc, '柜面旧痕', '拍/字数元信息剥掉后描述是主体句');
+});
+
+test('★ 0.19.1 E11：主宾并存禁项收宾语不收主语（对账单不得出现人名与日期）', () => {
+    const r = parseBanRules('- 对账单不得出现人名与日期');
+    assert.ok(r.banned.includes('人名') && r.banned.includes('日期'), '宾语（人名/日期）是禁词');
+    assert.ok(!r.banned.includes('对账单'), '主语（主角道具）不再被误捕');
+    const subjFirst = parseBanRules('- 现代词汇不得出现');
+    assert.ok(subjFirst.banned.includes('现代词汇'), '主语前置无宾语句式照旧收主语');
+});
+
+test('★ 0.19.1 E20：跨标点滑窗——细纲与正文的标点/措辞微差不灭场景命中', () => {
+    // 真机《食妖帖》第 1 章实证：细纲「杂役按手印领食」正文「按手印，领份饭」——
+    // 一个逗号把 4 字滑窗全灭，场景写全仍判漏写（E9 只清洗了拍元信息，这是更深层）。
+    const scene = { title: '汤执事摇铃', desc: '铜铃两下开饭，杂役按手印领食；端碗时汤执事盯着他看。' };
+    const content = '铜铃响了两下。两下是开饭。江离排在队尾，按手印，领份饭。汤执事盯着他看。';
+    assert.equal(sceneMatched(content, scene), true, '跨标点滑窗命中，2 token 互证成立');
+    // 互证结构仍在：单 token 命中不判场景命中
+    const weak = { title: '', desc: '灰雀妖爬到笼边讨水喝' };
+    assert.equal(sceneMatched('笼边很静。', weak), false, '仅专有名词式命中不构成场景命中');
+    // 控制组：真漏写照判（token 全不中）
+    assert.equal(sceneMatched('完全无关的一段正文。', scene), false, '真漏写仍判漏写');
+});
+
+test('★ 0.19.1 E12：登场禁令降条件型——提及命中不算禁项命中', () => {
+    const r = parseBanRules('- 不得让老周登场\n- 不得让郑板现身');
+    assert.ok(r.conditional.includes('老周') && r.conditional.includes('郑板'), '人名归条件型');
+    assert.ok(!r.banned.includes('老周') && !r.banned.includes('郑板'), '不再进禁词表');
+    const g = computeGateMetrics({ content: '老周当年守过的夜，郑板提过一嘴。', outline: '## 本章必写场景\n- 某场：他翻着旧账。\n\n## 本章禁止偏离项\n- 不得让老周登场\n- 不得让郑板现身\n' });
+    assert.deepEqual(g.bannedHits, [], '回忆性提及不判偏离');
+});
+
+test('★ 0.19.1 E16：占位符标记形态判定——括号/句读位拦，行文词组放行', () => {
+    const hit = (c) => contentGate({ content: c, chapter: 1 }).ok;
+    assert.equal(hit('第一段。\n\n（待补：这里补一段对峙。）\n\n尾段。'), false, '括号标记形态拦');
+    assert.equal(hit('第一段。\n\n待补：结局。\n\n尾段。'), false, '句读定位形态拦');
+    assert.equal(hit('第一段。TODO：补。\n\n尾段。'), false, '英文标记照拦');
+    assert.equal(hit('它洇的小字：环环待补，期至自清。'), true, '行文正常词组放行（E16 复发根因）');
+    assert.equal(hit('叙事里说细节待定，留待下章。'), true, '软标记不阻断');
+});
+
+test('★ 0.19.1 E18：对话章信息稀释按叙述文本算 bigram（对话体自然重复不再误报）', () => {
+    const dialogue = '「你来了。」\n「我来了。」\n「坐吧。」\n「不坐。」\n「门要关了。」\n「让它关。」\n「你不怕？」\n「不怕。」\n「为什么？」\n「账还没平。」';
+    const r = scanAiFlavor(dialogue);
+    assert.ok(r.categories.dilation === undefined, '占位断言防手滑'); // guard
+    assert.ok(r.categories.dilution.bigramRate < 0.18 || r.categories.dilution.score < 40,
+        `纯对话章 bigram 率 ${r.categories.dilution.bigramRate} 不再判信息稀释`);
+});
+
+test('★ 0.19.1 E19：台词归属判定收紧——叙述引用不算「有台词」', () => {
+    const content = '他想起白老师说过的话：「账不是这么记的。」\n\n小满说：「我哥不是那样的人。」';
+    const vc = voiceConsistency({
+        content,
+        voices: [
+            { name: '白老师', voice: { tics: ['那一年'] } },
+            { name: '小满', voice: { tics: ['我哥不是那样的人'] } },
+        ],
+    });
+    const bai = vc.items.find((i) => i.name === '白老师');
+    const man = vc.items.find((i) => i.name === '小满');
+    assert.equal(bai.spoken, false, '叙述里的人名引用（引用其话）不算本人有台词');
+    assert.equal(man.spoken, true, '「小满说：」是正经台词归属');
+    assert.equal(vc.issues.filter((i) => i.code === 'voice-tics-missing' && i.name === '白老师').length, 0, '不在场角色不再报口头禅缺失');
 });
 
 test('★ 关键词分词：—— / · 自然断开，用 —— 连接的场景描述也能命中（真机第93章假阴性回归）', () => {
