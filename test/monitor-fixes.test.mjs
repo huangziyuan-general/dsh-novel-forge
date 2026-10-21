@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { proximityHit, sceneMatched, computeGateMetrics } from '../lib/gate-metrics.js';
 import { detectHookKind } from '../lib/hook.js';
-import { computeAudit } from '../lib/audit.js';
+import { computeAudit, paragraphSpecRange } from '../lib/audit.js';
 
 test('proximityHit：跨字拆写的 2 字别名（门闩…自己落了）命中', () => {
     assert.equal(proximityHit('门闩咔地一声，自己落了。', '落闩'), true);
@@ -77,4 +77,15 @@ test('computeAudit：元叙述（破墙）词计数', () => {
     assert.equal(clean.metaNarrative, 0);
     const dirty = computeAudit({ content: '他推门进来。故事本该这么写：本章他该死，读者会喜欢的。' });
     assert.ok(dirty.metaNarrative >= 2);
+});
+
+test('paragraphSpecRange：长章书（下限 >4500）不许输出倒挂区间', () => {
+    // 全项目唯一一份算式，三个消费方（简报/批量起草/驳回文案）都读它——
+    // 修前 minChapterChars=5000 → 单段 170–150 字，上下限反着写给模型，比不给更糟。
+    for (const n of [2000, 3000, 4500, 5000, 9000]) {
+        const spec = paragraphSpecRange({ minChapterChars: n });
+        assert.ok(spec.min <= spec.max, `${n} 字下限 → 单段 ${spec.min}–${spec.max} 倒挂了`);
+    }
+    assert.deepEqual(paragraphSpecRange({ minChapterChars: 3000 }), { min: 100, max: 150 });
+    assert.deepEqual(paragraphSpecRange({ minChapterChars: 9000 }), { min: 150, max: 150 }, '长章书钳在上限，不再反向');
 });

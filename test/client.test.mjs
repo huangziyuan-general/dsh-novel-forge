@@ -354,9 +354,64 @@ test('★ 创建项目带会话戳：POST /projects body 里有 session', async 
     assert.equal(body.title, '新书');
 });
 
+test('★ 书作用域请求统一带 session：apiFetch 收口，目录/正文/保存/字数/删除一路同会话', async () => {
+    // 这条锁的是**收口本身**，不是某个端点：逐处补参数一定会漏（2026-10-19 的
+    // 「书卡显示 A 拷贝、阅读器读到 B 拷贝」就是漏在章节目录/阅读器/保存上）。
+    // 以后新加 /projects/<书>/… 端点不必再补参数，也不必再补用例——它自动在护栏内。
+    const shu = encodeURIComponent('书');
+    const BASE = '/api/novel-forge';
+    const seen = [];
+    const value = (v) => Promise.resolve({ json: () => Promise.resolve({ ok: true, value: v }) });
+    const fetch = (url, init) => {
+        const u = String(url);
+        seen.push({ url: u, init });
+        const bare = u.split('?')[0];
+        if (bare === `${BASE}/projects/${shu}/chars`) {
+            return value({ charMin: 2500, charMax: 3500, charSource: 'custom', charLimits: '2500-3500' });
+        }
+        if (/^\/api\/novel-forge\/projects\/[^/]+\/chapters\/\d+$/.test(u)) return value('夜色像墨');
+        if (bare === `${BASE}/projects/${shu}/chapters`) return value([]);
+        if (bare === `${BASE}/projects/${shu}/elements`) return value({});
+        if (bare === `${BASE}/projects/${shu}/proposals`) return value({ proposals: [] });
+        return value({ title: '书', chapters: {}, charView: { charMin: 2000, charMax: 4000, charSource: 'config' } });
+    };
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+
+    await controller.handleAction('open', { dataset: { id: '书' } });
+    await controller.handleAction('reader', { dataset: { id: '1' } });
+    controller.state.charsValue = '2500-3500';
+    await controller.handleAction('save-chars', { dataset: {} });
+    // 字数卡：请求形状与就地刷新（不整页重拉，免得冲掉用户的编辑现场）
+    const charsPost = seen.find((r) => r.url.startsWith(`${BASE}/projects/${shu}/chars`));
+    assert.equal(charsPost.init.method, 'POST');
+    assert.equal(JSON.parse(charsPost.init.body).chars, '2500-3500');
+    assert.equal(controller.state.detail.charView.charMin, 2500, '回包要刷进详情，卡片当场显示新区间');
+    assert.equal(controller.state.charsSaving, false, '发完必复位（否则按钮永久禁用）');
+    await controller.handleAction('save', { dataset: {} });
+    await controller.handleAction('delete', { dataset: {} });   // 第一击只 arm
+    await controller.handleAction('delete', { dataset: {} });   // 第二击才发（之后 detail 被清空）
+
+    const bookReqs = seen.filter((r) => r.url.startsWith(`${BASE}/projects/${shu}`));
+    assert.ok(bookReqs.length >= 6, `应有至少 6 条按书定位的请求（实际 ${bookReqs.length}）`);
+    for (const r of bookReqs) {
+        assert.ok(/[?&]session=s1(&|$)/.test(r.url), `★ 书作用域请求必须带会话：${r.url}`);
+    }
+    // 分类边界：/projects/claim 的段是**动作**不是书目名，session 走 body，不给 URL 加噪声
+    await controller.handleAction('claim', { dataset: { id: '书' } });
+    const claim = seen.find((r) => r.url.endsWith('/projects/claim'));
+    assert.ok(claim, '认领请求要发出去');
+    assert.ok(!claim.url.includes('session='), `claim 是动作段，不该被自动附加 session：${claim.url}`);
+    assert.equal(JSON.parse(claim.init.body).session, 's1', '认领的会话走 body（服务端读 body.session）');
+});
+
 test('★ 疲劳横幅「创建新会话并交接」：单击即 POST /session/create，成功后自动复制交接摘要', async () => {
     const seq = scriptedFetch([
-        { value: { title: '星海拾骨', stage: 'planning', chapters: {}, session: { chapters: 9, firstAvg: 800, bookFirstAvg: 2000, referenceChapters: 12, firstSeries: [{ chapter: 7, chars: 2300 }, { chapter: 8, chars: 900 }], warn: '本会话首稿逐章变短', handoff: '交接摘要内容', canCreate: true } } },
+        // detail 同时带**内部 id**（novel.json 的 nb_…）与 **bookId**（目录名）：
+        // 交接必须送目录名——服务端 locateBook/认领认的都是它，拿内部 id 等于双失效
+        // （真机：新会话建好了却 claimed:false、面板 0 本书）。
+        { value: { id: 'nb_internal_id', bookId: '星海拾骨', title: '星海拾骨', stage: 'planning', chapters: {}, session: { chapters: 9, firstAvg: 800, bookFirstAvg: 2000, referenceChapters: 12, firstSeries: [{ chapter: 7, chars: 2300 }, { chapter: 8, chars: 900 }], warn: '本会话首稿逐章变短', handoff: '交接摘要内容', canCreate: true } } },
         { value: '' }, // 第 1 章正文
         { value: [] }, { value: [] },
         { value: { created: true, createdSessionId: 's-new-1', workspaceMatched: true } },
@@ -370,7 +425,10 @@ test('★ 疲劳横幅「创建新会话并交接」：单击即 POST /session/c
     await controller.handleAction('session-create', { dataset: {} });
     const post = seq.requests.find((r) => r.url.endsWith('/session/create'));
     assert.ok(post, '单击必须发创建请求');
-    assert.equal(JSON.parse(post.init.body).session, 's1', '带当前会话 id 供工作区匹配');
+    const body = JSON.parse(post.init.body);
+    assert.equal(body.session, 's1', '带当前会话 id 供工作区匹配');
+    assert.equal(body.book, '星海拾骨', '★ book 必须是目录名（bookId），不能是 novel.json 的内部 id');
+    assert.ok(body.book !== 'nb_internal_id', '★ 内部 id 传过去 = 书根定位与认领双双落空');
     assert.ok(controller.state.notice.includes('已创建'), '成功提示要指路：去会话列表按名字找新会话');
     assert.ok(controller.state.notice.includes('手动归档'), '归档不可自动——如实告知手动路径');
     assert.ok(controller.state.notice.includes('原会话的工作区'), '落点要如实转述（用户钦定）');
@@ -415,7 +473,8 @@ test('★ 面板保存被门禁拦下：原文进 saveBlocked，第二击才带 
     const mod = loadClient(dom, BUNDLE, { fetch: seq.fetch });
     const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
     await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
-    const posts = () => seq.requests.filter((r) => /\/chapters\/1$/.test(r.url) && r.init?.method === 'POST');
+    // 保存请求的 URL 现在带 ?session=（书作用域统一附加），锚点必须放到查询串之前
+    const posts = () => seq.requests.filter((r) => /\/chapters\/1(\?|$)/.test(r.url) && r.init?.method === 'POST');
 
     await controller.handleAction('save', { dataset: {} });
     assert.equal(posts().length, 1, '第一击只发一次保存');
@@ -1064,13 +1123,24 @@ test('★ 阅读器：📖 取正文展开；✕ 收起；章号只认 data-id�
  * 注意：假 fetch 必须真的会 resolve/reject，否则 apiFetch 的 12s 超时定时器
  * 清不掉，node --test 会等事件池等到天荒地老（这里的挂死就是这么来的）。
  */
+/**
+ * 归属会话参数与「哪个端点在响应」无关：匹配前先剥掉它。
+ * 面板的 apiFetch 会给书作用域路径（/projects/:id/…、/worldbook/:book）统一附加
+ * ?session=（服务端靠它在多根同名书里定位用户看到的那份拷贝）——真实 URL 仍留在
+ * requests 里供断言，只是这里的路由匹配不该关心它。
+ */
+function stripSession(u) {
+    return String(u).replace(/([?&])session=[^&]*/g, '$1').replace(/[?&]+$/, '').replace(/&&/g, '&');
+}
+
 function gatedFetch(auto = []) {
     const requests = [];
     const pending = [];
     const fetch = (url, init) => {
         const u = String(url);
         requests.push({ url: u, init });
-        const rule = auto.find((r) => (typeof r.match === 'string' ? u.includes(r.match) : r.match.test(u)));
+        const key = stripSession(u);
+        const rule = auto.find((r) => (typeof r.match === 'string' ? key.includes(r.match) : r.match.test(key)));
         if (rule) return Promise.resolve({ json: () => Promise.resolve({ ok: true, value: rule.value }) });
         let resolve, reject;
         const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
@@ -1082,8 +1152,9 @@ function gatedFetch(auto = []) {
     };
     // 精确匹配优先，子串兜底——用完整 URL 调用就不会错杀相邻端点
     const respond = (match, value) => {
-        let entry = pending.find((p) => !p.done && p.url === match);
-        if (!entry) entry = pending.find((p) => !p.done && p.url.includes(match));
+        const want = stripSession(match);
+        let entry = pending.find((p) => !p.done && stripSession(p.url) === want);
+        if (!entry) entry = pending.find((p) => !p.done && stripSession(p.url).includes(want));
         assert.ok(entry, `gatedFetch.respond: 没有匹配 ${match} 的挂起请求（在等：${pending.filter((p) => !p.done).map((p) => p.url).join(' , ') || '（无）'}）`);
         entry.resolve(value);
     };

@@ -3,6 +3,10 @@ node_modules/
 .DS_Store
 test/tmp/
 
+# dsh 宿主原子写（tmp+rename）被中断时的残骸：`<目录>/.<文件>.<pid>.<uuid>.tmpdir/`。
+# 不是测试代码产生的（测试载体走 os.tmpdir 且有 finally 清理），忽略即可，别让它冒进 git status。
+*.tmpdir/
+
 # UI 预览页（生成物：内联了客户端产物与 React 运行时，跑 npm run preview 重建）
 preview/
 

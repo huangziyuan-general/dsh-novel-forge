@@ -129,7 +129,12 @@ export function ProjectDetailView({ state: s }) {
 	const chapters = s.chapterList ?? [];
 	const maxWritten = chapters.reduce((m, c) => Math.max(m, c.no ?? 0), 0);
 	const nextNo = maxWritten + 1;
-	const pendingProposals = (s.proposals || []).filter((p) => p.status === 'pending');
+	// 陈旧提案（superseded）也要列出来：apply 被陈旧守卫拒下时，错误文案让用户
+	// 「请丢弃后基于最新版重提」，而面板此前只渲染 pending——用户在界面上根本看不到
+	// 这条提案，丢弃按钮也就不存在，提示指向一个不存在的动作（流程死锁）。
+	// 陈旧提案只给「丢弃」，不给「应用」（它已不可能生效，点了只会再撞一次守卫）。
+	const pendingProposals = (s.proposals || []).filter((p) => p.status === 'pending' || p.status === 'superseded');
+	const pendingCount = pendingProposals.filter((p) => p.status === 'pending').length;
 	const revising = s.revising ?? null;
 
 	// ── 面包屑 ──
@@ -230,10 +235,10 @@ export function ProjectDetailView({ state: s }) {
 	);
 
 	// ── 提案队列（用户主权动作：工具面刻意没有 apply）──
-	const proposalsBlock = Card({ tone: pendingProposals.length > 0 ? 'warn' : 'plain' },
+	const proposalsBlock = Card({ tone: pendingCount > 0 ? 'warn' : 'plain' },
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm } },
 			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small } }, '📝 待批准提案'),
-			pendingProposals.length > 0 ? Chip({ tone: 'warn' }, String(pendingProposals.length)) : null,
+			pendingCount > 0 ? Chip({ tone: 'warn' }, String(pendingCount)) : null,
 h('span', { style: { flex: '1 1 auto' } }),
 			// 常驻刷新：队列只在开书/应用动作时加载——写作会话新建提案后，挂着面板的
 			// 用户需要明示入口（焦点自动重拉是兜底）；加载中/动作中不显示避免歧义
@@ -256,12 +261,15 @@ h('span', { style: { flex: '1 1 auto' } }),
 					...pendingProposals.map((p) => {
 						const busy = s.proposalBusy === p.id;
 						const open = s.proposalDetail?.id === p.id;
+						const stale = p.status === 'superseded';
 						const when = p.createdAt ? String(p.createdAt).slice(5, 16).replace('T', ' ') : '';
 						// 「是什么」一句话：模型附的 reason 最能说明白改了什么；
 						// 没写 reason 就给正文摘要；文件丢了要明说（建议丢弃）。
 						const what = p.missing
 							? '⚠️ 提案文件缺失（索引还在、文件被删）——建议直接丢弃'
-							: (p.reason || p.preview || '（模型未附说明——点「查看」读全文再决定）');
+							: stale
+								? '⏳ 已陈旧：它基于的正文版本已被后来的写章/润色顶掉了，应用会把正文改回旧版——丢弃后请让模型基于最新版重提'
+								: (p.reason || p.preview || '（模型未附说明——点「查看」读全文再决定）');
 						const detail = s.proposalDetail;
 						return h('div', {
 							key: p.id,
@@ -278,8 +286,11 @@ h('span', { style: { flex: '1 1 auto' } }),
 									h('span', { style: { ...hintStyle, fontSize: font.caption, marginLeft: space.sm, fontWeight: weight.normal } },
 										`${p.id}${when ? ' · ' + when : ''}`)),
 								Btn({ size: 'sm', action: 'proposal-view', id: p.id }, open ? '收起' : '👁 查看'),
-								Btn({ size: 'sm', variant: 'primary', action: 'proposal-apply', id: p.id, disabled: busy },
-									busy ? '…' : '应用'),
+								// 陈旧提案没有「应用」：点了只会再撞一次陈旧守卫（且把索引又写一遍）
+								stale
+									? Chip({ tone: 'warn' }, '已陈旧')
+									: Btn({ size: 'sm', variant: 'primary', action: 'proposal-apply', id: p.id, disabled: busy },
+										busy ? '…' : '应用'),
 								Btn({ size: 'sm', variant: 'danger', action: 'proposal-discard', id: p.id, disabled: busy }, '丢弃'),
 							),
 							// 行 2：提案要干嘛（一句话说明 / 摘要）
@@ -477,11 +488,50 @@ h('span', { style: { flex: '1 1 auto' } }),
 			: null,
 	);
 
+	// ── 每章字数（用户 2026-10-20 要求面板能设）──
+	// 显示的是服务端算好的 charView（生效区间 + 出处）：优先级「本书自定义 > 平台口径 >
+	// 插件默认」只有一份实现在 lib/store.js，面板不重算——两处算出不同数字就是本轮的病。
+	const charView = s.detail?.charView ?? null;
+	const customChars = charView?.charLimits ?? '';
+	const charsBusy = s.charsSaving === true;
+	const charLimitsBlock = Card({ tone: s.charsError ? 'danger' : 'plain' },
+		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' } },
+			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small } }, '✒️ 每章字数'),
+			charView
+				? Chip({ tone: charView.charSource === 'custom' ? 'ok' : 'accent' },
+					`${charView.charMin}–${charView.charMax} 字`)
+				: null,
+			charView
+				? h('span', { style: { ...hintStyle, fontSize: font.caption } },
+					`出处：${charView.charSource === 'custom' ? '本书自定义'
+						: charView.charSource === 'platform' ? '投放平台口径' : '插件默认'}`)
+				: null,
+		),
+		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, marginTop: space.sm } },
+			h('input', {
+				// key 带当前值与书名：换书/保存成功后重挂，输入框照实回显盘上的值
+				key: `chars-${s.selected ?? ''}-${customChars}`,
+				'data-field': 'chars-value', defaultValue: customChars,
+				placeholder: '如 2500-3500；留空＝跟随平台/默认',
+				'aria-label': '本书每章字数区间',
+				style: { ...inputStyle, flex: '1 1 auto', maxWidth: '220px' },
+			}),
+			Btn({ variant: 'primary', size: 'sm', action: 'save-chars', disabled: charsBusy }, charsBusy ? '保存中…' : '保存'),
+			customChars !== ''
+				? Btn({ variant: 'ghost', size: 'sm', action: 'clear-chars', disabled: charsBusy }, '清除自定义')
+				: null,
+		),
+		h('div', { style: { ...hintStyle, fontSize: font.caption, marginTop: space.xs } },
+			'设了它，写章门禁、写前简报、细纲容量、提案与润色的上下限、novel_audit 全按这个区间判——只改一处，六条链一起变。'),
+		s.charsError ? h('div', { style: { ...errStyle, fontSize: font.small, marginTop: space.xs } }, s.charsError) : null,
+	);
+
 	// ── 标签一：基本信息 ──
 	// 注意别在这里套 Section 标题：卡片自己已经带标题了，套一层会得到
 	// 「✍️ 本章 / ✍️ 本章编辑」这种双标题。
 	const infoView = h('div', { style: stackStyle(space.lg) },
 		ProjectOverviewView({ state: s }),
+		charLimitsBlock,
 		continuityBlock,
 		diagnosisBlock,
 		proposalsBlock,

@@ -28,6 +28,15 @@ export function initialState() {
 		creating: false, busy: false, title: '', genre: '',
 		// titleReset：书名输入是非受控的（defaultValue + key），创建成功清空后 bump 重置
 		titleReset: 0,
+		// 每章字数区间（用户 2026-10-20 要求「面板能设字数」）：
+		// newChars = 建书表单里的选填值（"2500-3500"，空＝不设）；
+		// charsValue = 详情卡编辑框的当前值（保存时读它）。**undefined ≠ ''**：
+		// undefined = 还没从服务端详情拿到（或压根没编辑过），保存时必须按「原样」处理；
+		// '' = 用户明确清空 / 点了「清除自定义」。混为一谈会把「什么都没点」当成
+		// 「清除」，服务端随即删掉 charLimits——用户自定义区间被静默抹掉。
+		// charsSaving = 保存在途；charsError = 服务端 400 的原文（必须可见，
+		// 不许把「区间写错了」吞成「没保存」）。
+		newChars: '', charsValue: undefined, charsSaving: false, charsError: '',
 		// 列表筛选（>8 本才显示输入框）：按书名/目录名/题材做客户端子串匹配
 		filter: '',
 		// 列表内联改名 / 删除：rename = {id, value} | null；listDeleteId = 待确认删除的书 id | null

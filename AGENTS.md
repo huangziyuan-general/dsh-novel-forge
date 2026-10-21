@@ -20,6 +20,12 @@ DSH（DeepSeek Harness）小说创作插件。设计主线：**代码强制 > �
      全量才清删章块」三条保护上漂移；
    - `lib/mcp-standalone.js` / `lib/server-api.js` 的**非宿主通道**（node:fs 后端 / REST 数据面），
      必须自带与宿主同语义的 containment 与版本守卫。
+   ⚠️ **宿主 `FileSystem` 接口没有 `mkdir`**（只有 resolve/stat/lstat/readText/readBytes/
+   listDir/writeText/writeFile 等），所以**空目录创建不是公开能力**。五个书目录
+   （正文/大纲/人物/设定/账本）**随首次写入自动出现**——local 后端在 `writeText`
+   内部走 `mkdir(directory, { recursive: true })` 建父目录。因此 `novel_project init`
+   只写 `novel.json` 是**正确行为，不是缺陷**；别去造 `.gitkeep` 占位文件，
+   也别为了建目录破例用 node:fs。工具描述已按此改口径（1.0.2）。
 2. **纯逻辑与 io 分离**：`lib/{noai,ledger,gate,versioning,audit,contextpack}.js` 必须保持
    纯函数（输入输出皆数据），便于 `node --test` 直测；io 只发生在 `lib/fsio.js` 与工具层。
 3. **`output.schema` 与 execute 返回值逐字段一致**（additionalProperties:false），
