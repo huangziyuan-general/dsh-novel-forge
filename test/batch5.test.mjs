@@ -1239,6 +1239,25 @@ test('★ updateJson：读写之间被人插一刀，两边的更新都留得下
         '陈旧对象整体覆盖会把 OTHER 抹掉（幽灵提案的成因）——重读重放后两边的更新都该在');
 });
 
+test('★ updateJson：mutator 返回 undefined = 不改不写，written:false 且不凭空造文件（未落盘守卫的前提）', async () => {
+    // project-tool 的 platform/chars/phase/set_stage 都靠 `written` 判「到底落没落」。
+    // 这条锁死 updateJson 的契约：读回来是 null（文件不存在）时 mutator 收到 undefined，
+    // 返回 undefined → 绝不写盘、written:false。原语一旦漂成「undefined 也写」或
+    // 「written 恒 true」，上面四处的未落盘守卫会静默失效。
+    const meta = '不存在书/novel.json';
+    const io = memIo({});
+    let saw = 'not-called';
+    const { written, result } = await updateJson(io, meta, (latest) => {
+        saw = latest;
+        if (!latest || typeof latest !== 'object') return undefined;
+        return { value: latest };
+    });
+    assert.equal(saw, undefined, '文件缺失时 mutator 应收到 undefined（current.value===null 归一）');
+    assert.equal(written, false, 'mutator 返回 undefined 必须判为未写');
+    assert.equal(result, undefined, '未写时 result 为空');
+    assert.equal(io.files.has(meta), false, '未落盘绝不能凭空创建 novel.json');
+});
+
 test('★ 并发登记提案：两份提案索引都在 novel.json 里（不产生幽灵提案）', async () => {
     const { submitRevisionProposal } = await import('../lib/proposals.js');
     const book = '提案并发书';
@@ -1332,7 +1351,11 @@ test('★ commitChapter 驳回合入：计数键走增量，撞版本冲突重�
     };
 
     await assert.rejects(
-        () => commitChapter({ config: TEST_CFG, io, p, book, novel, n: 7, title: '试探', content: '太短', summary: 's' }),
+        // 驳回体必须是**成稿规模**（不低于机审下限的四分之一）：低于该阈值的提交按设计判为
+        // 「非成稿/工具探测」，**不推进熔断计数**（lib/chapter-commit.js 的 T1），本用例要验的
+        // 「计数键走增量合入」就根本不会发生。这里用一段超过下限四分之一、仍不足下限的正文：
+        // 照样被驳回，但走的是正常的驳回计数路径。
+        () => commitChapter({ config: TEST_CFG, io, p, book, novel, n: 7, title: '试探', content: '这一段只是占位正文，用来凑到成稿规模，好让驳回发生在计数路径上', summary: 's' }),
         /机审未通过/,
     );
     assert.ok(injected, '前置：确实撞上一次版本冲突并重放');

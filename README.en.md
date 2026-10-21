@@ -31,7 +31,7 @@ The failure modes of AI long-form writing aren't magic — each has an engineeri
 | Cross-chapter repetition / padding | 8-character shingle overlap detection against prior text; beyond threshold, save is rejected | `novel_write_chapter` mechanical check |
 | Uncontrolled chapter length | Mechanical-check threshold defaults to 2000–4000 chars (serial-web novel standard, target 3000); the pre-write briefing carries a "target chapter length" section | `novel_write_chapter` / `novel_briefing` |
 | No hook at chapter end | Chapter-end hook heuristic (question / suspense / ellipsis / exclamation); missing one raises a warning | `novel_audit` |
-| AI smell | Six-dimension structural scan: template sentences / stock-phrase density / emotional directness / sentence-pattern templates / paragraph-rhythm variance / information dilution (fully local, zero model cost) | `novel_noai_scan` |
+| AI smell | Eight-dimension structural scan: template sentences / stock-phrase density / emotional directness / sentence-pattern templates / paragraph-rhythm variance / information dilution / chapter-end formula / AI default words (fully local, zero model cost) | `novel_noai_scan` |
 | Silent overwriting of text | Proposal system: edits go through a proposal → user confirms → new version is generated; old versions are never overwritten | `novel_propose` |
 | Lax reviewing | Mechanical and model review are separated: the audit produces deterministic numbers, and model review must cite evidence | `novel_audit` |
 | Spoiling the suspense early | Scene contract: hidden-character dossiers never enter context (traces erased even from ledger/summaries); if the name appears in the body, the content gate rejects it | `novel_scene` |
@@ -131,7 +131,7 @@ novel_project init → novel_project phase (see the nine-stage board, fill entry
 | `novel_briefing` | pre-write context pack (outline → pledge → **scene contract** → character cards → **voice-gene cards** → ledger → foreshadowing → worldbook → previous chapter ending → anchor segments) | consistency supply side; trims cast and worldbook by contract |
 | `novel_write_chapter` | write & commit chapter | gate → mechanical check → ledger → **content gate (six dims)** → **outline-contract metrics** → versioning; contract metrics persisted to chapter index |
 | `novel_ledger` | fact ledger (with notes) + **point-in-time simulation** (`status_at` snapshot of chapter n / `timeline` evolution) + foreshadowing plant / payoff / reschedule | same-chapter value change rejected; chapter-number-ahead rejected; overdue foreshadowing warned; backfill doesn't alter history |
-| `novel_noai_scan` | six-dimension anti-AI-smell scan | fully local, zero cost |
+| `novel_noai_scan` | eight-dimension anti-AI-smell scan | fully local, zero cost |
 | `novel_audit` | deterministic chapter audit + contract metrics + `continuity` whole-book consistency + `voice` voice-gene check + `platform` **Qidian / Fanqie dual-platform review** + `censor` **seven-category sensitivity self-check** | mechanical evidence; platform health table gives actionable fixes |
 | `novel_style` | prose six-axis baseline (μ±σ band) + **mood spectrum 12 axes**: build baseline / check against (incl. dominant-mood drift) | fully local, zero cost; reports numbers only, no labels |
 | `novel_propose` | proposal / list | edits go through proposals, user applies in panel; old versions never overwritten |

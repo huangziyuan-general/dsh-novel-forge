@@ -63,6 +63,7 @@ const ROUTES = [
     { name: 'POST /projects/:id/export', method: 'POST', url: `${PREFIX}/projects/护栏本/export` },
     { name: 'DELETE /projects/:id', method: 'DELETE', url: `${PREFIX}/projects/护栏本` },
     { name: 'POST /projects/:id/rename', method: 'POST', url: `${PREFIX}/projects/护栏本/rename` },
+    { name: 'POST /projects/:id/chars', method: 'POST', url: `${PREFIX}/projects/护栏本/chars` },
     { name: 'POST /projects/:id/clone', method: 'POST', url: `${PREFIX}/projects/护栏本/clone` },
     { name: 'GET /worldbook/:bookId', method: 'GET', url: `${PREFIX}/worldbook/护栏本` },
     { name: 'POST /worldbook/:bookId', method: 'POST', url: `${PREFIX}/worldbook/护栏本` },
@@ -439,6 +440,148 @@ test('★ 方向4 同名书冲突：多根下同名书只出一卡，且显式�
     }
 });
 
+test('★ 会话归属定位：多根同名书时详情/章节按 ?session= 落到会话名下那份拷贝（列表与阅读不分家）', async () => {
+    // 真机背景（2026-10-19）：《开局觉醒加特林》4 份拷贝并存，面板书卡按 sessions 归属
+    // 过滤显示 A 拷贝（105 章），阅读器却按根排序先到先得读到 B 拷贝（103 章）——
+    // locateBook 不认会话，两边分家。本用例锁死：给了 ?session= 就读会话名下那份。
+    const { registerServerApi } = await import('../lib/server-api.js');
+    const ownRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-own-'));
+    const name = '同名归属书';
+    const mkBook = (dir, sessions, logline, chapterText, chapterCount) => {
+        fs.mkdirSync(path.join(dir, name, '正文'), { recursive: true });
+        const chapters = {};
+        for (let n = 1; n <= chapterCount; n++) {
+            const rel = `${name}/正文/第${n}章-试-v1.md`;
+            fs.writeFileSync(path.join(dir, rel), `${chapterText}${n}\n`);
+            chapters[String(n)] = {
+                title: `第${n}章`, versions: [1], latest: 1, chars: 10,
+                files: [{ version: 1, file: rel }], path: rel,
+            };
+        }
+        fs.writeFileSync(path.join(dir, name, 'novel.json'), JSON.stringify({
+            id: `nb_${logline}`, title: name, stage: 'writing', sessions, logline, chapters,
+        }));
+    };
+    // 根①（workspaceRoot，排序最前）：session-b 名下，1 章
+    mkBook(root, ['session-b'], 'cwd-copy', '甲本正文', 1);
+    // 根②（projcache 工作区）：session-a 名下，2 章
+    mkBook(ownRoot, ['session-a'], 'own-copy', '乙本正文', 2);
+    fs.mkdirSync(path.join(fakeHome, '.dsh', 'storages'), { recursive: true });
+    fs.writeFileSync(path.join(fakeHome, '.dsh', 'storages', 'session_projcache.json'), JSON.stringify({
+        tables: { sessions: { own: { identity: { cwd: ownRoot } } } },
+    }));
+    const registrations = [];
+    const ownCtx = {
+        fs: makeFakeBackend({ allowWriteRoots: [root], allowReadRoots: [root, ownRoot] }),
+        emit() {},
+        logger: { info() {} },
+        inject: (_deps, fn) => { fn(ownCtx); },
+        effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
+        webServer: { register: (def) => { registrations.push(def); return () => {}; } },
+    };
+    registerServerApi(ownCtx, { workspaceRoot: root, scanTopK: 8 }, { homedir: fakeHome });
+    const origHandler = handler;
+    handler = registrations[0].handler;
+    try {
+        // ① 详情：session-a → 会话名下的 own-copy（根排序上它排第二，也必须赢）
+        const dA = await drive({ method: 'GET', url: `${PREFIX}/projects/${encodeURIComponent(name)}?session=session-a` });
+        assert.equal(dA.statusCode, 200);
+        assert.equal(dA.json.value.logline, 'own-copy', '★ 详情必须落在会话名下的拷贝上，不能按根排序先到先得');
+        // ② 详情：session-b → cwd 拷贝
+        const dB = await drive({ method: 'GET', url: `${PREFIX}/projects/${encodeURIComponent(name)}?session=session-b` });
+        assert.equal(dB.json.value.logline, 'cwd-copy');
+        // ③ 详情：无归属会话 → 按根排序回退 cwd 拷贝（旧行为，不 404）
+        const dX = await drive({ method: 'GET', url: `${PREFIX}/projects/${encodeURIComponent(name)}?session=session-x` });
+        assert.equal(dX.json.value.logline, 'cwd-copy', '会话在所有拷贝上都无归属时回退根排序');
+        // ④ 详情：不带 session → 旧行为
+        const dN = await drive({ method: 'GET', url: `${PREFIX}/projects/${encodeURIComponent(name)}` });
+        assert.equal(dN.json.value.logline, 'cwd-copy');
+        // ⑤ 章节目录：session-a → own 拷贝的 2 章（cwd 拷贝只有 1 章，章数即指纹）
+        const lA = await drive({ method: 'GET', url: `${PREFIX}/projects/${encodeURIComponent(name)}/chapters?session=session-a` });
+        assert.equal(lA.json.value.length, 2, '★ 章节目录必须与会话名下拷贝一致（2 章，不是 cwd 份的 1 章）');
+        // ⑥ 读正文：session-a → 乙本；session-b → 甲本
+        const rA = await drive({ method: 'GET', url: `${PREFIX}/projects/${encodeURIComponent(name)}/chapters/1?session=session-a` });
+        assert.equal(rA.json.value, '乙本正文1\n', '★ 阅读器读到的必须是会话名下那份的正文');
+        const rB = await drive({ method: 'GET', url: `${PREFIX}/projects/${encodeURIComponent(name)}/chapters/1?session=session-b` });
+        assert.equal(rB.json.value, '甲本正文1\n');
+    } finally {
+        handler = origHandler;
+        fs.rmSync(ownRoot, { recursive: true, force: true });
+        fs.rmSync(path.join(root, name), { recursive: true, force: true });
+        fs.rmSync(path.join(fakeHome, '.dsh'), { recursive: true, force: true });   // 还原假 home，别的用例不受污染
+    }
+});
+
+test('★ 会话归属定位（列表侧闭环）：多根同名书时 GET /projects?session= 按会话名下那份拷贝过滤与展示', async () => {
+    // 上一条用例锁的是「读路径」（详情/目录/正文）认会话；这条锁的是**列表侧**——
+    // scanAllBooks 此前恒取根排序先到者当「这本书」，过滤用的 novel 与展示的 novel 不是
+    // 同一份拷贝：会话名下那份在非 cwd 根时，书会被整个过滤掉（面板空白，真机 10-19
+    // 就是这么丢的书），或者显示 A 份章数、点进去读 B 份。列表与 locateBook 共用
+    // bookInSession 后，两边才不会分家。
+    const { registerServerApi } = await import('../lib/server-api.js');
+    const ownRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-list-own-'));
+    const name = '同名列表书';
+    const mkBook = (dir, sessions, logline, chapterCount) => {
+        fs.mkdirSync(path.join(dir, name, '正文'), { recursive: true });
+        const chapters = {};
+        for (let n = 1; n <= chapterCount; n++) {
+            const rel = `${name}/正文/第${n}章-试-v1.md`;
+            fs.writeFileSync(path.join(dir, rel), `${logline}${n}\n`);
+            chapters[String(n)] = { title: `第${n}章`, versions: [1], latest: 1, chars: 10, files: [{ version: 1, file: rel }], path: rel };
+        }
+        fs.writeFileSync(path.join(dir, name, 'novel.json'), JSON.stringify({
+            id: `nb_${logline}`, title: name, stage: 'writing', sessions, logline, chapters,
+        }));
+    };
+    // 根①（workspaceRoot，排序最前）：session-b 名下，1 章
+    mkBook(root, ['session-b'], 'cwd-copy', 1);
+    // 根②（projcache 工作区）：session-a 名下，2 章
+    mkBook(ownRoot, ['session-a'], 'own-copy', 2);
+    fs.mkdirSync(path.join(fakeHome, '.dsh', 'storages'), { recursive: true });
+    fs.writeFileSync(path.join(fakeHome, '.dsh', 'storages', 'session_projcache.json'), JSON.stringify({
+        tables: { sessions: { own: { identity: { cwd: ownRoot } } } },
+    }));
+    const registrations = [];
+    const listCtx = {
+        fs: makeFakeBackend({ allowWriteRoots: [root], allowReadRoots: [root, ownRoot] }),
+        emit() {},
+        logger: { info() {} },
+        inject: (_deps, fn) => { fn(listCtx); },
+        effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
+        webServer: { register: (def) => { registrations.push(def); return () => {}; } },
+    };
+    registerServerApi(listCtx, { workspaceRoot: root, scanTopK: 8 }, { homedir: fakeHome });
+    const origHandler = handler;
+    handler = registrations[0].handler;
+    try {
+        // ① session-a：会话名下那份排在第二根，也必须被列出来（否则面板直接空白）
+        const lA = await drive({ method: 'GET', url: `${PREFIX}/projects?session=session-a` });
+        const cA = lA.json.value.filter((x) => x.name === name);
+        assert.equal(cA.length, 1, '★ 会话名下那份在非 cwd 根时也必须出现在列表里（此前会被过滤成 0 本）');
+        assert.equal(cA[0].chapters, 2, '★ 列表显示的章数必须来自会话名下那份（2 章，不是 cwd 份的 1 章）');
+        assert.equal(cA[0].id, 'nb_own-copy', '★ 面板书卡身份即会话名下那份拷贝');
+        // ② session-b：cwd 份
+        const lB = await drive({ method: 'GET', url: `${PREFIX}/projects?session=session-b` });
+        const cB = lB.json.value.filter((x) => x.name === name);
+        assert.equal(cB.length, 1);
+        assert.equal(cB[0].chapters, 1, 'session-b 名下是 cwd 份（1 章）');
+        // ③ 无归属会话 → 过滤为空（旧行为：这本书不属于它）
+        const lX = await drive({ method: 'GET', url: `${PREFIX}/projects?session=session-x` });
+        assert.equal(lX.json.value.filter((x) => x.name === name).length, 0, '不归属本会话的书不该列出');
+        // ④ 不带 session → 全量，取 cwd 优先那份（旧行为，零抖动）
+        const lN = await drive({ method: 'GET', url: `${PREFIX}/projects` });
+        const cN = lN.json.value.filter((x) => x.name === name);
+        assert.equal(cN.length, 1, '同名书仍然只出一张卡');
+        assert.equal(cN[0].chapters, 1, '无 session 时维持 cwd 根优先');
+        assert.equal(cN[0].duplicates, 1, '同名书另有 1 份的标注必须还在');
+    } finally {
+        handler = origHandler;
+        fs.rmSync(ownRoot, { recursive: true, force: true });
+        fs.rmSync(path.join(root, name), { recursive: true, force: true });
+        fs.rmSync(path.join(fakeHome, '.dsh'), { recursive: true, force: true });
+    }
+});
+
 test('W3b 集成：目录态 projcache（record.identity.cwd）进扫描根——真机 Windows 只剩这形态', async () => {
     // Windows 真机（dsh 0.1.5-rc.2）实测：单文件 session_projcache.json 不存在，
     // 数据在 session_projcache/sessions/*.json 的 record.identity.cwd 里。旧实现只读单文件
@@ -605,7 +748,7 @@ test('R1-00 路由清单与源码计数同步（清单烂掉即红）', () => {
         `源码 fence 检查条数（${trustedChecks.length}）≠ 路由条数（${ROUTES.length}）——有端点漏写 trusted(req)！`);
 });
 
-test('R1 fence 全覆盖：27 条路由逐个不带 fence 头 → 403 FORBIDDEN', async () => {
+test('R1 fence 全覆盖：28 条路由逐个不带 fence 头 → 403 FORBIDDEN', async () => {
     for (const r of ROUTES) {
         const res = await drive({ method: r.method, url: r.url, fence: false, body: {} });
         assert.equal(res.statusCode, 403, `${r.name}：缺 fence 必须 403，实际 ${res.statusCode}`);
@@ -1737,4 +1880,41 @@ test('S-5 polish/draft-batch 的 body.session 形状校验：结构性怪值 400
     // 正常 session id 不被误杀（合法字符白名单）
     const resOk = await drive({ method: 'POST', url: `${PREFIX}/projects/护栏本/chapters/1/polish`, body: { session: 's-abc123:456' } });
     assert.notEqual(resOk.statusCode, 400, `合法 session 不应 400，实际 ${resOk.statusCode}：${resOk.body}`);
+});
+
+// ── CHARS：POST /projects/:id/chars —— 缺省语义不许与工具面分叉 ──────────
+//
+// 这是**显式写入端点**（面板「本章字数」输入框）：工具面 novel_project action=chars
+// 不传＝读现值，而这里缺字段多半是调用方拼错了请求体。旧实现把 undefined 当「清除」，
+// 一次拼错的请求就**静默抹掉**用户设好的区间（不变量 #11 禁止静默）；null 又会漏过
+// `=== null` 判据、在 else 分支读 undefined.min 抛成 500。两条都要响亮 400。
+test('★ POST /projects/:id/chars：缺字段/null → 400 响亮报错（不静默清除、不 500）；空串才清除', async () => {
+    await createBook('字数区间本');
+    const url = `${PREFIX}/projects/字数区间本/chars`;
+
+    const set = await drive({ method: 'POST', url, body: { chars: '2500-3500' } });
+    assert.equal(set.statusCode, 200, set.body);
+    assert.equal(set.json.value.charLimits, '2500-3500');
+    assert.equal(set.json.value.charSource, 'custom');
+
+    const missing = await drive({ method: 'POST', url, body: {} });
+    assert.equal(missing.statusCode, 400, `缺字段必须响亮 400（不许静默清除），实际 ${missing.statusCode}：${missing.body}`);
+    assert.equal(missing.json.error.code, 'INVALID_FIELD');
+
+    const nulled = await drive({ method: 'POST', url, body: { chars: null } });
+    assert.equal(nulled.statusCode, 400, `null 不许漏进 else 分支抛成 500，实际 ${nulled.statusCode}：${nulled.body}`);
+    assert.equal(nulled.json.error.code, 'INVALID_FIELD');
+
+    const still = await drive({ method: 'GET', url: `${PREFIX}/projects/字数区间本` });
+    assert.equal(still.json.value.charView.charLimits, '2500-3500', '★ 两次失败请求都不许动已落库的区间');
+    assert.equal(still.json.value.charView.charSource, 'custom');
+
+    const bad = await drive({ method: 'POST', url, body: { chars: '2500' } });
+    assert.equal(bad.statusCode, 400, '半套区间仍拒');
+    assert.equal(bad.json.error.code, 'INVALID_FIELD');
+
+    const cleared = await drive({ method: 'POST', url, body: { chars: '' } });
+    assert.equal(cleared.statusCode, 200, cleared.body);
+    assert.equal(cleared.json.value.charLimits, undefined, '空串＝清除自定义（键省略，不是留空壳）');
+    assert.equal(cleared.json.value.charSource, 'config');
 });

@@ -2897,7 +2897,9 @@ test('★ 衔接找回指令：衔接被丢时包里给路，丢弃不许变成�
         factsDigest: Array.from({ length: 40 }, (_, i) => `实体${i}·键: 值（第${i + 1}章起）`),
         prevTail: '尾'.repeat(400),
         summaries: ['第101章《x》：' + '梗概'.repeat(30)],
-        budget: 2400,
+        // M15 起结尾是"截短优先、留不住才丢"（下限 TAIL_FLOOR_CHARS），所以要把预算压到
+        // 剩余空间连下限都够不着，才复现这个角落：2400 时剩余 472 字仍能截断保住结尾。
+        budget: 2000,
     });
     assert.ok(pack.dropped.some((d) => d.startsWith('上一章结尾')), '前置：硬需求挤压下衔接确实被丢（保留额防不住的角落）');
     assert.equal(pack.recoveryNotes.length, 1, '被丢时必须给找回指令');

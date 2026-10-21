@@ -126,6 +126,10 @@ export function createEventsController(ctx) {
 			case 'diagnose': await ctx.loadDiagnosis(); break;
 			case 'import-demo': case 'import-file': needsModel('请在会话中调用 novel_import 导入'); break;
 			case 'save': state.saveBlocked = ''; await ctx.saveChapter(); break;
+			// 本书每章字数区间（用户 2026-10-20）：保存读编辑框当前值；
+			// 「跟随平台/插件默认」= 清除自定义（送空串），两条都是显式一键。
+			case 'save-chars': await ctx.saveBookChars(state.charsValue); break;
+			case 'clear-chars': state.charsValue = ''; await ctx.saveBookChars(''); break;
 			// 门禁拦下后的二次确认：只有这一条路径带 force（内容门禁类判定可放行，
 			// 字数/账本/熔断服务端仍硬拦）——不做默认放行，也不许静默跳过。
 			case 'save-force': await ctx.saveChapter({ force: true }); break;
@@ -240,6 +244,9 @@ export function createEventsController(ctx) {
 		// 书名输入是非受控的（defaultValue）：每键只记值不重渲染——
 		// 「创建中…」那一下的 notify 由 create 自己负责（每键全列表重渲染白烧）。
 		if (field === 'title') { state.title = e.target.value; }
+		// 字数区间是自由文本（"2500-3500"）：边输不边报错，提交时才由服务端判（同 batch 表单的纪律）
+		else if (field === 'new-chars') { state.newChars = e.target.value; }
+		else if (field === 'chars-value') { state.charsValue = e.target.value; }
 		else if (field === 'project-filter') { state.filter = e.target.value; notify(); }
 		else if (field === 'draft') { state.draft = e.target.value; state.draftModified = e.target.value !== state.baseline; }
 		else if (field === 'rename-value') { if (state.rename) state.rename.value = e.target.value; }

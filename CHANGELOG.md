@@ -1,5 +1,127 @@
 # Changelog
 
+## v1.0.2 (2026-10-21)
+
+### 代码审查轮：schema 漂移与回显一致性（1.0.2 复核）
+
+1. **★ `novel_noai_scan` 补 `defaultword` 输出 schema**（`lib/tools/noai-scan-tool.js`）：第八维 `defaultword` 进了 `scanAiFlavor` 的返回，但工具 `output.schema` 的 categories 还停在七维、且 `additionalProperties:false`——宿主对工具输出做 lossless 严格校验，多一个键整次调用 `INVALID_TOOL_OUTPUT`，该工具上线后每次调用必炸（与 0.13.3 style / 0.13.7 summary / S1 propose 同族事故）。schema 补 `defaultword`（与 stock 同形 `score/total/hits:[{term,count,per1k}]`）。**两层回归钉**：`test/smoke.test.mjs` 一致性抽查改成「categories 返回键集 == schema 声明键集」的集合相等（不依赖 SDK，双向漂移即红）+ 真校验器用例把 `novel_noai_scan` 纳入 `validateJsonSchemaValue` 面。
+2. **`phase` 动作回显归一后的阶段 id**（`lib/tools/project-tool.js`）：返回体此前回显 `args.stage` 原值，入参给旧别名（planning/drafting…）时回执说别名、盘上与审计记的却是归一 id（topic/writing…），两处对不上。改回显 `res.phase`。回归钉：`phase stage=planning` 断言回执 `stage==='topic'` 且落库同源。
+3. **`platform` / `chars` 补未落盘守卫**（`lib/tools/project-tool.js`）：同批重构的 `phase`/`set_stage` 有「书目在并发里被删 → `written:false` → 抛未落盘」守卫，这两处漏了——mutator 见 `latest` 缺失返回 undefined 时静默返回缺 `charMin/charMax` 的成功回执。补同形 `if (!written) throw`，并在 `test/batch5.test.mjs` 锁死 `updateJson` 的 `written:false` 契约原语（mutator 返 undefined 绝不写盘、不凭空造文件）。
+4. **简报草稿残留扫描的列举兜底**（`lib/briefing.js`）：`io.listNames?.(book).catch(...)` 依赖「可选链短路整条 `?.().catch`」这条反直觉特性，且漏掉「listNames 存在却同步抛」的形态。改显式 try/catch + `??`，三条失败面（方法缺失 / async reject / 同步抛）都收成「当没有」。回归钉：`test/briefing-draft-residue.test.mjs` 补「listNames 同步抛不崩」。
+5. **文档口径对齐八维**：`novel_noai_scan` 描述、README/README.en 的「六维去 AI 味扫描」更正为八维（补「断章公式 / AI 默认值词」两项；`novel_style` 的六维文笔基线是另一码事，不动）。CHANGELOG「流程死锁」节编号从误写的 4–7 更正为 1–4。
+
+### 写入形态、归属闭环与假阳性收窄（1.0.2）
+
+1. **项目设置的读-改-写统一走冲突重放**（`lib/tools/project-tool.js` 的 `platform` / `chars` / `phase` / `set_stage`）：四处改为 `updateJson`（读时捕获版本、冲突重读重放），与 REST 面同形。旧实现读一次快照后整份回写、版本在写前一刻才 stat——与面板同期保存撞车时会覆盖掉窗口期内写进去的章节索引、会话归属与熔断计数。回显（字数区间 / 阶段看板）一律在**重读后的最新内容**上算。
+2. **列表端按会话挑拷贝**（`lib/server-workspace.js` `scanAllBooks({ session })`、`lib/server-routes/projects.js` 列表与认领）：同名书在多工作区根下并存时，列表此前恒取根排序先到者当「这本书」，过滤用的 novel 与展示的 novel 不是同一份拷贝——会话名下那份不在首根时书会被整个过滤掉（面板空白），或显示 A 份章数、点进去读 B 份。现在与 `locateBook` 共用 `bookInSession` 选拷贝；无 session / 会话无归属时维持 cwd 根优先，同名书仍只出一张卡（副本数照旧标注）。
+3. **预约式收尾取窄**（`lib/hook.js`）：【】推送标签与「配送/送达/取餐/出发+冒号」开场后，必须真钉了一个可指认的时点（数字或中文数字紧贴时间单位，或明晚/午夜一类时间锚）才判 announce。首版只要求「标签后跟若干非句号字符」，普通叙事（标签后接一句动作）会被误判成钩子——把「无钩」报成「有钩」等于放行一次真正的断章。
+4. **面板字数输入框用服务端现值初始化**（`src/client/controllers/projects.js`、`src/client/state.js`）：`charsValue` 以详情 `charView.charLimits` 为初值，并区分 `undefined`（未拿到/未编辑）与 `''`（明确清除）。此前恒为空串，输入框却显示着盘上的区间——用户没改动就点「保存」会把自定义区间清掉，无报错无提示。
+5. **上下文包结尾改截尾**（`lib/contextpack.js`）：「上一章结尾」装不下时保留**结尾**（新增 `clipTail`，标记前置为「前文截断」），不再截头把钩子与最后一句扔掉；截断标记计入 cap（此前实长为 cap+5，按剩余预算现算的区块会静默超支）；给前文摘要留次级保留额（只从结尾超出下限的富余里划），避免结尾先占位把摘要整块挤进 dropped。
+6. **平台审稿读本书字数口径**（`lib/platform-review.js` `reviewForPlatform` 新增 `charConfig` / `charSource`，`lib/tools/audit-tool.js`）：字数条目按「本书自定义 > 投放平台 > 插件配置」判（与写章门禁同一个 `effectiveCharConfig`），文案写明数字出处。此前审稿只读静态平台档案——书设 3000–6000、平台番茄时，5000 字的正文在「写」这边通过、在「审」这边被判超长。黄金三章下限改为 `max(2500, 本书下限)`：自定义档高于 2500 时不许被顶回去（原实现是「只抬不压」，写死的 2500 反过来把自定义下限压低了）。
+7. **字数口径回执引用真实参数名**（`lib/store.js` `charLimitsNote`）：自定义入口的提示写的是「传 `chars_min` 与 `chars_max`」，而工具 schema、REST、面板都只收单个 `chars` 字符串（"2500-3500"）——模型照回执传参会撞非法入参。改为 `chars: "2500-3500"`，`test/platform-persist.test.mjs` 加「回执参数名必须真实存在」回归钉。
+8. **phase 回执回显归一后的阶段 id**（`lib/tools/project-tool.js`）：入参给旧别名（`planning`）时盘上落的是归一 id（`topic`）、审计行也记 id，返回体却回显入参原值——「回执说 planning、盘上是 topic」。改为返回 `res.phase`；`test/smoke.test.mjs` 加旧别名回归钉。
+
+### 检测面假阳性收窄
+
+1. **单 token 兜底不成立**（`lib/gate-metrics.js` `sceneMatched`）：desc 只抽得出一个 ≥2 字词时不再启用降级互证——判据会退化成「正文任意处出现该词」，把「漏场景」的警告静默吞掉（注释承诺的「两条短词须同时出现」此前没有代码保证）。
+2. **破折号要求的否定守卫**（`lib/gate-metrics.js` `dashEndingNote`）：细纲写「章末**不得**用破折号收尾」时形状与要求型一致，会被反向读成要求、劝模型去违反自己的细纲。现在只在**命中跨度**内查否定（同一行里并列的「不许用句号收平」不误杀真要求），并要求句含祈使语气（只陈述不算硬要求）。
+3. **段落规格不再倒挂**（`lib/audit.js` `paragraphSpecRange`）：下限 >4500 字的长章书此前输出「单段 170–150 字」，三个消费方（简报/批量起草/驳回文案）一起失真——上限钳住。
+
+### 语句层面：抓得到「不通顺」，报得出默认值词（1.0.2）
+
+1. **润色新增「言说动词的宾语被物件顶替」病灶**（`lib/polish.js` `findSpeechObjDefects`）：这类病句此前 100% 漏检——润色只认三类病灶（AI 味 / 段长 / 结论式短句），而「把账本喊了三条巷」在字面上一个禁用词都没有。病根是言说动词的宾语槽被物件顶了，读者按字面读会卡住。三件同时成立才判定（把/将字句 + 言说动词 + **范围补语**），缺一放行：「把他喊了回来」「把话说清楚」都是正常句，没有范围补语就不判；宾语含言说内容词（话/事/名字/消息/经过/原委…）也一律放行。141 章真机语料实测命中 2/141、零假阳性。
+2. **去 AI 味新增第八维 `defaultword`**（`lib/noai.js`、`lib/data/noai-lexicon.json`）：AI 默认值词（动作与身体部位的默认选项）此前不在任何一维里——cliche 收的是长模板句，stock 收的是修饰词，而「摩挲」这类实词谁都能写一次。它必须**按密度计、不能命中即计**，因此配两道闸门：① 绝对计数 <3 不计分（「屏住气息」是正常写法）；② 篇幅 <800 字不计分（polish 逐段扫描时每段只有几百字，短样本上密度必然失真——不加这道闸门时，12 字里 1 次命中就是每千字 83 次、直接打满 100 分）。权重从其余七维按比例匀出，八维合计恒为 1。
+3. **开书工具描述改成宿主真实能力**（`lib/tools/project-tool.js`、`AGENTS.md` 不变量 1）：`novel_project init` 只落 `novel.json`、不建五个空目录——此前被描述成「novel.json + 目录骨架」，与实现不符。原因是**宿主 `FileSystem` 接口没有 `mkdir`**，local 后端只在 `writeText` 内部递归建父目录，空目录创建不是公开能力。结论是这是正确行为而非缺陷：目录随首次写入自然出现，别为建目录破例用 node:fs、也别造占位文件。
+4. **简报报书根草稿残留**（`lib/briefing.js`）：模型爱先用宿主 write 在书根写 `.draft-chN.md` 再搬进 `novel_write_chapter`——那一步绕过门禁、版本记录与账本联动，搬完还常常不删。简报每章扫一次书根的 `.draft*` 并告警，定位是**行为纠正**（指回 `novel_write_chapter`、点名「宿主 write」是错误动作），不是让模型去删它删不掉的文件。
+
+### 流程死锁与纵深防御
+
+1. **陈旧提案可以丢弃**（`lib/proposals.js` `discardProposal`、`src/client/views/project-detail.js`）：陈旧守卫拒下 apply 的文案让用户「请丢弃后重提」，而丢弃只收 `pending`、面板又只渲染 `pending`——照提示操作无路可走。现在 `superseded` 可丢弃，面板把它显示出来（标「已陈旧」、不给「应用」、说明为什么）。
+2. **批量起草先读 body 再定位书**（`lib/server-routes/insights.js`）：`draft-batch` 的 `locateBook` 此前排在 `readJsonBody` 之前，`body.session` 完全不参与归属判据——书按 query/头定位、引擎按 body 锚定，多根同名书时两个会话口径分家。
+3. **`body.book` 过 id 形状校验**（`lib/server-routes/session.js`）：会话轮换的书名要拿去拼读写路径（含认领时的写路径），与全站其它端点统一先过 `validBookId`。
+4. **回退提示只打一次**（`lib/server-workspace.js` `locateBook`）：「会话在本书所有拷贝上都无归属」此前每个请求都 `console.info`，真机刷屏会淹掉真正的告警。
+
+### 真机连载本监控轮修复（1.0.2）
+
+1. **W1 场景匹配约定入文**（`lib/tools/outline-tool.js`、`lib/chapter-commit.js`）：细纲工具描述写明「描述必须是正文里逐字出现的短语，（拍：…）括号内不参与场景匹配」；场景未覆盖的警告附带同一提示——治「逐字短语写进拍里」的系统性漏判（真机第 1 章覆盖仅 28.6% 的根因约定缺口）。
+2. **W2 desc 全 <3 字兜底**（`lib/gate-metrics.js` `sceneMatched`）：keywordsOf 抽空时降级取 ≥2 字词，互证结构不变（仍需 ≥2 条命中）——治「谢谢，兄弟」这类短描述被 ≥3 字下限整条滤空的漏判（真机第 10 章「交接」场景）。
+3. **W3 许可触发词扩展 + 否定守卫**（`lib/gate-metrics.js` `parseBanRules`）：PERMISSIVE_BEFORE_RE 增补 只称/只叫/只用/指称/名叫；调用点加否定守卫（触发词前 1–2 字含 不/勿/别/非/禁 时不按许可处理）——治「只用绰号指称某角色」被收进禁词表的误拦，同时防「不得只写「X」」被反向误放。
+4. **W4 预约/推送式收尾**（`lib/hook.js`）：新增取窄模式——【】推送标签或「配送/送达/取餐/出发+冒号」开场的章末判定为 announce；普通时间陈述句不受影响。
+5. **W5 ledger list 动作**（`lib/tools/ledger-tool.js`）：novel_ledger 新增 list——列出全部伏笔（id/埋设章/预计回收章/是否已收），治「伏笔 id 只在 setup 返回体里出现、事后 payoff 拿不到 id」的登记缺口。
+
+### 提交链与熔断
+
+1. **非成稿提交不再计入熔断**（`lib/audit.js` 新增 `nonDraftFloorChars` / `nonDraftNote` / `nonDraftRejection`，`lib/chapter-commit.js`）：阈值由 `minChapterChars / 4` 派生，取不到有效下限时为 0（不判定）。低于阈值的提交照旧驳回（机审判定不变），但不调 `recordRejection`、不落盘计数；审计行带 `nonDraft: true` 与 `nonDraftFloor`。熔断解除通道与 `force` 语义不变。
+2. **驳回文案改为可执行信息**（`lib/audit.js` 新增 `paragraphSpecRange` / `PARAGRAPH_SPEC_MAX`、`auditVerdict`、`nonDraftRejection`）：段落过少的驳回写明按**空行**分段（单换行算同一段）、单段字数区间（下限由 `minChapterChars` 派生，上限 150）与全文应分段数；非成稿提交改用「这不是一章」文案，并回显段落数、非空行数、弯引号数、直角引号数。
+3. **细纲的破折号收尾要求进 warnings**（`lib/gate-metrics.js` 新增 `dashEndingNote`，`lib/chapter-commit.js`）：细纲声明末段/章末须收在破折号上、正文末段未收在 `—` / `——` 时，写入本章返回的 `warnings`；只提醒，不阻断。
+
+### 覆盖率与人物称谓
+
+4. **覆盖率要素只取「本章必写场景」段**（`lib/contextpack.js` `declaredCoverageTerms`）：世界书关键词仅当出现在场景段（`本章必写场景` / `必写场景` / `本章场景` / `场景清单` / `本章场景清单`）时才计入要素；卷属、本章任务、禁止偏离项里的词不再进要素表。细纲无场景段时退回全文匹配（旧书口径不变）。
+5. **写章与审阅共用已知称谓证据**（`lib/audit.js` 新增 `knownAddressCandidates`、`computeAudit` 新增 `castAliasSources`，`lib/chapter-commit.js`、`lib/tools/audit-tool.js`）：对全名未出现在正文的角色，`老/小/大/阿 + 姓` 候选只有在人物卡、语言基因卡或既往章节正文中出现过才计入覆盖（去姓短称仍无出处要求）。两处调用点都只在全名缺席时读卡，读不到降级为空证据。**证据分两层，不拼一锅**：档案证据按人归人（同书两个同姓人物共享同一个候选称呼，把所有人的卡拼成一个证据池，别人档案里写明的「人称老X」就会替这个人交卷、把真漏写吞成没漏）；既往正文没有归属信息，只能整体共享（这一点在代码注释里如实标为残留串味面，且覆盖率本来就是 warning 档、不参与驳回）。
+
+### 上下文包
+
+6. **上一章结尾按剩余空间截断，不再整块丢弃**（`lib/contextpack.js` `buildContextPack`）：保留上限取 `min(600, 剩余空间)`，剩余空间不足 `TAIL_FLOOR_CHARS`（160 字）才进 `dropped` 并给找回指令。原实现只有 600 字整块或 0 字两种结果。
+
+### 会话归属定位（多工作区同名书）
+
+1. **`locateBook(bookId, { session })`**（`lib/server-workspace.js`）：同一本书在多个工作区根下各有一份拷贝时，给了会话就优先返回该会话名下的那份（判据与列表端 `bookInSession` 同一函数）；会话在所有命中拷贝上都无归属 → 按根排序回退第一份（旧行为，不 404）；不带 session → 与旧版逐字节一致。
+2. **读/写端点接会话**：章节目录、读正文、保存、一键修订、详情、要素、导出、删除、改名、克隆，以及会话轮换的「新会话工作区推导」与「自动认领书」两处，一律带会话归属判据（`requestSession` 为唯一取法）。
+3. **客户端取数带会话**：章节目录 / 阅读器 / 听书播放器走 `withSession()`，保存把 session 放进 body。
+
+### 提案制
+
+7. **提案登记基线，apply 前校验陈旧**（`lib/proposals.js`）：提案文件与索引都写 `baseVersion`（登记时的 `latest`）；apply 先比基线，无 `baseVersion` 的存量提案退回「提案 `createdAt` 早于章记录 `updatedAt`」判定；陈旧提案标 `superseded`（提案文件与索引双写）、落 `propose/superseded` 审计并抛中文错误。`listProposals` / `readProposal` 输出 `baseVersion` 与 `latestVersion`。
+8. **同章拒绝重复提案**（`lib/proposals.js` `submitRevisionProposal`）：入口快照 + 登记时复核两段判定；同章已有 pending 提案时抛「先在面板应用或丢弃」。
+9. **`discard` 补 id 形状校验**（`lib/proposals.js` `discardProposal`）：与 read / apply 同款 `validProposalId`，阻断把非法 id 拼进提案目录写路径。
+10. **apply 保住 gate 字段**（`lib/proposals.js`）：`chapterRecord` 的 prev 改传完整当前记录，契约指标重算返 null 时回落到上一版 gate。
+11. **propose 工具补基线字段**（`lib/tools/propose-tools.js`）：返回体与 proposals 条目新增 `baseVersion`、`latestVersion`（integer，无值时不携带）。
+
+### 字数口径（单一真相 + 本书自定义）
+
+12. **字数区间的唯一真相在 `lib/store.js`**：新增 `PLATFORM_IDS`、`PLATFORM_PROFILES`（起点 2000–4000、番茄 1500–3000）、`parsePlatform`、`platformOf`、`parseCharsSpec`、`parseCharLimits`、`charLimitsOf`、`effectiveCharConfig`、`charLimitsView`、`charConfigSourceLabel`、`charLimitsNote`、`platformNote`。生效优先级 **本书自定义（`novel.charLimits`）> 投放平台（`novel.platform`）> 插件配置**；三档都没设过时 `effectiveCharConfig` 原样返回传入的 config 引用（默认行为不变是结构性保证）。`charConfigForPlatform` 保留为「只算平台档」的底层件，判定链一律走 `effectiveCharConfig`。
+13. **平台数字不再抄第二份**：`lib/platform-review.js` 反向 import `PLATFORM_PROFILES`，番茄/起点的 `chapter-length` 判定值与文案（label/target/advice）全部由表生成——此前 store 与 platform-review 各抄一份字面量，正是「写审相反」的温床。段落规格同理：`lib/briefing.js` 与 `lib/batch-draft.js` 的内联算式改调 `paragraphSpecRange`，全项目只剩一份。
+14. **★ 口径闭环到每一条链**（上一版只改了工具面两处，本轮补全其余六处）：写章 `novel_write_chapter`、写前简报 `novel_briefing`（含 D2 批量起草的 `draftSystem`/`buildBriefing`）、面板存章 REST `POST /chapters/:no`、面板批量起草 `POST /draft-batch`、提案 `novel_propose` 上下限、润色 `novel_polish submit`、细纲 `save_chapter` 的容量门禁与逐场景预算、`novel_audit` 的字数判定与默认平台审稿——全部按本书生效区间算。工具描述里写「以简报为准」，简报就必须报同一个数（旧状：简报说 2000–4000、门禁按本书档位判，模型照简报写完再被退稿）。
+15. **`novel_project` 新增 `action=chars`（读/写/清除本书每章字数区间）**：`chars` 参数写「下限-上限」（认 `- – — ~ 、，/` 与空格），不传＝只读，空串＝清除；半套区间、非整数、越界（100–20000 之外）、上下限倒挂一律响亮报错且**不改坏已落库的值**。`init` 也接受 `chars`（与 `platform` 一起在第一次写盘落地，不留「书已建好、区间没落地」的窗口）。`status` / `platform` 回执一并带 `charMin`/`charMax`/`charSource`/`charLimits`（没设自定义时省略 `charLimits`，不送 null）。
+16. **面板能设字数**：项目详情新增「✒️ 每章字数」卡（显示生效区间 + 出处，改数保存、一键清除自定义），建书表单新增选填的「每章字数」输入框——**开书时就收集用户的字数设置**（用户不答就不传，回落默认口径）。新端点 `POST /projects/:id/chars`（走 `updateJson` 读时版本 + 冲突重写、fence、审计行 `rest/chars`），`POST /projects` 建书接受 `chars`/`platform`（非法值 400 而不是静默丢弃），`GET /projects/:id` 回 `bookId`（目录名）与服务端算好的 `charView`（面板不重算优先级）。常驻 systemPrompt 与 preset persona 各加一条纪律：字数属于用户，开书先问，绝不替用户定、不拿上一本书的区间套用。
+
+### 平台审稿
+
+17. **判定项的窗口写进 label/target**（`lib/platform-review.js`）：`first-3-faceslap` 改为「前三章内本章须含打脸/逆转（窗口：本章全文）」并由 error 降为 warn；`first-1k-thrill` label 改为「前 1000 字窗口：给一个小爽点」。
+18. **判定 value 不回显词表**（`lib/platform-review.js` 新增 `hitSummary`）：所有基于 `hitsOf` 的 value 只输出「命中 N 项 / 未检出」。
+19. **番茄超上限改 error**（`lib/platform-review.js`）：`chapter-length` 在低于下限或高于上限时均判 error（数值取自 store 的档案表，见 13）；起点分支不变。
+
+### 卷结构与阶段闸
+
+20. **卷头支持开区间**（`lib/gate.js` `volumeRange`）：认「第 N 章起/开始/往后」（起头标记须收在行尾），返回 `to = Infinity`。`volumeSection` 两处一并收口：① 标题形状与 `phase-io.detectVolumePlan` 对齐（1–6 级、`#` 后可不带空格、7 个 `#` 不算），否则「卷结构过了阶段闸、方向闸却看不见」；② **区间重叠时取最后一个命中卷**——开区间未必排在大纲末尾（作者改了卷规划忘了给老卷头封顶，「卷一 1-100」+「卷二 71 章起」并存是常态），取第一个命中会让 71–100 章落在卷一，方向闸拿着错的规划段稳定报「你拐线了」，比没有闸更坏；规范大纲（区间不重叠）下两种取法等价。
+21. **「卷一」写法认作分卷**（`lib/phase-io.js` `detectVolumePlan`）：新增「卷/幕/部/篇 + 序数」判据，**但锁在 Markdown 标题行内**——这一支没有「第」当前缀，放宽到正文就会把「这本设定集分 3 卷出版」当成结构信号、让阶段闸形同虚设（红绿实测：撤掉行锚点即误判）。带「第」的「第X卷」仍允许出现在正文任意位置（旧判据不动）。`lib/phases.js` 的阶段闸缺失文案列出被接受的写法清单。
+
+### 诊断
+
+22. **对白统计改认弯引号**（`lib/diagnose.js` 新增并导出 `countDialogue`）：主判弯引号，兼容直角引号与直引号；`openingScore` 与 `conflictScore` 共用同一口径（此前只匹配 `「」`）。
+
+### REST 与会话归属
+
+23. **`locateBook` 接受 `opts.session`**（`lib/server-workspace.js`）：命中拷贝中优先返回 `bookInSession` 名下那份；均不归属时按根排序回退第一份并打 `console.info`；不传 session 保持首命中即返回。
+24. **会话取法收口成一份**（`lib/server-api.js` 新增 `requestSession(req, body)`）：POST body 的 `session` 优先，退回 URL 的 `?session=`。此前各域各读各的（GET 只读 query、POST 只读 body），面板漏带一处就悄悄落到**另一会话的同名拷贝**上。
+25. **全部按书定位的端点都带归属**（`server-routes/` 的 chapters、projects、proposals、worldbook、insights、session 六域）：目录、读正文、保存、一键修订、详情、要素、导出、删除、改名、克隆、**每章字数设置**、提案队列/全文/应用/丢弃/清理、世界书四种方法、体检、诊断、批量起草、会话轮换与工作区推导、自动认领——一律走 `requestSession`。
+26. **★ 面板 session 在唯一出口自动附加**（`src/client/api.js`）：`apiFetch` 对**书作用域路径**（`/projects/<书>/…`、`/worldbook/<书>`）自动附加 `?session=`，逐处补参数的写法退场——上一版只覆盖列表/详情，章节目录/阅读器/听书/保存/提案/导出/删除全都按根排序定位（书卡显示 A 拷贝 105 章、点进去读到 B 拷贝 103 章，删除还会删错那本）。裸 `/projects`（列表范围由 `sessionScope` 决定）与 `/projects/claim`（挂的是**动作段**不是书目名，会话走 body）显式排除在外。
+27. **面板存章版本号走统一入口**（`lib/server-routes/chapters.js`）：由内联 `latest + 1` 改为 `versioning.nextVersion`（按磁盘文件名取最大版本）。
+
+### 场景契约
+
+28. **未声明 hidden 时给提示**（`lib/tools/scene-tools.js`）：`args.hidden === undefined` 时追加一条 warning；显式传空串不提示。
+
+### 会话交接
+
+29. **「创建新会话并交接」传错书键**（`lib/server-routes/projects.js` 详情响应新增 `bookId`，`src/client/controllers/projects.js` 改传它）：客户端把 `detail.id` 当 book 传给服务端，而 detail.id 是 novel.json 的内部 id（`nb_…`），`locateBook` / `requireBook` / 认领认的都是**目录名**。真机实测（某连载本，第 14 章交接）：新会话创建成功、落点靠旧会话注册表兜底，但 `claimed:false`，新会话面板书列表 **0 本**；同一次调用把 book 换成目录名后 `claimed:true`、列表 1 本。详情响应在 `...novel` **之后**补 `bookId`（目录名），`id` 旧契约不动。
+
+### 文档与回归
+
+30. **改稿通道边界统一为两条**（`lib/index.js`、`lib/tools/propose-tools.js`、`skills/novel/SKILL.md`、`lib/preset/novel-forge/agent.cordis.yml`）：自己动笔改稿（含机审驳回后重写同章）走 `novel_write_chapter`；登记待批提案走 `novel_propose`。删除「修改已存章节只能走提案」的表述。
+31. **回归测试**：新增 `test/m15-coverage-scope-and-continuity.test.mjs`、`test/m15b-session-handoff.test.mjs`、`test/diagnose-quotes.test.mjs`、`test/volume-open-range.test.mjs`、`test/platform-review-fixes.test.mjs`、`test/platform-persist.test.mjs`、`test/char-limits-scope.test.mjs`（口径闭环 + 本书区间：写章/简报/提案/润色/审计五面同一数）、`test/proposal-guardrails.test.mjs`（陈旧提案两分支 + 同章去重 + discard id 守卫 + 称谓证据）、`test/helpers/plugin.mjs`（装插件共用载体，含造字工具）；`test/client.test.mjs` 增「书作用域请求统一带 session」与交接 `body.book` 两条**驱动真控制器**的行为用例（原 `test/m15b-session-handoff.test.mjs` 里读源码字符串的那条断言已按 AGENTS.md 换成行为测试）；`test/server-api.test.mjs` 增「会话归属定位」集成用例并把路由清单加到 28 条（R1 fence 全覆盖）；`test/batch5.test.mjs`、`test/logic.test.mjs`、`test/smoke.test.mjs` 随行为调整断言。
+
 ## v1.0.1 (2026-10-16)
 
 ### 修复版：机审/门禁假阳性三连修 + 字数口径对齐（真机 20 章监控日志定型，全程零 force 写入）

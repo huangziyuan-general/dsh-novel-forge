@@ -143,6 +143,10 @@ export function createProjectsController(ctx) {
 		state.selected = id; state.view = 'detail'; state.detail = null; state.chapterNo = 1;
 		state.draft = ''; state.error = ''; state.detailTab = 'info';
 		state.elements = null; state.discardPending = null; state.rename = null; state.listDeleteId = null; state.clone = null;
+		// 字数卡与报错都属于「上一本书」：不清就会把 A 书的 400 挂在 B 书头上。
+		// charsValue 清成 **undefined**（不是 ''）：'' 是「用户明确清除」，此处只是
+		// 「新书的值还没拿到」，两者语义不同（见 state.js 注释与 saveBookChars 兜底）。
+		state.charsValue = undefined; state.charsError = ''; state.charsSaving = false;
 		// deleteState 属于「上一本书的删除确认」：漏清会让 B 书的「删除」单击直接生效
 		//（两步确认跨书泄漏）。gateNotice/listDeleting 同理，都是上一本书的残留。
 		state.deleteState = null; state.gateNotice = null; state.saveBlocked = ''; state.listDeleting = false;
@@ -164,6 +168,11 @@ export function createProjectsController(ctx) {
 			]);
 			if (myOpen !== seq.open) return; // 期间已打开别的书：整体作废
 			state.detail = detail;
+			// 字数输入框用服务端现值初始化（盘上的真值，不是空串）。此前恒为 ''：
+			// 输入框靠 defaultValue 显示着「2500-3500」，state 里却记着空——用户没碰
+			// 输入框直接点「保存」，就把自定义区间清掉了（静默破坏，无报错无提示）。
+			// charView 缺失（详情拉失败/旧版回包）时留 undefined，由 saveBookChars 兜底。
+			state.charsValue = detail?.charView ? (detail.charView.charLimits ?? '') : undefined;
 			// 章正文只在「期间没有更晚的 loadChapter 抢先」时才写——否则会把第 1 章
 			// 内容盖到用户刚点的章上（章号与正文错位）
 			if (myChapter === seq.chapter) {
@@ -190,12 +199,59 @@ export function createProjectsController(ctx) {
 				// 创建即打会话戳：面板按会话过滤时它才会出现在本会话里
 				// 题材：面板没有题材输入框，留空就不传（服务端默认「未分类」），
 				// 别再学早期把 'fantasy' 写死在默认值里（书卡上全是英文 chip 的来历）。
-				body: JSON.stringify({ title: state.title.trim(), genre: state.genre.trim() || undefined, session: state.sessionId ?? undefined }),
+				// chars：开书时收集的每章字数（用户 2026-10-20）——留空＝不设，
+				// 服务端会回落到平台口径/插件默认；写错了服务端回 400，原样摆在 error 上。
+				body: JSON.stringify({
+					title: state.title.trim(),
+					genre: state.genre.trim() || undefined,
+					session: state.sessionId ?? undefined,
+					...(state.newChars.trim() ? { chars: state.newChars.trim() } : {}),
+				}),
 			});
-			state.title = ''; state.titleReset = (state.titleReset ?? 0) + 1; await refreshProjects();
+			state.title = ''; state.newChars = ''; state.titleReset = (state.titleReset ?? 0) + 1; await refreshProjects();
 		} catch (error) { state.error = String(error?.message ?? error); }
 		finally { state.creating = false; notify(); }
 	};
+
+	/**
+	 * 设置/清除本书每章字数区间（详情卡「本章字数」）。
+	 * 落库的是 novel.json.charLimits——面板、模型工具、批量起草之后读到的是同一个值，
+	 * 这里只负责把新值写进去并**就地刷新显示**（不整页重拉：重拉会冲掉用户的编辑现场）。
+	 * @param {string|null} spec 「2500-3500」；null/'' = 清除自定义
+	 */
+	const saveBookChars = async (specArg) => {
+		const bookId = state.selected;
+		if (!bookId) { state.charsError = '先打开一本书再设置字数'; notify(); return; }
+		// undefined = 输入框从未被编辑过（详情也没拿到 charView）——按服务端现值原样保存，
+		// 绝不退化成「清空」：空串会让服务端删掉 charLimits，等于用户什么都没点就丢了
+		// 自定义区间。只有显式的 ''（清除按钮 / 手动清空输入框）才真的清除。
+		const spec = specArg === undefined ? (state.detail?.charView?.charLimits ?? '') : specArg;
+		state.charsSaving = true; state.charsError = ''; notify();
+		try {
+			// 路径不用手工带 session：/projects/:id/… 属书作用域，apiFetch 自动附加
+			const value = await apiFetch(`/projects/${encodeURIComponent(bookId)}/chars`, {
+				method: 'POST',
+				body: JSON.stringify({ chars: spec ?? '' }),
+			});
+			// charView 是服务端算好的「生效区间 + 出处」，直接用回包刷新这张卡
+			if (state.detail) state.detail = { ...state.detail, charView: value };
+			// 保存后把 state 同步成服务端真值：输入框靠 key 重挂显示新值，state 若还留着
+			// 旧字符串，下一次「保存」会把它当成新改动又写一遍（甚至把刚清掉的写回去）。
+			state.charsValue = value?.charLimits ?? '';
+			state.notice = value?.charLimits
+				? `本章字数已设为 ${value.charMin}–${value.charMax}（出处：${charsSourceText(value.charSource)}）`
+				: `已清除自定义——回到 ${value?.charMin ?? '?'}–${value?.charMax ?? '?'} 字（${charsSourceText(value?.charSource)}）`;
+		} catch (error) {
+			// 校验失败（半套区间、越界、倒挂）是请求的问题：原文摆出来，不许吞成「保存失败」
+			state.charsError = String(error?.message ?? error);
+		} finally {
+			state.charsSaving = false; notify();
+		}
+	};
+
+	/** charSource（'custom'|'platform'|'config'）→ 人话。与 lib/store.js 的措辞保持一致。 */
+	const charsSourceText = (source) => (source === 'custom' ? '本书自定义'
+		: source === 'platform' ? '投放平台口径' : '插件默认');
 
 	const deleteProject = async () => {
 		if (!state.selected) return;
@@ -386,7 +442,9 @@ export function createProjectsController(ctx) {
 				// deferArchive：能跳就延迟归档（先跳后归档，躲开 clearMain 竞态）。
 				body: JSON.stringify({
 					session: oldSessionId,
-					book: state.detail?.id ?? '',
+					// 必须是**目录名**（bookId）：服务端 locateBook / 认领认的都是它。
+					// detail.id 是 novel.json 的内部 id（nb_…），用它传等于书定位与认领双失效。
+					book: state.detail?.bookId ?? state.selected ?? state.detail?.id ?? '',
 					bookTitle: state.detail?.title ?? '',
 					...(handoff ? { handoff } : {}),
 					...(canJump ? { deferArchive: true } : {}),
@@ -464,6 +522,6 @@ export function createProjectsController(ctx) {
 	return {
 		loadElements, loadChapterList, refreshProjects, claimProject, renameProject, cloneProject,
 		deleteListProject, openProject, createProject, deleteProject, goBack, rotateSession, createSession,
-		loadContinuity, loadDiagnosis, runRevision, writeSingleChapter, runBatch,
+		loadContinuity, loadDiagnosis, runRevision, writeSingleChapter, runBatch, saveBookChars,
 	};
 }
