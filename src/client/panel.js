@@ -17,7 +17,7 @@
 // 「项目跟会话走」：所有列表/创建/认领请求都带 sessionId（来自 slot inject 工厂）。
 import { h, Component, useState, useRef, useEffect } from './react.js';
 import { initialState } from './state.js';
-import { apiFetch } from './api.js';
+import { apiFetch, setSessionProvider } from './api.js';
 import { createTtsPlayer, resolveSynth } from './tts.js';
 import {
 	rootStyle, bodyStyle, headerStyle, brandMarkStyle, titleStyle, subtitleStyle,
@@ -92,13 +92,20 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 		} catch { /* sessions 面不可得：留在 slot inject 的 id 上 */ }
 	};
 
-	/** 给请求带上会话 —— 「项目跟会话走」就靠这一处收口。 */
+	/**
+	 * 显式给某个路径带会话（目前只有列表要用：?session= 与 scope=all 是二选一的关系，
+	 * 由 sessionScope 开关决定，不能交给自动附加）。
+	 * 按书定位的请求（/projects/:id/…、/worldbook/:book）由 api.js 的 apiFetch **自动**附加
+	 * ——那才是「项目跟会话走」的真收口，逐处补参数一定会漏（2026-10-19 就是这么分家的）。
+	 */
 	const withSession = (path) => {
 		syncSession();
 		if (!state.sessionId) return path;
 		const sep = path.includes('?') ? '&' : '?';
 		return `${path}${sep}session=${encodeURIComponent(state.sessionId)}`;
 	};
+	// 把会话 id 的来源交给 api.js（它只负责附加，不关心 id 怎么解析——解析纪律仍在这里）。
+	setSessionProvider(() => { syncSession(); return state.sessionId; });
 
 	// ── 陈旧响应守卫（请求序号）──
 	// openProject / loadChapter 都是「await 完成后写 state」：快速连续切换时，

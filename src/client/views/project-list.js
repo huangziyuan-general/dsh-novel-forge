@@ -64,6 +64,19 @@ export function ProjectListView({ state: s }) {
 				}),
 				Btn({ variant: 'primary', action: 'create', disabled: creating }, creating ? '创建中…' : '创建'),
 			),
+			// 开书时收集每章字数（用户 2026-10-20）：选填。留空＝不设，写章按平台口径
+			// 或插件默认放行；设了就以它为准，之后建的所有章的门禁都照它判。
+			h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, marginTop: space.sm } },
+				h('input', {
+					key: `chars-${s.titleReset ?? 0}`,
+					'data-field': 'new-chars', defaultValue: s.newChars ?? '',
+					placeholder: '每章字数（选填，如 2500-3500）',
+					'aria-label': '新书每章字数区间',
+					style: { ...inputStyle, flex: '1 1 auto', maxWidth: '220px' },
+				}),
+				h('span', { style: { ...hintStyle, fontSize: font.caption } },
+					'不设则按投放平台/插件默认口径'),
+			),
 			h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, marginTop: space.sm } },
 				Btn({ variant: 'ghost', size: 'sm', action: 'refresh-projects' }, '↻ 刷新'),
 				Btn({ variant: 'ghost', size: 'sm', action: 'import-file' }, '⇪ 导入本地'),

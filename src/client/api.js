@@ -13,18 +13,55 @@ export const FENCE = 'x-dsh-novel-forge';
 /** 单请求超时（毫秒）：卡死的请求 12 秒后必须变成可见错误，不许永远「加载中」。 */
 export const FETCH_TIMEOUT_MS = 12_000;
 
+// ── 会话归属：在唯一一个出口收口，不逐处补参数 ─────────────────────────────
+// 「书跟会话走」要求每个按书定位的请求都带上会话 id（服务端 locateBook 靠它在多根
+// 同名书里挑对用户看到的那份拷贝）。此前只有列表/详情带了，章节目录/阅读器/听书/
+// 保存/提案/导出/删除全都按根排序定位——书卡显示 A 拷贝（105 章）、点进去读到的是
+// B 拷贝（103 章），删除还会删错那本（2026-10-19 真机实锤）。
+// 逐处补参数的做法已经被证明会漏：漏一处就是漏一路，新加端点还会再漏。
+// 所以这里在 apiFetch 内部按**书作用域路径**统一附加——未来新增 /projects/… 端点
+// 自动就在护栏内，不需要任何人记得补。
+let sessionProvider = () => null;
+
+/** 注入会话 id 来源（panel 装配时调用；不注入 = 一律不带，行为回旧版）。 */
+export function setSessionProvider(fn) {
+	sessionProvider = typeof fn === 'function' ? fn : (() => null);
+}
+
+/**
+ * 是否属于「按某一本书定位」的路径。
+ * 裸 `/projects`（列表）由调用方自己控范围（sessionScope 决定带不带 session），不在此列；
+ * `LITERAL_ACTIONS` 是挂在 /projects 下的**动作段**而非书目名——服务端按字面量匹配它们，
+ * 给它们附加 session 既没意义也会让 URL 断言变得含混。**新增这类字面量段时必须登记到这里。**
+ */
+const LITERAL_ACTIONS = ['/projects/claim'];
+
+function isBookScopedPath(path) {
+	if (LITERAL_ACTIONS.some((lit) => path === lit || path.startsWith(`${lit}/`))) return false;
+	return path.startsWith('/projects/') || path.startsWith('/worldbook/');
+}
+
+function withSession(path) {
+	if (!isBookScopedPath(path) || /[?&]session=/.test(path)) return path;
+	const sid = sessionProvider();
+	if (typeof sid !== 'string' || sid === '') return path;
+	const sep = path.includes('?') ? '&' : '?';
+	return `${path}${sep}session=${encodeURIComponent(sid)}`;
+}
+
 /**
  * 调一次 REST 端点，返回 `value`；失败抛 Error。
  * @param {string} path 相对 API_BASE 的路径，如 `/projects/书/export`
  * @param {object} [init] fetch 的第二参（method / body 等）；`timeoutMs` 可覆盖超时
  */
 export async function apiFetch(path, init) {
+	const finalPath = withSession(path);
 	const timeoutMs = init?.timeoutMs ?? FETCH_TIMEOUT_MS;
 	const ac = typeof AbortController === 'function' && timeoutMs > 0 ? new AbortController() : null;
 	const timer = ac ? setTimeout(() => ac.abort(), timeoutMs) : null;
 	let response;
 	try {
-		response = await fetch(`${API_BASE}${path}`, {
+		response = await fetch(`${API_BASE}${finalPath}`, {
 			...init,
 			signal: init?.signal ?? ac?.signal,
 			headers: { ...(init?.headers ?? {}), [FENCE]: '1', 'content-type': 'application/json' },

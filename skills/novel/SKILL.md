@@ -12,8 +12,8 @@ description: Use when the user asks to write, create, outline, or continue a nov
 1. **一次只写一章**。写完立即停下，向用户汇报本章要点 + 下一章建议，等用户决定。绝不擅自连写。
 2. **写前必 briefing，写后必落账**：`novel_briefing` 拿上下文包再动笔；正文里的人物状态变化（境界/位置/持有/关系）通过 `novel_write_chapter` 的 `facts_updates` 落账。
 3. **回溯用账本不凭记忆**：引用「第 N 章时」的状态用 `novel_ledger status_at`；查某值哪章改的用 `timeline`；找前文段落用 `novel_search query`（没索引先 build）。
-4. **门禁是硬的**：细纲未 approve 不能写章；字数 2000–4000；同章被拒 3 次熔断——回去改细纲/场景契约，不要换措辞硬压。
-5. **修改已存章走 `novel_propose`**（生成提案，永不覆盖旧版）。提案的「应用」是用户主权动作——提完就停，告诉用户到面板点「应用」，绝不说「已生效」。
+4. **门禁是硬的**：细纲未 approve 不能写章；**每章字数按「本书自定义区间 > 投放平台口径 > 插件默认（2000–4000）」判定**——一律以 `novel_briefing` 的「本章字数目标」段为准，别拿工具描述里的默认数或上一本书的数字硬套（番茄 1500–3000 建议落 2800–2990；起点 2000–4000）；同章被拒 3 次熔断——回去改细纲/场景契约，不要换措辞硬压。
+5. **改稿两条通道，按目的选**：自己动笔改稿（含机审驳回后重写同一章）→ `novel_write_chapter`，同章追加新版本、旧版永不覆盖；要把修订登记成等用户批准的提案 → `novel_propose`（只登记，不动正文）。提案的「应用/丢弃」是用户主权动作——提完就停，告诉用户到面板点，绝不说「已生效」；同一章已有 pending 提案时不要重复提。
 6. **收尾=纯文字汇报，禁止 present**：正文由 `novel_write_chapter` 落盘即送达（面板立即可见），收尾汇报直接输出文字。不要调用宿主 present 交付章节（真机 85/108 次自拼路径失败并引发输出退化），也不要生成「present 预期失败→跳过」之类的占位步骤——收尾链路里没有这一步。
 7. **工具回合零前置说明**：调 `novel_write_chapter` 的那个回合，开头直接调工具（细纲→approve→场景→简报→写章，每步直接发起），一个字的前置说明都不写——单回合输出预算是稀缺资源（输入越大预算越小），前置解释 + 正文挤爆预算 = 工具调用中途截断、整回合白跑（200 章大书实测故障形状）。要说明的话，落盘成功后的收尾汇报里说。
 8. **回溯用摘录不整章读**：回合内核对前文优先 `novel_search`（`action:query`，检索词参数名 `q`）拿章号+摘录 / `novel_ledger status_at`、`timeline` 的时点值，不整章 `read` 正文——回合开头读进来的大块文本会一路挤占本回合所有后续步骤的输出预算。
@@ -21,7 +21,7 @@ description: Use when the user asks to write, create, outline, or continue a nov
 
 ## 开新书（无书时按序走）
 
-1. `novel_project init`（book/genre/logline 一句话立意）
+1. `novel_project init`（book/genre/logline 一句话立意）——**开书前先问一句每章字数**：用户给了就写成 `chars: "2500-3500"`（落库成本书事实，之后所有门禁/简报/提案都按它判），给了平台就写 `platform`（qidian/fanqie），两个都不要就别传（回落到插件默认口径，不许自己替用户定）。用户中途想改：`novel_project action=chars`。
 2. `novel_project promise` 写故事承诺书（本书承诺什么爽点、绝不做的事——每次写章自动注入）
 3. 设定固化：`novel_worldbook add`（关键词触发或 always 常驻）；人物 `novel_character save`（多角色同台务必建 voice 语言基因卡：句长/口头禅/禁忌）
 4. `novel_outline save_book` 全书大纲

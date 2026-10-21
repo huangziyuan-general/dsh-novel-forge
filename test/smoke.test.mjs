@@ -668,9 +668,13 @@ test('工具 schema 与返回值一致性抽查（noai/audit 嵌套字段）', a
     for (const key of ['source', 'score', 'level', 'chars', 'topIssues', 'categories']) {
         assert.ok(Object.hasOwn(s, key), `noai 缺字段 ${key}`);
     }
-    for (const key of ['cliche', 'stock', 'emotion', 'template', 'structure', 'dilution']) {
-        assert.ok(Object.hasOwn(s.categories, key), `noai.categories 缺 ${key}`);
-    }
+    // ★ 回归钉（不依赖宿主 SDK）：categories 的键集必须与 output.schema 声明**完全一致**。
+    // 双向都锁：schema 少列一个返回键 = 真机每次调用 INVALID_TOOL_OUTPUT（defaultword 事故）；
+    // schema 多声明一个永不返回的 required 键 = 校验器也会拒。这里用集合相等，任一侧漂移即红。
+    const declared = Object.keys(tool('novel_noai_scan').output.schema.properties.categories.properties).sort();
+    const returned = Object.keys(s.categories).sort();
+    assert.deepEqual(returned, declared,
+        `★ noai categories 与 schema 漂移：返回 ${returned.join(',')} ≠ 声明 ${declared.join(',')}`);
 });
 
 // 平淡收尾、无钩子词、无？！……结尾的正文（用于触发「缺省字段省略键」路径）
@@ -723,6 +727,10 @@ test('输出契约：可选字段缺省时省略键，真校验器对真实返�
     const pz = await tool('novel_polish').execute({ action: 'analyze', book: '契约楼', chapter: 1 }, exec);
     assert.ok(!Object.hasOwn(pz, 'chapterHook'), '无钩子时应省略 chapterHook 键');
     check('novel_polish', pz);
+
+    // ★ noai_scan 用真校验器过一遍（defaultword 事故的直接防线：上面那条集合相等只挡 categories
+    // 键数，这里连每维 hits 的字段形状一起验——schema 与真实返回体零违规才算过）。
+    check('novel_noai_scan', await tool('novel_noai_scan').execute({ text: NO_HOOK_CHAPTER }, exec));
 });
 
 test('克隆回归：未批准细纲一并复制，新书 approve 不再 TypeError', async () => {
@@ -1271,6 +1279,18 @@ test('★ F1 九阶段：入场条件由代码判，越级拦得住、force 放�
     // 旧名兼容：set_stage 'planning' → topic
     const legacy = await project.execute({ action: 'set_stage', book: '阶段测试书', stage: 'planning' }, exec);
     assert.equal(legacy.stage, 'topic', '旧五阶段名照旧可用，老数据零迁移');
+});
+
+test('★ phase 动作回显归一后的阶段 id（旧别名入参不许原样吐回）', async () => {
+    // P2 回归钉：入参给旧别名 planning，盘上落的是归一 id topic、审计行记的也是 topic——
+    // 修前返回体却回显 args.stage 原值（planning），于是「回执说 planning、盘上是 topic」
+    // 两处对不上，模型据此判断会走错。
+    const project = tool('novel_project');
+    await project.execute({ action: 'init', book: '归一回显书', title: '归一回显书', logline: '测试阶段回显。' }, exec);
+    const r = await project.execute({ action: 'phase', book: '归一回显书', stage: 'planning', force: true }, exec);
+    assert.equal(r.stage, 'topic', '★ 回执 stage 必须是归一 id，不是入参别名');
+    const meta = JSON.parse(fs.readFileSync(path.join(root, '归一回显书', 'novel.json'), 'utf8'));
+    assert.equal(meta.stage, 'topic', '落库值与回执必须同源');
 });
 
 test('★ E2 熔断：同章连续被驳回 3 次即拒写；重批细纲可解除', async () => {
@@ -2193,5 +2213,10 @@ test('★ 熔断解除通道：改了才清零；原样重存/零改动重批不
     assert.ok((s2.warnings ?? []).some((w) => w.includes('熔断未解除')), '原样重存要警告并指路');
     const s3 = await tool('novel_scene').execute({ ...sceneArgs, forbidden: '现代词汇,储物戒指' }, exec);
     assert.equal(count(), 0, '契约真改 → 清零');
-    assert.equal(s3.warnings?.length ?? 0, 0, '真改的正常路径不带警告');
+    // 精确白名单，不是「过滤掉熔断字样再数长度」：scene/save 的正常路径只该带上
+    // 「本次未声明 hidden」这一条常驻提示（本用例确实没传 hidden）。再冒出别的警告
+    // 就是要报红——上一版写成「不含熔断即可」，等于把原断言守的东西全放掉了。
+    const w3 = s3.warnings ?? [];
+    assert.equal(w3.length, 1, `真改的正常路径只该有一条提示（实际：${JSON.stringify(w3)}）`);
+    assert.match(w3[0], /未声明 hidden/, '唯一那条必须是 hidden 的常驻提示');
 });
