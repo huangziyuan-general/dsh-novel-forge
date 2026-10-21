@@ -3,6 +3,9 @@ node_modules/
 .DS_Store
 test/tmp/
 
+# IDE 配置（JetBrains）：本地保留、不入库
+.idea/
+
 # dsh 宿主原子写（tmp+rename）被中断时的残骸：`<目录>/.<文件>.<pid>.<uuid>.tmpdir/`。
 # 不是测试代码产生的（测试载体走 os.tmpdir 且有 finally 清理），忽略即可，别让它冒进 git status。
 *.tmpdir/
