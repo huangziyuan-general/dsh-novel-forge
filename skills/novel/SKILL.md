@@ -26,6 +26,16 @@ description: Use when the user asks to write, create, outline, or continue a nov
 3. 设定固化：`novel_worldbook add`（关键词触发或 always 常驻）；人物 `novel_character save`（多角色同台务必建 voice 语言基因卡：句长/口头禅/禁忌）
 4. `novel_outline save_book` 全书大纲
 5. 逐章循环：`novel_outline save_chapter`（含 `## 本章必写场景` 与 `## 本章禁止偏离项` 契约段）→ `novel_outline approve` → `novel_scene save`（出场人物/隐藏人物/禁项；有反转要藏时 hidden 人物档案不进上下文、正文出现其名会被拦）→ `novel_write_chapter`（title/content/summary/facts_updates）
+   - 「必写场景」格式照抄这个样子（拍写在场景行内括号里，或场景行下方的「拍：…」独立行，两种都认；**「：」前的摘要短语要能在正文里逐字出现，拍不要求逐字**）：
+
+     ```markdown
+     ## 本章必写场景
+
+     - 渡口夜审：货单对不上，掌柜的汗比话多。（拍：船工当众发难）（拍：账册摊开对笔迹）（拍：一炷香内破绽自现）
+     - 巷口追击：有人比马队先到了一步。
+       拍：翻墙、截巷、换衣三段跑位
+       拍：追到死巷才发现追错人，真目标已出城
+     ```
 6. 伏笔：`novel_ledger foreshadow_setup` 必带 plan（预计回收章）；回收时 `foreshadow_payoff`。超期未回收优先安排，别开新钩盖旧账。
 
 ## 续写已有书
