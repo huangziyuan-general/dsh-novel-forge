@@ -146,7 +146,7 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 | `novel_export` | 导出整本（md/txt + stats） | 按版本顺序拼装，写 `导出/` |
 | `novel_diagnose` | 黄金三章四维诊断（钩子/开场/冲突/灌输） | 确定性数字，机审与模型审分离 |
 | `novel_polish` | 段落级病灶定位 + 润色提案提交 | 润色也走提案制，永不覆盖旧稿 |
-| `novel_search` | 长篇检索（build / query / annotate / status）：返回章号+摘录+命中比例 | 索引是**派生物**（`书/.novel/index.db`），删了重跑即得；无 sqlite 自动退化 |
+| `novel_search` | 长篇检索（build / query / annotate / status）：返回章号+摘录+命中比例；query 弱结果时**自动查询扩写**（改写多路候选重查合并），写章落盘后**新块自动补语义标签** | 索引是**派生物**（`书/.novel/index.db`），删了重跑即得；无 sqlite 自动退化 |
 | `novel_library` | **书库饲料**（import/list/read/analyze/delete）：拆对标作品的结构画像——章长曲线/对话密度/段落节奏/章末钩子率/高频意象；`compare_book` 与自己的书并排给数 | 零 token 全本地；只读饲料，不参与本书一致性判定；`delete` 只移索引 |
 | `novel_glossary` | 术语表（add/remove/list） | 随上下文包注入，防专有名词乱译 |
 | `novel_clone_project` | 整书克隆为模板 | 阶段重置、提案与熔断计数清空；人物卡/世界书/账本/伏笔/术语表/场景契约/语言基因一并带走 |
@@ -192,10 +192,11 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 | scanTopK | 8 | 扫描报告每维最多列出的问题数 |
 | repetitionWindow | 10 | 跨章重复检测的滑动窗口（与前 N 章比对） |
 | skipPresetDeploy | false | 跳过预设部署 |
-| engine.channels.\* | 继承当前路由 | 旁路通道（polish/proofread/annotate/draft）按通道覆盖；长文通道（polish/proofread/draft）`timeoutMs` 默认 600000 |
+| engine.channels.\* | 继承当前路由 | 旁路通道（polish/proofread/annotate/expand/draft）按通道覆盖；长文通道（polish/proofread/draft）`timeoutMs` 默认 600000，短任务通道（annotate/expand）默认 512 tok / 60s |
 | engine.channels.\*.maxTokens | 0 | 0＝不传，继承宿主按模型校准的上限（推荐保持默认）；显式设小会被推理模型的思考+整章重写烧穿（报 `OUTPUT_TRUNCATED`） |
 | engine.retries | 2 | 旁路调用的指数退避重试次数 |
 | engine.attachSession | false | 旁路流是否写进会话记录；默认不写（这才是"不占主对话"） |
+| search.autoAnnotate | true | 写章落盘后自动给本章新块补语义标签（后台执行，封顶 4 块）；false 整体关掉 |
 
 > `engine` 整块都可省略——省略即「用当前路由、重试 2 次、不写会话」，最省心的默认。
 > 宿主没有模型服务时插件照常装载，只有真正调用旁路通道时才返回可读错误。
@@ -259,7 +260,7 @@ node scripts/demo.mjs   # 端到端演示：init→细纲→写章→账本→�
 - 去 AI 味词库与阈值是**启发式**，只能抓显性病，不承诺"根治"——结构性指标（节奏方差/信息稀释）是它比纯词库强的地方。
 - `novel_audit` 只产出确定性证据，「模型审」在会话里进行；旁路引擎只服务内部工序（润色/校对/打标/起草），不改变「审计工具不调模型」这条线。
 - 批量起草并发上限 **4**（默认 1；书里没有场景契约时强制降为 1）；并发只作用于起草，提交始终串行。
-- `novel_search` 是**词法检索 + LLM 标签增强**，不是 embedding 语义检索；索引单文件 sqlite，十万块级超大书未压测；`annotate` 产生真实 token 成本（默认每次最多 20 块）。
+- `novel_search` 是**词法检索 + LLM 标签增强 + 弱查询自动扩写**，不是 embedding 语义检索（宿主无 embedding 模态）；索引单文件 sqlite，十万块级超大书未压测。token 成本有两处：`annotate` 手动动作为每次最多 20 块；写章落盘后的**自动打标**每次封顶 4 块（`search.autoAnnotate: false` 可整体关）；query 弱结果时扩写是 1 次短调用（512 tok / 60s 档）。
 - 跨章重复检测是滑动窗口（默认前 10 章，可调）——超出窗口的复读抓不到；世界书递归激活限 2 轮。
 - 面板听书用 Web Speech 合成，正文切块防 Chrome 长文本停摆；无语音引擎的环境给可读报错。
 
