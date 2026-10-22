@@ -108,7 +108,9 @@ test('ledger: 冲突 reason 里的取值被截断（完整值可能上千字）�
     const facts = [{ entity: '林晚', key: '位置', value: long, chapter: 3, note: '', ts: 't1' }];
     const { conflicts } = applyFactUpdates(facts, [{ entity: '林晚', key: '位置', value: `${long}乙` }], { chapter: 3, now: 't2' });
     assert.equal(conflicts.length, 1);
-    assert.ok(conflicts[0].reason.length < 250, `reason 应被截断，实际 ${conflicts[0].reason.length} 字`);
+    // 1.0.2 复核轮：文案补了「重写同章省略已落账的键」指引，固定部分变长——
+    // 上限随放（320）；截断语义不变：值不被 clipValue 截的话会是 1100+ 字。
+    assert.ok(conflicts[0].reason.length < 320, `reason 应被截断，实际 ${conflicts[0].reason.length} 字`);
     assert.ok(conflicts[0].reason.includes('…'), '截断要有省略号');
     assert.ok(conflicts[0].reason.includes('第3章起'), '截断后仍要保留可读的章号上下文');
     assert.equal(conflicts[0].current, long, '结构化字段 current 保留全值（供程序判断）');
