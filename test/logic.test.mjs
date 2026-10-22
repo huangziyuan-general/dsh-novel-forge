@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import { sanitizeTitle, chapterFileName, parseChapterFileName, nextVersion, nextSuffixedId } from '../lib/versioning.js';
 import { gateChapterWrite, advanceStage, resetStage, volumeSection, outlineDivergence } from '../lib/gate.js';
+import { GateRejectionError, isGateRejection } from '../lib/chapter-commit.js';
 import { PHASE_IDS, canonicalPhase, checkPhaseEntry, enterPhase, phaseBoard, renderPhaseBoard } from '../lib/phases.js';
 import { detectVolumePlan } from '../lib/phase-io.js';
 import { breakerState, recordRejection, recordSuccess, clearBreaker, breakerDigest } from '../lib/circuit-breaker.js';
@@ -1154,6 +1155,22 @@ test('B3 泄漏检查 + 契约表不可变', () => {
     assert.equal(contractFor(t1, 2).participants[0], '林晚');
     assert.equal(contractFor(t2, 2), null);
     assert.equal(contractFor(t1, 9), null, '没契约的章回 null（不造空壳）');
+
+    // 时钟盖章权在调用方（体检轮：scene-contract 在纯函数名单里，不许碰 new Date——不变量 2）
+    const t3 = setContract({}, { chapter: 3, participants: '林晚' }, '2026-10-22T00:00:00.000Z');
+    assert.equal(contractFor(t3, 3).updatedAt, '2026-10-22T00:00:00.000Z', '调用方传的 now 直接落进 updatedAt');
+    assert.equal(contractFor(setContract({}, { chapter: 3, participants: '林晚' }), 3).updatedAt, null, '不传 now 就不盖章（缺省 null，不静默造时间）');
+});
+
+test('★ 门禁拒绝分类认 code 标记：文案随便改，409 判定不坏（体检轮）', () => {
+    // 单一真相：门禁 throw GateRejectionError（code=GATE_REJECT）。此前按**文案前缀**认
+    // （GATE_REJECT_RE），驳回文案一改就静默劣化成 500——恰与「代码强制」主线相悖。
+    const e = new GateRejectionError('机审没有过哦，重写吧');
+    assert.equal(e.code, 'GATE_REJECT');
+    assert.ok(isGateRejection(e), '带 code 标记的门禁错误，文案前缀完全变了也认');
+    assert.ok(isGateRejection(new Error('机审未通过，未保存：…')), '旧文案前缀兜底仍生效（历史/外部抛点）');
+    assert.ok(!isGateRejection(new Error('ENOENT: no such file or directory')), '普通 io 错误不误判');
+    assert.ok(!isGateRejection(new Error('细纲禁项被违反'.slice(0, 3))), '前缀不完整不误判');
 });
 
 test('E3 语言基因卡：对象与「键|值」行两种输入归一', () => {
