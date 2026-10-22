@@ -14,6 +14,12 @@
 2. **示例路径中性化**（同文件）：「见 人物/林晚.md」→「见 人物/<角色名>.md」——该文件随 npm 包发行并部署到每个用户的 agent-presets，属发行面（不变量 12）。
 3. **细纲契约段补拍行格式口径**（同文件）：与 `novel_outline` 工具描述对齐——拍写在场景行内「（拍：…）」括号或场景行下方「拍：…」独立行（两种都认）；逐字比对对象是条目「：」前的摘要短语，拍写意即可。旧 persona 只说「条目写 - 标题：描述」，模型拍行写法全靠摸索。
 
+### 语义检索第一层：查询扩写与写后自动打标（零配置双修）
+
+1. **★ query 弱结果自动查询扩写**（`lib/tools/search-tools.js` + `lib/engine-tasks.js` 新增 expand 通道任务 + `lib/retrieval.js` 新增 `isWeakResult`/`mergeExpandedHits`）：打标只解决「索引词 ≠ 正文词」，解决不了**查询词 ≠ 索引词**——查「师尊陨落」、正文写「真人坐化」、标签写「师父 去世」时三方零重叠，零召回且无路可走。现在 `novel_search query` 判定弱结果（零命中，或命中不足 limit 一半且无扎实命中）时，走旁路引擎 expand 通道把检索词改写成 3-5 个候选（同义/上下位/换角度），逐路重查后合并重排：主排序「被几路独立命中」、次排序 bm25，命中列表过 `alive` 过滤后才合并（扩写词召回的已删章不冒充命中，`expanded` 声明保持诚实）。命中扎实就不烧这次调用；扩写失败按原词结果返回、notes 说明「查询扩写未生效」；mode 如实标 `expanded-*`、回执带 `expandedQueries`（schema 同步）。回归钉：`test/semantic-search.test.mjs`（真引擎+假 llm 端到端：扩写召回原词捞不到的段、输出过宿主真校验器；非弱不触发、失败不谎报）。
+2. **★ 写章落盘后自动补语义标签**（`lib/chapter-commit.js` + `lib/engine-tasks.js` `autoAnnotateChapter`）：annotate 此前是纯手动动作，真机上大多数块永远没标签，标签增强检索常年跑在纯词法档。现在章节落盘、索引续建之后，自动对**本章**新块后台补语义标签（每章封顶 4 块、连续 2 块失败即停），fire-and-forget：绝不阻塞成稿返回、绝不把失败抛回提交链（裸 rejection 在宿主进程是 fatal，任务自身吞掉一切异常只 console.warn 留痕）；同书在飞去重（批量起草连章提交不叠任务，上一轮没跑完时本轮跳过、剩余块等下次落盘再补）；打标数 >0 时审计留痕 `search/auto-annotate`。indexNote 只说实况：引擎缺席（`isAvailable` 调用时探测，MCP 独立模式同档）静默跳过、不谎报「已排队」。
+3. **expand 通道与自动打标开关**（`lib/engine-core.js` + `lib/index.js`）：通道表新增 `expand`（短任务预算 512 tok / 60s，与 annotate 同档；CHANNEL_NAMES/DEFAULTS/LABELS/config schema 四处同步）；新增配置 `search.autoAnnotate`（默认开，false 整体关自动打标——不想花这份 token 或离线环境的开关）。README 配置表、工具表、已知边界同步。回归钉：`test/semantic-search.test.mjs` 三闸用例（config 关掉不排队不谎报 / 引擎缺席跳过不谎报 / 同书在飞去重、落定后在飞表清空）。
+
 ## v1.0.3 (2026-10-22)
 
 ### 体检轮：审计收口（错误分类与时钟出纯模块）
