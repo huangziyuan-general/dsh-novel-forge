@@ -1,6 +1,11 @@
 # Changelog
 
-## 未发布
+## v1.0.3 (2026-10-22)
+
+### 体检轮：审计收口（错误分类与时钟出纯模块）
+
+1. **★ 门禁拒绝分类改 `code` 标记**（`lib/chapter-commit.js`）：新增 `GateRejectionError`（`code=GATE_REJECT`），提交链 8 个 throw 站点全部迁移；`isGateRejection` 优先认 `code`、文案前缀正则降为历史兜底。旧实现按**驳回文案开头**识别 409/500——文案一改，REST 面就把内容问题静默报成 `IO_FAILURE`（恰与「代码强制」主线相悖）。回归钉：`test/logic.test.mjs`「门禁拒绝分类认 code 标记」（文案前缀完全变了也认 409）。
+2. **契约表时钟出纯模块**（`lib/scene-contract.js`）：`setContract` 的 `updatedAt` 兜底从内部 `new Date()` 改为调用方传参 `now`（工具层盖章）——该模块在纯函数名单里（AGENTS.md 不变量 2），时钟进纯函数后直测要 mock、重放会漂移。回归钉：B3 用例补「传 now 落值 / 不传不盖章」两条断言。
 
 ### 复核轮：细纲拍行形态与驳回文案可执行性（真机监控驱动）
 
