@@ -2,6 +2,12 @@
 
 ## 未发布
 
+### 监控总账收尾：细纲自引禁词、重发锚定与首稿字数实况（E5/E14/E15）
+
+1. **★ 细纲 save_chapter 拦「场景自引禁词」**（`lib/tools/outline-tool.js` + `lib/gate-metrics.js` 新增 `sceneTermSet`/`outlineSelfConflicts`）：本章禁项词（精确等于场景豁免词的除外）出现在必写场景条目的标题或描述里时，细纲在 `save_chapter` 阶段拒收（拦在落盘前，审计行 `outline/rejected_selfconflict`）——这类细纲要求正文对同一个词同时「含」与「不含」，模型只能烧一整轮写章才被机审驳回；现在改一条目就能修，驳回文案带场景定位、禁项声明句与两条修法。拍行不查（拍不要求逐字复现），与写章端「同卡自相矛盾时以场景为准」的既有放行设计不冲突。`sceneTermSet` 与覆盖率的场景要素表同源，不再多一份副本。回归钉：`test/monitor-fixes-2.test.mjs`。
+2. **★ 机审连驳且字数停滞 → 「换新回合」硬指引**（`lib/circuit-breaker.js` `recordRejection` 记录被驳稿 `chars`；`lib/chapter-commit.js` 新增 `E15_ANCHOR_MIN_DELTA=100`）：同一章机审连驳、本次比上一被驳稿净增不足 100 字时（真机实证 8 发仅 +293、两发同文），驳回文案在既有建议之外追加「换一个新回合全文重写」与重批通道——真机已验证换回合一发过，此前该对策只活在监控日志的写作纪律里，模型在回合内不会自觉换。审计行同时带 `chars` 与条件字段 `anchorStalled`（可统计）。非成稿探针与面板路径不触发。回归钉同上。
+3. **简报注入「首稿实况」（E5 字数低估收口）**（`lib/briefing.js` `charTargetSection` + `lib/health.js` `firstDraftByChapter`）：模型对中文字数系统性估短 30–40%，简报里抽象的「目标 N 字」拦不住贴线下限的首稿（真机 40 章首稿均长稳定低于下限+余量）。现在简报按本书审计现算首稿均长，低于「下限+余量」时在「本章字数目标」段追加差额与段数配方（至少 X 段、每段到量级、写完按机审口径数一遍再提交）；健康书、样本不足（<3 章）或读不到审计时静默。`firstDraftByChapter` 改为显式 `chars` 字段优先（配合同批 rejected 审计行新增的 `chars`，不再依赖驳回文案正则反提）、跳过非成稿探针行；历史行正则兜底不变。回归钉同上。
+
 ### 预设体检轮：persona 模板变量与细纲格式口径（agent.cordis.yml）
 
 1. **★ 移除 persona 后缀里的 `{{cwd}}`**（`lib/preset/novel-forge/agent.cordis.yml`）：dsh-system-prompt 只注册 provider/model 两个模板变量，`{{cwd}}` 未注册——persona 里写未注册占位符会导致 prompt 组装失败（宿主 README 明文禁止；本仓库此前靠运行时容忍侥幸工作）。后缀改由「工作目录服务在上下文里给出」承担同一职责；文件头注释同步更正「可用模板变量只有 `{{model}}`」。
