@@ -21,7 +21,7 @@ description: Use when the user asks to write, create, outline, or continue a nov
 
 ## 开新书（无书时按序走）
 
-1. `novel_project init`（book/genre/logline 一句话立意）——**开书前先问一句每章字数**：用户给了就写成 `chars: "2500-3500"`（落库成本书事实，之后所有门禁/简报/提案都按它判），给了平台就写 `platform`（qidian/fanqie/jjwxc/qimao），两个都不要就别传（回落到插件默认口径，不许自己替用户定）。用户中途想改：`novel_project action=chars`。
+1. `novel_project init`（book/genre/logline 一句话立意）——**开书前先问一句每章字数**：用户给了就写成 `chars: "2500-3500"`（落库成本书事实，之后所有门禁/简报/提案都按它判），给了平台就写 `platform`（qidian/fanqie/jjwxc/qimao/feilu），两个都不要就别传（回落到插件默认口径，不许自己替用户定）。用户中途想改：`novel_project action=chars`。
 2. `novel_project promise` 写故事承诺书（本书承诺什么爽点、绝不做的事——每次写章自动注入）
 3. 设定固化：`novel_worldbook add`（关键词触发或 always 常驻）；人物 `novel_character save`（多角色同台务必建 voice 语言基因卡：句长/口头禅/禁忌）
 4. `novel_outline save_book` 全书大纲
