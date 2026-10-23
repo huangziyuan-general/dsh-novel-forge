@@ -2848,6 +2848,54 @@ test('health: 会话疲劳——连写章数兜底警示（首稿健康也要换
     assert.match(f.warn, /以本会话首稿趋势为准/);
 });
 
+test('★ health: 体量护栏——草稿×回合估 token，超预算 60% 硬警告（真机 42 章 49 万 token 400 实证驱动）', () => {
+    // 26 回合 × 3000 字 = 78000 字草稿：est = 78000×1.2 + 26×6000×0.6 = 187200
+    // ≥ 262144×0.6 → hard。这种数据同时满足章数兜底（26 ≥ 8）——体量判据必须排第一，
+    // 因为它回答的不是「质量退没退」而是「下一章还装不装得下」。
+    const big = Array.from({ length: 26 }, (_, i) => JSON.stringify({
+        session: 's-big', action: 'write_chapter/saved', chapter: i + 1, chars: 3000,
+    })).join('\n');
+    const f = sessionFatigue(big, 's-big');
+    assert.equal(f.reason, 'volume', '体量判据优先于章数兜底');
+    assert.equal(f.level, 'hard', '体量判死是硬警告，面板必须用 danger 色渲染');
+    assert.deepEqual(
+        [f.contextEst.turns, f.contextEst.draftChars, f.contextEst.estTokens, f.contextEst.budgetTokens, f.contextEst.pct],
+        [26, 78000, 187200, 262144, 71],
+    );
+    assert.match(f.warn, /CONTEXT_WINDOW_EXCEEDED/, '文案必须点名那个 400——模型见过就知道是什么');
+    assert.match(f.warn, /换会话零损失/);
+
+    // 小会话：3 章 × 2100 = 6300 字 → est = 7560 + 10800 = 18360 ≈ 7% → 不警，但数字常驻可见
+    const small = Array.from({ length: 3 }, (_, i) => JSON.stringify({
+        session: 's-small', action: 'write_chapter/saved', chapter: i + 1, chars: 2100,
+    })).join('\n');
+    const f2 = sessionFatigue(small, 's-small');
+    assert.equal(f2.warn, null);
+    assert.deepEqual([f2.contextEst.estTokens, f2.contextEst.pct], [18360, 7], '没到阈值也要给数字——先可见再谈建议');
+
+    // 预算可覆写：小窗口模型更早触发（128k 用户不该等 256k 的阈值）
+    const f4 = sessionFatigue(small, 's-small', { contextBudgetTokens: 20000 });
+    assert.equal(f4.reason, 'volume');
+    assert.equal(f4.level, 'hard');
+
+    // 旧版审计的 rejected 行不带 chars → 不计入（已知欠账：主线 saved 行恒有 chars，
+    // 历史数据低估只会晚警；真机主线 42 章 saved 行完整，量级不受影响）
+    const legacy = [
+        JSON.stringify({ session: 's-legacy', action: 'write_chapter/rejected', chapter: 1, reason: '正文 1500 字，低于下限 2000' }),
+        JSON.stringify({ session: 's-legacy', action: 'write_chapter/saved', chapter: 1, chars: 2100 }),
+    ].join('\n');
+    const f3 = sessionFatigue(legacy, 's-legacy');
+    assert.deepEqual([f3.contextEst.turns, f3.contextEst.draftChars], [2, 2100]);
+
+    // 质量类判据恒 soft：横幅分级只让体量用 danger 色
+    const trend = [2400, 2300, 2200, 1200, 1000, 900].map((c, i) => JSON.stringify({
+        session: 's-t', action: 'write_chapter/saved', chapter: i + 1, chars: c,
+    })).join('\n');
+    const ft = sessionFatigue(trend, 's-t');
+    assert.equal(ft.reason, 'trend');
+    assert.equal(ft.level, 'soft');
+});
+
 test('health: 会话疲劳——空审计/坏行不炸，bookCharBaseline 只作展示口径', () => {
     assert.equal(sessionFatigue('', 's1').sessionFirstAvg, null);
     assert.equal(sessionFatigue('{}\n{}\n', 's1').sessionFirstAvg, null);
