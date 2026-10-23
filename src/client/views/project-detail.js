@@ -52,14 +52,19 @@ function Segmented({ tab }) {
  *  能力就建+归档一起做），交接摘要自动进剪贴板、文本常驻横幅可手动复制。探测不到就不做假按钮。 */
 function SessionFatigueBanner({ session, copied }) {
 	if (!session?.warn) return null;
+	// 分级（0.18.0 判据全 soft；体量护栏 1.0.5 起 hard）：hard = 继续写大概率整轮 400，
+	// 用 danger 色和「体量判死」标题——它不是质量建议，不能再长得像一般提醒。
+	const hard = session.level === 'hard';
+	const est = session.contextEst;
 	return h('div', {
 		style: {
-			border: `1px solid ${tint(color.warn, 34)}`, borderRadius: '9px',
-			padding: `${space.sm}px ${space.md}px`, background: tint(color.warn, 10),
+			border: `1px solid ${tint(hard ? color.danger : color.warn, 34)}`, borderRadius: '9px',
+			padding: `${space.sm}px ${space.md}px`, background: tint(hard ? color.danger : color.warn, 10),
 		},
 	},
 		h('div', { style: { display: 'flex', alignItems: 'baseline', gap: space.sm, flexWrap: 'wrap' } },
-			h('span', { style: { fontWeight: weight.semibold } }, '⚠ 会话疲劳'),
+			h('span', { style: { fontWeight: weight.semibold, color: hard ? color.danger : undefined } },
+				hard ? '🛑 上下文体量将满' : '⚠ 会话疲劳'),
 			h('span', { style: hintStyle },
 				`本会话已写 ${session.chapters} 章 · 首稿均长 ${session.firstAvg} 字`
 				// 口径必须写出来：首稿＝门禁驳回前的初稿，不是成稿字数（0.18.0——旧文案只写
@@ -68,8 +73,16 @@ function SessionFatigueBanner({ session, copied }) {
 				+ (session.bookFirstAvg > 0 ? ` · 其它会话首稿均值 ${session.bookFirstAvg} 字` : '')
 				+ '）'),
 		),
+		// 体量估算（保守下限）常驻可见：先有数字再谈建议——和「自批占比」同一可见性思路
+		est ? h('div', { style: { ...hintStyle, marginTop: space.xs } },
+			`上下文体量预估 ${est.estTokens} tokens（${est.turns} 次写章 · 草稿 ${est.draftChars} 字，简报包等未全计）`
+			+ ` ≈ ${est.pct}% / ${est.budgetTokens} 预算`) : null,
 		h('div', { style: { ...hintStyle, marginTop: space.xs } },
-			'对话历史堆积会稀释输出质量。书的状态全在盘上——换会话零损失。'),
+			hard
+				? '继续写大概率整轮 400（CONTEXT_WINDOW_EXCEEDED），报错发生在模型侧、工具救不回来。'
+				: '对话历史堆积会稀释输出质量。'),
+		h('div', { style: { ...hintStyle, marginTop: space.xs } },
+			'书的状态全在盘上——换会话零损失。'),
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, marginTop: space.sm } },
 			// 唯一按钮（用户钦定 2026-10-08）：能建就建（服务端有归档能力就建+归档一起做）；
 			// 交接摘要自动进剪贴板，摘要文本同时常驻下方——剪贴板失败也有手动路。
