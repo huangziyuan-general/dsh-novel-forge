@@ -128,3 +128,45 @@ test('T2/T4 first-3-faceslap：标签说实话 + 降为 warn + 窗口写清楚',
     const hit = reviewForPlatform({ content: chapterOf(2990), chapter: 1, platform: 'fanqie' });
     assert.equal(checkOf(hit, 'first-3-faceslap').ok, true);
 });
+
+// 晋江/七猫新平台（2026-10-23 真机事故回归）：REVIEWERS 分派表在模块求值时急切取值
+// 四个标识符——映射里写了 jjwxc/qimao 而函数体没写 = import 即 ReferenceError，
+// 插件激活失败又被 failOnStartupError:false 静默吞掉（GUI 照常起，面板/工具全消失）。
+// 本文件顶部的 import 本身就是「模块必须可加载」的断言；下面补分派路径的判据钉。
+const SUFFER_WORDS = wordList('SUFFER_WORDS');
+
+function withoutHook(n) {
+    return chapterOf(n).split('\n\n').slice(0, -1).join('\n\n');
+}
+
+test('晋江：订阅制区间 3000–6000 硬下限 + 黄金三章开篇忌虐', () => {
+    const under = reviewForPlatform({ content: chapterOf(2800), chapter: 4, platform: 'jjwxc' });
+    const len = checkOf(under, 'chapter-length');
+    assert.equal(len.level, 'error', '订阅制下限是收入底线，不足必须 error');
+    assert.match(len.target, /3000–6000/);
+
+    const inRange = reviewForPlatform({ content: chapterOf(4500), chapter: 4, platform: 'jjwxc' });
+    assert.equal(inRange.errorCount, 0);
+    assert.equal(inRange.passed, true, '4500 字非黄金章应全绿');
+
+    const sufferWord = SUFFER_WORDS[0];
+    const badOpen = `她${sufferWord}了，低着头没敢出声。\n\n` + chapterOf(3200);
+    const golden = reviewForPlatform({ content: badOpen, chapter: 1, platform: 'jjwxc' });
+    assert.equal(checkOf(golden, 'opening-no-suffer').level, 'error', '黄金三章开篇虐主必须 error');
+    const clean = reviewForPlatform({ content: chapterOf(3200), chapter: 1, platform: 'jjwxc' });
+    assert.equal(checkOf(clean, 'opening-no-suffer').ok, true, '无压抑信号的开篇应通过');
+});
+
+test('七猫：免费流章末钩子是 error（对比番茄 warn），憋屈时长更狠（≤800）', () => {
+    const bare = withoutHook(2500);
+    const qm = reviewForPlatform({ content: bare, chapter: 4, platform: 'qimao' });
+    assert.equal(checkOf(qm, 'ending-hook').level, 'error', '免费流打开率生死线，无钩子必须 error');
+    const fq = reviewForPlatform({ content: bare, chapter: 4, platform: 'fanqie' });
+    assert.equal(checkOf(fq, 'ending-hook').level, 'warn', '同一内容番茄口径仍是 warn——两平台分级不许混');
+
+    const withHook = reviewForPlatform({ content: chapterOf(2500), chapter: 4, platform: 'qimao' });
+    assert.equal(checkOf(withHook, 'ending-hook').ok, true);
+
+    const under = reviewForPlatform({ content: chapterOf(1800), chapter: 4, platform: 'qimao' });
+    assert.equal(checkOf(under, 'chapter-length').level, 'error', 'qimao 区间 2000–3500，1800 必 error');
+});
