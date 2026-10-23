@@ -12,6 +12,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { reviewForPlatform } from '../lib/platform-review.js';
+import { charConfigForPlatform, platformLimitsText } from '../lib/store.js';
 
 // 词表从源码单点解析：要断言「value 不含词表里的任何词」就得拿真词表，在测试里抄第二份
 // 一定漂移。只读源码文本，不碰书稿。
@@ -169,4 +170,81 @@ test('七猫：免费流章末钩子是 error（对比番茄 warn），憋屈时
 
     const under = reviewForPlatform({ content: chapterOf(1800), chapter: 4, platform: 'qimao' });
     assert.equal(checkOf(under, 'chapter-length').level, 'error', 'qimao 区间 2000–3500，1800 必 error');
+});
+
+// ── 飞卢（feilu）──────────────────────────────────────────────────────────────
+// 单章区间是两段式（上架前 1500–2000 / 上架后 2500–5050），档案表存包络 1500–5050，
+// 分带口径在 reviewFeilu 字数项里补：两带间隙（2001–2499）单独 warn，不冒充合格。
+
+/** 纯叙述段造章（无对话块里的冲突/爽点/打脸词），用于打「未检出」的反向用例。 */
+function plainChapter(n) {
+    const paras = [];
+    let chars = 0;
+    while (chars < n - HOOK_TAIL.length) {
+        paras.push(PLAIN_BLOCK);
+        chars += PLAIN_BLOCK.length;
+    }
+    return [...paras, HOOK_TAIL].join('\n\n');
+}
+
+test('飞卢：双带字数 1800/2600 过、两带间隙 2200 warn、包络外 error；自定义档不分带', () => {
+    for (const n of [1800, 2600]) {
+        const r = reviewForPlatform({ content: chapterOf(n), chapter: 4, platform: 'feilu' });
+        const c = checkOf(r, 'chapter-length');
+        assert.equal(c.ok, true, n + ' 字落在带上必须通过（value=' + c.value + '）');
+    }
+    assert.match(platformLimitsText(), /飞卢 1500–5050/, 'platformLimitsText 自动枚举新档');
+    const feiluConf = charConfigForPlatform({ minChapterChars: 2500, maxChapterChars: 4000 }, 'feilu');
+    assert.deepEqual([feiluConf.minChapterChars, feiluConf.maxChapterChars], [1500, 5050], 'charConfigForPlatform 自动取飞卢包络档');
+
+    const gap = reviewForPlatform({ content: chapterOf(2200), chapter: 4, platform: 'feilu' });
+    const gc = checkOf(gap, 'chapter-length');
+    assert.equal(gc.ok, false, '2200 在两带间隙，不许冒充合格');
+    assert.equal(gc.level, 'warn', '间隙只 warn 不 error——它不踩任何硬规则');
+    assert.match(gc.advice, /两带间隙/, 'advice 必须把间隙口径说破');
+
+    const under = reviewForPlatform({ content: chapterOf(1200), chapter: 4, platform: 'feilu' });
+    assert.equal(checkOf(under, 'chapter-length').level, 'error', '包络下限 1500，1200 必 error');
+
+    // 本书自定义口径：区间是用户定的，只按自定义区间判，不再套平台双带
+    const custom = reviewForPlatform({
+        content: chapterOf(2200), chapter: 4, platform: 'feilu',
+        charConfig: { minChapterChars: 2000, maxChapterChars: 4000 }, charSource: 'custom',
+    });
+    const cc = checkOf(custom, 'chapter-length');
+    assert.equal(cc.ok, true, '自定义 2000–4000 下 2200 必须放行');
+    assert.match(cc.label, /本书自定义/, 'label 要写明数字出处');
+});
+
+test('飞卢黄金三章：ch1 开篇出事、ch2 金手指、ch3 打脸（词法近似判 warn）', () => {
+    const plain = reviewForPlatform({ content: plainChapter(2000), chapter: 1, platform: 'feilu' });
+    const oc = checkOf(plain, 'opening-conflict');
+    assert.equal(oc.ok, false, '纯叙述开篇无冲突信号，不通过');
+    assert.equal(oc.level, 'error', '飞卢前 300 字出事是 error（编辑判慢热的硬标准）');
+
+    const ch2 = reviewForPlatform({ content: chapterOf(2000), chapter: 2, platform: 'feilu' });
+    const gf = checkOf(ch2, 'golden-finger');
+    assert.equal(gf.ok, false, '无金手指词的第 2 章不通过');
+    assert.equal(gf.level, 'warn', '词法近似不许判 error——误杀比漏报贵');
+    assert.equal(gf.value, '未检出', 'value 不回显词表');
+    const withGf = reviewForPlatform({ content: '系统提示音在他脑海里响起。\n\n' + chapterOf(2000), chapter: 2, platform: 'feilu' });
+    assert.equal(checkOf(withGf, 'golden-finger').ok, true, '金手指词命中即通过（判据没被削弱）');
+
+    const ch3 = reviewForPlatform({ content: chapterOf(2500), chapter: 3, platform: 'feilu' });
+    const fs = checkOf(ch3, 'first-3-faceslap');
+    assert.equal(fs.ok, true, '对白块自带打脸词，必须真命中');
+    const ch4 = reviewForPlatform({ content: chapterOf(2500), chapter: 4, platform: 'feilu' });
+    assert.equal(ch4.checks.some((x) => x.key === 'first-3-faceslap'), false, '第 4 章不再出黄金三章项');
+});
+
+test('飞卢：章末钩子 error + 爽点密度 error + 憋屈 ≤800（与七猫同档但不混用）', () => {
+    const bare = withoutHook(2600);
+    const fl = reviewForPlatform({ content: bare, chapter: 4, platform: 'feilu' });
+    assert.equal(checkOf(fl, 'ending-hook').level, 'error', '飞卢章末必留钩子，无钩子 error');
+
+    const quiet = reviewForPlatform({ content: plainChapter(2600), chapter: 4, platform: 'feilu' });
+    assert.equal(checkOf(quiet, 'first-1k-thrill').level, 'error', '前 1000 字无爽点/推进反馈必 error');
+
+    assert.equal(checkOf(fl, 'suffering-duration').ok, true, '常规造章无憋屈段，应通过');
+    assert.equal(reviewForPlatform({ content: chapterOf(2600), chapter: 4, platform: 'feilu' }).platform, 'feilu', '分派路径自证');
 });

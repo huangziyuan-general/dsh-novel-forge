@@ -24,6 +24,7 @@
 
 1. **★ 平台档案表扩到四家**（`lib/store.js` `PLATFORM_IDS`/`PLATFORM_PROFILES` + `lib/platform-review.js`）：新增 jjwxc（晋江：订阅制按千字计费，3000–6000 字、开篇忌虐与字数足额）与 qimao（七猫：免费流广告分成，2000–3500 字、强情绪快节奏与章末必留钩子）两套审稿表——晋江不足下限与开篇虐主按 error 级（字数即收入），七猫章末无钩子按 error 级（免费流打开率生死线，同一内容番茄口径仍是 warn，两平台分级不混）。字数区间仍以 store 为唯一数字真相：`platformLimitsText`/`charConfigForPlatform` 自动枚举新档，写章/细纲门禁、novel_project 平台写入校验与面板设置零改动即生效。分派从三元链改 `REVIEWERS` 映射表（加平台 = 加一条映射 + 一个 reviewXxx），注释钉死一条真机教训：映射表在模块求值时急切取值，写了映射没写函数体 = import 即 ReferenceError，而 bundle 行 `failOnStartupError:false` 会把激活失败静默吞掉（GUI 照常启动、工具与面板凭空消失）——改完必须 `node -e "import('./lib/index.js')"` 自证可加载再重启宿主。
 2. **工具描述与发行面同步**：novel_audit / novel_project 的 platform 参数描述、systemPrompt 第 16 条、SKILL.md 开书流程、预设 persona、README×2 全部改四平台口径（模型只从工具描述学平台清单，描述漏了新 id 就永远不会传）。回归钉：`test/platform-review-fixes.test.mjs` 补晋江（订阅下限 error / 4500 字全绿 / 黄金三章开篇忌虐）与七猫（无钩子 error 与番茄 warn 同文对照 / 区间 2000–3500）用例。
+3. **飞卢（feilu）入表**：单章区间两段式——上架前 1500–2000 / 上架后 2500–5050（2026-06 前后公开规则；VIP 章不满 1000 字不计费不计全勤、日更保底 4000 全勤 6000）。单一档案装不下两段，档案表取包络 1500–5050，分带口径在 `reviewFeilu` 字数项补齐：两带间隙（2001–2499）单独 warn 不冒充合格，本书自定义口径只按自定义区间判不分带。口味表按飞卢审稿定式：前 300 字出事（error）、第二章亮金手指（新增 `GOLDEN_FINGER_WORDS` 词法近似，warn）、第三章打脸（warn）、前 1000 字爽点/推进反馈（error）、憋屈 ≤800 与章末钩子 error（虐主与慢热是平台级雷区）。工具描述与发行面同步改五平台。回归钉同上（双带三态 / 自定义不分带 / 黄金三章逐章判据 / 分派自证）。
 
 ## v1.0.3 (2026-10-22)
 
