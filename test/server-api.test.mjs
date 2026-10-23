@@ -441,7 +441,7 @@ test('★ 方向4 同名书冲突：多根下同名书只出一卡，且显式�
 });
 
 test('★ 会话归属定位：多根同名书时详情/章节按 ?session= 落到会话名下那份拷贝（列表与阅读不分家）', async () => {
-    // 真机背景（2026-10-19）：《开局觉醒加特林》4 份拷贝并存，面板书卡按 sessions 归属
+    // 真机背景（2026-10-19）：《某连载本》4 份拷贝并存，面板书卡按 sessions 归属
     // 过滤显示 A 拷贝（105 章），阅读器却按根排序先到先得读到 B 拷贝（103 章）——
     // locateBook 不认会话，两边分家。本用例锁死：给了 ?session= 就读会话名下那份。
     const { registerServerApi } = await import('../lib/server-api.js');
@@ -1737,11 +1737,11 @@ test('R-建会话-8 建 → 命名「书名-YYMMDD」（用户钦定 2026-10-09�
         workspace: null,
         full: false,
     };
-    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1', book: '疲劳检测', bookTitle: '开局觉醒加特林' } });
+    const res = await drive({ method: 'POST', url: `${PREFIX}/session/create`, body: { session: 's1', book: '疲劳检测', bookTitle: '某连载本' } });
     assert.equal(res.statusCode, 200, res.body);
     assert.equal(res.json.value.renamed, true);
     const now = new Date();   // 与服务端同进程同时区，日期串同源计算
-    const expected = `开局觉醒加特林-${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    const expected = `某连载本-${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
     assert.deepEqual(renames, [{ sessionId: 's-name-1', title: expected }], '命名=书名-YYMMDD（本地时区）');
     rotateProbeResult = undefined;
 });

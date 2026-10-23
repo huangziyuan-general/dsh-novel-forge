@@ -1433,7 +1433,7 @@ test('★ commitChapter 熔断：tripped 后 force:true 照样拒绝（不 bypas
             content: CHAPTER_TEXTS[1], summary: '试探之章', force: true,
         }),
         /熔断/,
-        '★ force 放行的是内容判定（细纲门禁/内容门禁/禁项），不是熔断——墨骨录实证：force 循环硬压与不 force 一模一样',
+        '★ force 放行的是内容判定（细纲门禁/内容门禁/禁项），不是熔断——某完结本实证：force 循环硬压与不 force 一模一样',
     );
     assert.equal(novel.gateFailures['7'], 3, '熔断拒绝发生在计数递增之前，不涨计数');
     assert.equal(io.files.get(meta), before, '被熔断拦下的调用不写盘（盘上状态原样）');
