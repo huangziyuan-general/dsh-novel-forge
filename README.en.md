@@ -9,6 +9,14 @@ A novel-writing plugin for DeepSeek Harness (DSH). It has exactly one design spi
 > **Code enforcement beats prompt discipline.** Any constraint that relies on the model "behaving itself" will eventually fail —
 > consistency, gating, and auditing must be hard constraints at the tool/data layer.
 
+## Why this isn't another "prompt collection"
+
+Most writing plugins put their constraints in system prompts — the model obeys when it feels like it and routes around them under deadline pressure. This plugin puts the constraints in code. Three verifiable facts (each checkable against the source in this repo):
+
+1. **One judgment chain behind all three entrances**: the panel "💾 Save", `novel_write_chapter`, and REST writes all run the same gating code (mechanical check / ledger conflicts / content gate / outline contract) — no bypass; the single override switch is explicitly audited.
+2. **The model cannot self-approve proposals**: for revisions, the model can only register a proposal, never apply it — "Apply" is the user's sovereign action in the panel (there is no apply tool on the model side); outline approvals record their channel, and the dashboard tracks the "tool self-approval ratio" (real-machine evidence: a serialized book once hit 168/168 self-approvals — the first gap that let its outline drift).
+3. **Zero-token auditing**: mechanical checks, the AI-smell scan, platform reviews, consistency checks, and point-in-time ledger simulation are all pure local computation — per-chapter audit cost is 0, and the numbers never pass through the model's hands.
+
 ## UI Tour
 
 The right-sidebar "Forge" panel, rendered from the real `lib/client.js` (these are **fictional sample data**, not real books):
