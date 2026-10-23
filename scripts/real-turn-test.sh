@@ -10,7 +10,7 @@
 # 挂成 pending（真机实证 2026-10-12）——该依赖改成嵌套 fiber 之前，这个跑法拿不到 novel_* 工具。
 set -uo pipefail
 
-SRC="/Users/huangshengju/Documents/novel/开局觉醒加特林"
+SRC="/Users/huangshengju/Documents/novel/<你的书目录>"
 REPO="/Users/huangshengju/Documents/other/dsh-novel-forge"
 BK="$REPO/真机测试备份"
 STAMP="$(date +%Y%m%d-%H%M%S)"
@@ -20,9 +20,10 @@ ERR="$BK/headless-stderr-$STAMP.log"
 
 mkdir -p "$ROOT"
 cp "$SRC/novel.json" "$BK/novel.json.pre" 2>/dev/null || true
-cp -R "$SRC" "$ROOT/开局觉醒加特林"
-echo "[prep] STAMP=$STAMP 复制 $(du -sh "$ROOT/开局觉醒加特林" | cut -f1)，章数 $(node -e "
-const j=require('$ROOT/开局觉醒加特林/novel.json');console.log(Object.keys(j.chapters).length)")"
+BOOK="某连载本"
+cp -R "$SRC" "$ROOT/$BOOK"
+echo "[prep] STAMP=$STAMP 复制 $(du -sh "$ROOT/$BOOK" | cut -f1)，章数 $(node -e "
+const j=require('$ROOT/$BOOK/novel.json');console.log(Object.keys(j.chapters).length)")"
 
 export PATH=/Users/huangshengju/.npm-global/bin:$PATH
 cd "$ROOT"
@@ -30,7 +31,7 @@ cd "$ROOT"
 # 适配器，光切默认模型必报 NO_ADAPTER；不给 patch 则走默认 deepseek-official —— 那把
 # 凭据没余额，就是之前 402 的真来源）。见 scripts/arkc-headless.patch.yml。
 dsh --profile headless --patch "$REPO/scripts/arkc-headless.patch.yml" --json \
-  "继续写《开局觉醒加特林》的第 102 章。按小说锻炉的工作流走完再落盘：novel_project status 看清进度 → novel_outline save_chapter 写第102章细纲（含「## 本章必写场景」与「## 本章禁止偏离项」）→ novel_outline approve → novel_scene save 声明本章出场人物 → novel_briefing 拿上下文包 → 按细纲成稿后 novel_write_chapter 落盘（正文 2000-4000 字，带上 summary 与 facts_updates）。只写这一章，写完停下汇报本章要点和下一章建议。" \
+  "继续写《某连载本》的第 102 章。按小说锻炉的工作流走完再落盘：novel_project status 看清进度 → novel_outline save_chapter 写第102章细纲（含「## 本章必写场景」与「## 本章禁止偏离项」）→ novel_outline approve → novel_scene save 声明本章出场人物 → novel_briefing 拿上下文包 → 按细纲成稿后 novel_write_chapter 落盘（正文 2000-4000 字，带上 summary 与 facts_updates）。只写这一章，写完停下汇报本章要点和下一章建议。" \
   > "$OUT" 2> "$ERR"
 echo "[done] exit=$? 事件 $(wc -l < "$OUT") 行 / stderr $(wc -l < "$ERR") 行 → $OUT"
 
