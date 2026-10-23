@@ -11,7 +11,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { reviewForPlatform } from '../lib/platform-review.js';
+import { reviewForPlatform, PLATFORM_IDS as REVIEW_IDS } from '../lib/platform-review.js';
+import { PLATFORM_IDS as STORE_IDS, PLATFORM_PROFILES } from '../lib/store.js';
 import { charConfigForPlatform, platformLimitsText } from '../lib/store.js';
 
 // 词表从源码单点解析：要断言「value 不含词表里的任何词」就得拿真词表，在测试里抄第二份
@@ -247,4 +248,12 @@ test('飞卢：章末钩子 error + 爽点密度 error + 憋屈 ≤800（与七�
 
     assert.equal(checkOf(fl, 'suffering-duration').ok, true, '常规造章无憋屈段，应通过');
     assert.equal(reviewForPlatform({ content: chapterOf(2600), chapter: 4, platform: 'feilu' }).platform, 'feilu', '分派路径自证');
+});
+
+test('平台 id 单点：store 档案键与 platform-review 审稿表键一致（分家模块加载即抛，此处钉对外契约）', () => {
+    assert.deepEqual([...REVIEW_IDS].sort(), [...STORE_IDS].sort(), '两处导出的 PLATFORM_IDS 必须同源同集');
+    assert.equal(REVIEW_IDS.length, 5, '五平台：qidian/fanqie/jjwxc/qimao/feilu——加平台同步更新本钉');
+    for (const id of REVIEW_IDS) {
+        assert.ok(PLATFORM_PROFILES[id].minChapterChars > 0 && PLATFORM_PROFILES[id].maxChapterChars > PLATFORM_PROFILES[id].minChapterChars, id + ' 的档案区间必须合法');
+    }
 });
