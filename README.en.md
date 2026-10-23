@@ -239,6 +239,7 @@ containment and version-guard semantics (including the `readBytes` byte primitiv
 | "One-click write chapter" button 501 | By design: writing a chapter requires the briefing + multi-stage commit gates, and can only be done in a session |
 | "Continue last batch" returns 409 `BATCH_RUNNING` | The last batch may still be running: wait for it to finish, or only resume after >10 minutes (anti-double-run guard; a stale checkpoint from a web restart auto-releases after timeout) |
 | Panel returns 403 `FORBIDDEN_HOST` | The access address isn't localhost (you used a LAN IP or domain) — the panel API only allows localhost/127.0.0.1/[::1]; open DSH web with a local address (see "Known boundaries" for the security model) |
+| After a few dozen chapters the whole turn fails with 400 `CONTEXT_WINDOW_EXCEEDED` / model token limit | Session history only grows: every chapter draft (twice — tool call + receipt) plus each briefing pack and all tool receipts stay in history (real-machine evidence: 42 chapters ≈ 490k input tokens). **The book is fine** — click "Create new session and hand off" in the panel (or copy the handoff summary into a new session) and continue with the next chapter; don't retry the old session. The fatigue banner and the write-chapter receipt raise a hard warning early based on a volume estimate (default: 60% of a 256k budget; the estimate is conservative — real history is only larger) |
 
 ## Development and testing
 
