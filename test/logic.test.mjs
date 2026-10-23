@@ -2896,6 +2896,37 @@ test('★ health: 体量护栏——草稿×回合估 token，超预算 60% 硬�
     assert.equal(ft.level, 'soft');
 });
 
+test('★ health: 会话归属兜底——面板 id 不同源/缺失时单会话书照常告警（2026-10-23 外部用户横幅缺席实证）', () => {
+    // 单会话书（长篇常态）：26 章 × 3000 字，会话 id 是工具面记账的 'real-session'
+    const lines = Array.from({ length: 26 }, (_, i) => JSON.stringify({
+        session: 'real-session', action: 'write_chapter/saved', chapter: i + 1, chars: 3000,
+    })).join('\n');
+    // 面板发来的 sid 对不上（slot inject 的旧病）或压根没有 → 兜底到唯一会话，横幅不能缺席
+    for (const sid of [null, 'slot-injected-id']) {
+        const f = sessionFatigue(lines, sid);
+        assert.equal(f.reason, 'volume', `兜底后体量判据照常判死（sid=${String(sid)}）`);
+        assert.equal(f.level, 'hard');
+        assert.match(f.scopeNote, /唯一会话/, '必须自报家门：数字是怎么来的');
+        assert.equal(f.effectiveSession, 'real-session');
+    }
+    // id 匹配时不带兜底说明（正常路径零变化）
+    const direct = sessionFatigue(lines, 'real-session');
+    assert.equal(direct.scopeNote, undefined);
+    assert.equal(direct.effectiveSession, undefined);
+
+    // 多会话书无法归因 → 宁缺不假：拿全书累计冒充当前会话历史，会把刚开的新会话误判爆栈
+    const multi = [
+        ...Array.from({ length: 30 }, (_, i) => JSON.stringify({
+            session: 'a', action: 'write_chapter/saved', chapter: i + 1, chars: 3000,
+        })),
+        JSON.stringify({ session: 'b', action: 'write_chapter/saved', chapter: 31, chars: 3000 }),
+    ].join('\n');
+    const fMulti = sessionFatigue(multi, 'wrong-sid');
+    assert.equal(fMulti.sessionFirstAvg, null);
+    assert.equal(fMulti.contextEst, undefined);
+    assert.equal(fMulti.warn, null);
+});
+
 test('health: 会话疲劳——空审计/坏行不炸，bookCharBaseline 只作展示口径', () => {
     assert.equal(sessionFatigue('', 's1').sessionFirstAvg, null);
     assert.equal(sessionFatigue('{}\n{}\n', 's1').sessionFirstAvg, null);

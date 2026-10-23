@@ -77,6 +77,8 @@ function SessionFatigueBanner({ session, copied }) {
 		est ? h('div', { style: { ...hintStyle, marginTop: space.xs } },
 			`上下文体量预估 ${est.estTokens} tokens（${est.turns} 次写章 · 草稿 ${est.draftChars} 字，简报包等未全计）`
 			+ ` ≈ ${est.pct}% / ${est.budgetTokens} 预算`) : null,
+		// 会话归属兜底口径（1.0.5）：面板 id 与记账不同源时数字来自唯一会话，必须自报家门
+		session.scopeNote ? h('div', { style: { ...hintStyle, marginTop: space.xs } }, `ℹ ${session.scopeNote}`) : null,
 		h('div', { style: { ...hintStyle, marginTop: space.xs } },
 			hard
 				? '继续写大概率整轮 400（CONTEXT_WINDOW_EXCEEDED），报错发生在模型侧、工具救不回来。'
