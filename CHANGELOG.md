@@ -20,6 +20,11 @@
 2. **★ 写章落盘后自动补语义标签**（`lib/chapter-commit.js` + `lib/engine-tasks.js` `autoAnnotateChapter`）：annotate 此前是纯手动动作，真机上大多数块永远没标签，标签增强检索常年跑在纯词法档。现在章节落盘、索引续建之后，自动对**本章**新块后台补语义标签（每章封顶 4 块、连续 2 块失败即停），fire-and-forget：绝不阻塞成稿返回、绝不把失败抛回提交链（裸 rejection 在宿主进程是 fatal，任务自身吞掉一切异常只 console.warn 留痕）；同书在飞去重（批量起草连章提交不叠任务，上一轮没跑完时本轮跳过、剩余块等下次落盘再补）；打标数 >0 时审计留痕 `search/auto-annotate`。indexNote 只说实况：引擎缺席（`isAvailable` 调用时探测，MCP 独立模式同档）静默跳过、不谎报「已排队」。
 3. **expand 通道与自动打标开关**（`lib/engine-core.js` + `lib/index.js`）：通道表新增 `expand`（短任务预算 512 tok / 60s，与 annotate 同档；CHANNEL_NAMES/DEFAULTS/LABELS/config schema 四处同步）；新增配置 `search.autoAnnotate`（默认开，false 整体关自动打标——不想花这份 token 或离线环境的开关）。README 配置表、工具表、已知边界同步。回归钉：`test/semantic-search.test.mjs` 三闸用例（config 关掉不排队不谎报 / 引擎缺席跳过不谎报 / 同书在飞去重、落定后在飞表清空）。
 
+### 平台表扩展：晋江与七猫（novel_audit platform × 4）
+
+1. **★ 平台档案表扩到四家**（`lib/store.js` `PLATFORM_IDS`/`PLATFORM_PROFILES` + `lib/platform-review.js`）：新增 jjwxc（晋江：订阅制按千字计费，3000–6000 字、开篇忌虐与字数足额）与 qimao（七猫：免费流广告分成，2000–3500 字、强情绪快节奏与章末必留钩子）两套审稿表——晋江不足下限与开篇虐主按 error 级（字数即收入），七猫章末无钩子按 error 级（免费流打开率生死线，同一内容番茄口径仍是 warn，两平台分级不混）。字数区间仍以 store 为唯一数字真相：`platformLimitsText`/`charConfigForPlatform` 自动枚举新档，写章/细纲门禁、novel_project 平台写入校验与面板设置零改动即生效。分派从三元链改 `REVIEWERS` 映射表（加平台 = 加一条映射 + 一个 reviewXxx），注释钉死一条真机教训：映射表在模块求值时急切取值，写了映射没写函数体 = import 即 ReferenceError，而 bundle 行 `failOnStartupError:false` 会把激活失败静默吞掉（GUI 照常启动、工具与面板凭空消失）——改完必须 `node -e "import('./lib/index.js')"` 自证可加载再重启宿主。
+2. **工具描述与发行面同步**：novel_audit / novel_project 的 platform 参数描述、systemPrompt 第 16 条、SKILL.md 开书流程、预设 persona、README×2 全部改四平台口径（模型只从工具描述学平台清单，描述漏了新 id 就永远不会传）。回归钉：`test/platform-review-fixes.test.mjs` 补晋江（订阅下限 error / 4500 字全绿 / 黄金三章开篇忌虐）与七猫（无钩子 error 与番茄 warn 同文对照 / 区间 2000–3500）用例。
+
 ## v1.0.3 (2026-10-22)
 
 ### 体检轮：审计收口（错误分类与时钟出纯模块）
