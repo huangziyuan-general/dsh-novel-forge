@@ -1288,12 +1288,18 @@ test('R-疲劳 详情按 ?session= 聚合首稿趋势并给交接摘要（面板
     assert.ok(hit.json.value.session.handoff.includes('第 5 章'), '交接摘要指到最近一章');
     assert.ok(hit.json.value.session.handoff.includes('第 6 章'), '交接摘要指到下一章');
 
-    // 不带 session 参数：无 session 字段（面板无横幅）
-    const plain = await drive({ method: 'GET', url: `${PREFIX}/projects/${encodeURIComponent('疲劳检测')}` });
-    assert.equal(plain.json.value.session, undefined, '无 session 参数不给疲劳数据');
-    // 别的会话：无写章记录 → 同样无横幅
-    const other = await drive({ method: 'GET', url: `${PREFIX}/projects/${encodeURIComponent('疲劳检测')}?session=s2` });
-    assert.equal(other.json.value.session, undefined, '其它会话无写章记录不给横幅');
+    // 不带 session 参数 / 别的会话：面板 id 与记账不同源是 0.13.2 起的老病（2026-10-23
+    // 外部用户实证：42 章连写写爆上下文，横幅整个缺席）——本书只被 s1 写过（单会话书，
+    // 长篇常态），疲劳聚合兜底到 s1，横幅照常出且必须自报家门口径；交接摘要照给。
+    for (const url of [
+        `${PREFIX}/projects/${encodeURIComponent('疲劳检测')}`,
+        `${PREFIX}/projects/${encodeURIComponent('疲劳检测')}?session=s2`,
+    ]) {
+        const fb = await drive({ method: 'GET', url });
+        assert.ok(fb.json.value.session, `兜底：无匹配 sid 也出疲劳块（${url}）`);
+        assert.ok(fb.json.value.session.warn.includes('首稿逐章变短'), '兜底后判据照常判定');
+        assert.match(fb.json.value.session.scopeNote, /唯一会话/, '兜底必须自报家门');
+    }
 });
 
 // ── R-轮换：疲劳横幅一键开新会话+归档（服务端能力探测决定 501 还是 200）──

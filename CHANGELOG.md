@@ -7,6 +7,7 @@
 1. **★ 疲劳检测新增体量判据（hard 级，排第一）**（`lib/health.js` `sessionFatigue`）：外部用户真机实证——写到 42 章整轮 400 `CONTEXT_WINDOW_EXCEEDED`（输入 49.3 万 tokens）：会话历史只增不减，草稿全文两份（tool call 的 content + 落盘/驳回回执）+ 每回合简报包是三大堆积源；而 400 死在模型侧、工具层来不及反应，只能提前喊。现在按本会话全部 write_chapter 行累计草稿字数，估 token（草稿×0.6×2 份 + 回合数×简报包×0.6，系数校准自该真机案例，其余回执未计→只低估），默认预算 256k（真机窗口 128k–1M 都有，取保守中间档）、预估 ≥ 预算 60% 即硬警告——文案点名 400 码与「换会话零损失」，明确这不是质量建议。估算数字（turns/draftChars/estTokens/pct）**未达阈值也常驻返回**：先可见再谈建议，与「自批占比」同一可见性思路。
 2. **三处消费端同步**：疲劳横幅按 `level` 分级渲染（hard 用 danger 色 +「🛑 上下文体量将满」标题，体量数字常驻；`src/client/views/project-detail.js`，需重新构建）；写章回执 `progress.session` 与 REST 详情视图带上 `level`/`contextEst`（`chapter-commit.js` 简报包体量传真实 `config.contextBudgetChars`；output.schema 逐字段同步）。
 3. **FAQ 补条目**（README×2）：写到几十章后 400 token 超限=换会话交接，书没坏、原会话别重试。回归钉：`test/logic.test.mjs` 体量护栏用例（估算算式逐字段钉 / 体量优先于章数兜底 / 小预算早触发 / 旧审计 rejected 无 chars 的欠账声明 / 质量类判据恒 soft）。
+4. **★ 会话归属兜底：横幅缺席的真因修复**（`lib/health.js` `sessionFatigue` + `lib/server-routes/projects.js`）：同一用户实证的另一半——疲劳判据按「面板会话 id = 审计记账 id」聚合，面板 id 与工具面记账不同源甚至缺失（0.13.2 起的老病）时判据**全部空转**：42 章连写本该触发章数兜底，横幅与「创建新会话并交接」按钮却整个缺席，护栏做了也白做。修复两处：① 详情路由**无条件**聚合疲劳数据（不再以 `?session=` 为前提）；② 目标会话没命中记账行且**全书单会话**（长篇常态）时按唯一会话兜底估算，横幅带 ℹ 口径说明自报家门；多会话书无法归因 → 宁缺不假（拿全书累计冒充当前会话历史会把新会话误判爆栈）。回归钉：`test/logic.test.mjs` 兜底用例（null/错 id 都兜 / 匹配时零变化 / 多会话不兜）。
 
 ## v1.0.4 (2026-10-23)
 
