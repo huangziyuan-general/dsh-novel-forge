@@ -42,7 +42,7 @@ The failure modes of AI long-form writing aren't magic — each has an engineeri
 | Chapter one comes out too short | The outline is scored on scene count + beats (calibrated on 151 real chapters); if it can't reach the floor it is rejected, naming which scene has only one beat; the pre-write briefing then gives a per-scene word budget |
 | Editing in the panel bypasses the gates | The panel's save button shares **the same judgment chain** as chapter writing (only the outline stage gate is waived): short drafts, placeholders, resurrected characters and spoilers return 409 with the original text, with one explicit "save anyway (audited)" when needed | panel editor |
 | Same chapter keeps going wrong | Circuit breaker: 3 consecutive rejections on the same chapter triggers a write-block (not a reminder); cleared automatically once the outline/contract is fixed | `novel_write_chapter` |
-| Doesn't fit platform taste | Two platform review tables: Qidian checks structure / chapter-end hook / mobile paragraph length; Fanqie checks the first 1000 chars for payoffs / face-slaps / frustration pacing | `novel_audit platform` |
+| Doesn't fit platform taste | Four platform review tables: Qidian checks structure / chapter-end hook; Fanqie checks the first 1000 chars for payoffs; Jinjiang checks chapter-length floor and a no-suffering opening; Qimao checks strong emotion and the chapter-end hook | `novel_audit platform` |
 | Crossing platform red lines | Seven-category sensitivity self-check; hits return line numbers and fixes | `novel_audit censor` |
 | Internal chores flood the main chat | Side-channel direct calls: polish / proofread / annotate / draft run on independent flows — no main-chat occupation, no session-log writing; results surface only as proposals | `lib/engine.js` |
 | Batch drafting bypassing gates | Concurrent generation, serial commit: every chapter still passes the same gate; a single-chapter failure doesn't roll back the whole batch | `draft-batch` |
@@ -100,7 +100,7 @@ novel_project init → novel_project phase (see the nine-stage board, fill entry
     → novel_briefing (get the context pack; if a scene contract exists, trim by it)
     → draft per the outline → novel_write_chapter (gate / mechanical check / ledger / content gate / contract metrics / circuit breaker / commit)
     → novel_noai_scan + novel_audit (evidence) → you (or the model, citing evidence) review
-    → before publishing: novel_audit platform:qidian|fanqie + novel_audit censor:true
+    → before publishing: novel_audit platform:qidian|fanqie|jjwxc|qimao + novel_audit censor:true
     → revisions: novel_propose propose → user confirms in panel → v2 generated (old version never overwritten)
 ```
 
@@ -132,7 +132,7 @@ novel_project init → novel_project phase (see the nine-stage board, fill entry
 | `novel_write_chapter` | write & commit chapter | gate → mechanical check → ledger → **content gate (six dims)** → **outline-contract metrics** → versioning; contract metrics persisted to chapter index |
 | `novel_ledger` | fact ledger (with notes) + **point-in-time simulation** (`status_at` snapshot of chapter n / `timeline` evolution) + foreshadowing plant / payoff / reschedule | same-chapter value change rejected; chapter-number-ahead rejected; overdue foreshadowing warned; backfill doesn't alter history |
 | `novel_noai_scan` | eight-dimension anti-AI-smell scan | fully local, zero cost |
-| `novel_audit` | deterministic chapter audit + contract metrics + `continuity` whole-book consistency + `voice` voice-gene check + `platform` **Qidian / Fanqie dual-platform review** + `censor` **seven-category sensitivity self-check** | mechanical evidence; platform health table gives actionable fixes |
+| `novel_audit` | deterministic chapter audit + contract metrics + `continuity` whole-book consistency + `voice` voice-gene check + `platform` **Qidian / Fanqie / Jinjiang / Qimao four-platform review** + `censor` **seven-category sensitivity self-check** | mechanical evidence; platform health table gives actionable fixes |
 | `novel_style` | prose six-axis baseline (μ±σ band) + **mood spectrum 12 axes**: build baseline / check against (incl. dominant-mood drift) | fully local, zero cost; reports numbers only, no labels |
 | `novel_propose` | proposal / list | edits go through proposals, user applies in panel; old versions never overwritten |
 | `novel_import` | local book import (preview/import/**backfill gate replay**; file supports `.md`/`.txt`/`.docx` — docx split by Word heading styles and "Chapter N" rules) | pure-function chapter split; create book + versioned commit; docx uses `readBytes` byte channel (text channel corrupts binary), rejects zip64, 48MB decompress cap |

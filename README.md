@@ -50,7 +50,7 @@ AI 长篇写作的通病不是玄学，每一个都有对应的工程解法。�
 | 第一章就写不够字数 | 细纲按「场景数 + 拍数」估算本章能写多少（真机 151 章标定），撑不到下限就驳回并点名哪个场景只有一拍；写前简报再给**逐场景字数预算** |
 | 面板改稿绕过门禁 | 面板「💾 保存」与写章**共用同一套判定**（只豁免细纲流程门禁）：短稿/占位符/死人复活/泄底一律 409 并摆出原文，需要时给一次显式「仍要保存（记审计）」 | 面板编辑区 |
 | 同一章反复写不对 | 熔断：同章连续驳回 3 次即**拒写**（不是提醒），改完细纲/契约自动解除 | `novel_write_chapter` |
-| 不合平台口味 | 平台审稿两张表：起点看结构/章末钩子/移动端段长，番茄看前 1000 字爽点/打脸/憋屈时长 | `novel_audit platform` |
+| 不合平台口味 | 平台审稿四张表：起点看结构/章末钩子/移动端段长，番茄看前 1000 字爽点/打脸/憋屈时长，晋江看字数足额/开篇忌虐，七猫看强情绪快节奏/章末钩子 | `novel_audit platform` |
 | 踩平台红线 | 敏感自查七类，命中给行号与改法 | `novel_audit censor` |
 | 内部工序占满主对话 | 旁路直调：润色/校对/打标/起草走独立流，不占主对话、不写会话记录；结果只出提案 | `lib/engine.js` |
 | 批量起草绕过门禁 | 并发生成、**串行提交**：每章仍过同一道门禁，单章失败不回滚整批 | `draft-batch` |
@@ -107,7 +107,7 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
     → novel_briefing（拿上下文包；有场景契约就按契约裁剪）
     → 按细纲成稿 → novel_write_chapter（门禁/机审/账本/内容门禁/契约指标/熔断/落盘）
     → novel_noai_scan + novel_audit（证据）→ 你自己（或让模型引用证据）审稿
-    → 发书前：novel_audit platform:qidian|fanqie + novel_audit censor:true
+    → 发书前：novel_audit platform:qidian|fanqie|jjwxc|qimao + novel_audit censor:true
     → 修订：novel_propose propose → 用户在面板确认 → 生成 v2（旧版永不覆盖）
 ```
 
@@ -139,7 +139,7 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 | `novel_write_chapter` | 写章落盘 | 门禁→机审→账本→**内容门禁（六维）**→**细纲契约指标**→版本化；契约指标落盘到章节索引 |
 | `novel_ledger` | 事实账本（含 note）+ **时点推演**（`status_at` 第 n 章快照 / `timeline` 演化线）+ 伏笔埋/收/改期 | 同章改值拒绝；章号超前拒绝；超期伏笔告警；补录不改历史 |
 | `novel_noai_scan` | 八维去 AI 味扫描 | 纯本地零费用 |
-| `novel_audit` | 确定性章节审计 + 契约指标 + `continuity` 全书一致性 + `voice` 语言基因核对 + `platform` **起点/番茄双平台审稿** + `censor` **敏感自查七类** | 机审证据；平台体检表给出可执行改法 |
+| `novel_audit` | 确定性章节审计 + 契约指标 + `continuity` 全书一致性 + `voice` 语言基因核对 + `platform` **起点/番茄/晋江/七猫四平台审稿** + `censor` **敏感自查七类** | 机审证据；平台体检表给出可执行改法 |
 | `novel_style` | 文笔六维基线（μ±σ 带）+ **氛围光谱 12 轴**：build 建基线 / check 对照（含主导氛围漂移） | 纯本地零费用；只报数不贴标签 |
 | `novel_propose` | 提案 / 列表 | 修订走提案，用户在面板应用；旧版永不覆盖 |
 | `novel_import` | 本地书籍导入（preview/import/**backfill 门禁回补**；file 支持 `.md`/`.txt`/`.docx`——docx 按 Word 标题样式与「第N章」规则切分） | 纯函数切分章节；建书+版本化落盘；docx 走 `readBytes` 字节通道（文本通道会解坏二进制），拒 zip64、48MB 解压上限 |
