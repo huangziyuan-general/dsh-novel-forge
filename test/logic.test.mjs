@@ -2468,7 +2468,7 @@ test('★ listProposals 富化 + readProposal：reason/摘要/章标题齐备，
     const files = new Map();
     files.set('书/novel.json', JSON.stringify({
         title: '书', stage: 'drafting',
-        chapters: { 1: { title: '初入龙渊', files: [{ version: 1, file: '书/正文/第1章-v1.md' }], latest: 1, path: '书/正文/第1章-v1.md' } },
+        chapters: { 1: { title: '初入剑冢', files: [{ version: 1, file: '书/正文/第1章-v1.md' }], latest: 1, path: '书/正文/第1章-v1.md' } },
         proposals: [
             { id: 'P1-a', chapter: 1, status: 'pending', createdAt: '2026-09-15T06:39:13.577Z' },
             { id: 'P9-lost', chapter: 2, status: 'pending', createdAt: '2026-09-15T07:00:00.000Z' },
@@ -2489,7 +2489,7 @@ test('★ listProposals 富化 + readProposal：reason/摘要/章标题齐备，
     const v = await listProposals(io, '书');
     assert.equal(v.proposals.length, 2);
     const p1 = v.proposals[0];
-    assert.equal(p1.title, '初入龙渊', '章标题随列表给出——UI 才能显示「第 1 章 · 初入龙渊」');
+    assert.equal(p1.title, '初入剑冢', '章标题随列表给出——UI 才能显示「第 1 章 · 初入剑冢」');
     assert.equal(p1.reason, '机审检出章末无钩子', '模型附的说明必须出列');
     assert.ok(p1.preview.includes('悬念对白'), '摘要是正文压缩');
     assert.ok(!p1.preview.includes('\n'), '摘要内换行必须压平（UI 单行显示）');
@@ -2499,7 +2499,7 @@ test('★ listProposals 富化 + readProposal：reason/摘要/章标题齐备，
 
     const full = await readProposal(io, '书', 'P1-a');
     assert.ok(full.content.includes('第二段'), '全文可读（应用前让人看清改了什么）');
-    assert.equal(full.title, '初入龙渊');
+    assert.equal(full.title, '初入剑冢');
     await assert.rejects(readProposal(io, '书', 'P9-lost'), /缺失/, '丢文件要给人话报错');
     await assert.rejects(readProposal(io, '书', 'P404'), /不存在/);
 });

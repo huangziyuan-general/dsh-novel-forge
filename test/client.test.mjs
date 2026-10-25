@@ -573,11 +573,11 @@ function makeSynth() {
 /** 按路径分发的假 fetch：目录 3 章、每章同一段正文、要素齐全。 */
 function makeFetchRouter(requests) {
     const CHAPTERS = [
-        { no: 1, title: '初入龙渊', chars: 20 },
+        { no: 1, title: '初入剑冢', chars: 20 },
         { no: 2, title: '夜训', chars: 20 },
         { no: 3, title: '飞刀', chars: 20 },
     ];
-    const CHAPTER_TEXT = '龙渊的清晨来得比城市早。\n操场上已经站满了人。';
+    const CHAPTER_TEXT = '剑冢的清晨来得比城市早。\n操场上已经站满了人。';
     const ELEMENTS = {
         meta: { title: '星海拾骨', genre: '玄幻', logline: '在星海捡骨头的人。', stage: 'planning', createdAt: '2026-09-13T04:55:48Z', updatedAt: '2026-09-13T04:55:48Z', cast: ['林晚'] },
         outline: { full: null, chapterOutlines: [] },
@@ -593,10 +593,10 @@ function makeFetchRouter(requests) {
         const respond = (value) => Promise.resolve({ json: () => Promise.resolve({ ok: true, value }) });
         if (/\/elements($|\?)/.test(u)) return respond(ELEMENTS);
         if (/\/proposals\/P\d[^/]*($|\?)/.test(u)) {
-            return respond({ id: 'P1-x', chapter: 1, title: '初入龙渊', reason: '补章末钩子', status: 'pending', content: '修订后的全文——结尾改成悬念对白。' });
+            return respond({ id: 'P1-x', chapter: 1, title: '初入剑冢', reason: '补章末钩子', status: 'pending', content: '修订后的全文——结尾改成悬念对白。' });
         }
         if (/\/proposals($|\?)/.test(u)) {
-            return respond({ proposals: [{ id: 'P1-x', chapter: 1, status: 'pending', createdAt: '2026-09-15T06:39:13.577Z', title: '初入龙渊', reason: '补章末钩子', preview: '把结尾改成悬念对白' }] });
+            return respond({ proposals: [{ id: 'P1-x', chapter: 1, status: 'pending', createdAt: '2026-09-15T06:39:13.577Z', title: '初入剑冢', reason: '补章末钩子', preview: '把结尾改成悬念对白' }] });
         }
         if (/\/chapters\/\d+($|\?)/.test(u)) return respond(CHAPTER_TEXT);
         if (/\/chapters($|\?)/.test(u)) return respond(CHAPTERS);
@@ -757,7 +757,7 @@ test('★ 连播：从指定章开始，读完自动接下一章，目录尽头�
     assert.equal(controller.state.playback.currentNo, 2, '★ 「从哪章听」由用户指定');
     assert.equal(controller.state.playback.status, 'playing');
     assert.equal(synth.spoken.length, 1, '第 2 章正文已入朗读队列');
-    assert.ok(synth.spoken[0].text.includes('龙渊的清晨'), '读的是取回来的章节文本');
+    assert.ok(synth.spoken[0].text.includes('剑冢的清晨'), '读的是取回来的章节文本');
 
     // 读完第 2 章（触发末块 onend）→ 自动取并读第 3 章
     synth.spoken[synth.spoken.length - 1].onend();
@@ -1101,7 +1101,7 @@ test('★ 阅读器：📖 取正文展开；✕ 收起；章号只认 data-id�
     assert.ok(requests.some((r) => /\/chapters\/2($|\?)/.test(r.url)), '★ 阅读必须真的去取该章正文');
     assert.equal(controller.state.reader?.no, 2);
     assert.equal(controller.state.reader?.loading, false, '取完后退出加载态');
-    assert.ok(controller.state.reader?.text.includes('龙渊的清晨'), '正文落进 reader');
+    assert.ok(controller.state.reader?.text.includes('剑冢的清晨'), '正文落进 reader');
     assert.equal(controller.state.reader?.title, '夜训', '标题取自章节目录');
 
     // ✕ 收起
@@ -1444,7 +1444,7 @@ test('★ 提案卡富化：👁 查看拉全文展开（再点收起）；提�
 
     // 队列富化：章标题 / 理由 / 摘要随列表落 state（视图直接可显示）
     assert.equal(controller.state.proposals?.length, 1, '提案队列落到 state');
-    assert.equal(controller.state.proposals[0].title, '初入龙渊');
+    assert.equal(controller.state.proposals[0].title, '初入剑冢');
     assert.equal(controller.state.proposals[0].reason, '补章末钩子');
     assert.ok(controller.state.proposals[0].preview);
 
