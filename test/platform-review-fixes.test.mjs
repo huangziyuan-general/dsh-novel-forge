@@ -31,7 +31,7 @@ const FACESLAP_WORDS = wordList('FACESLAP_WORDS');
 const CONFLICT_WORDS = wordList('CONFLICT_WORDS');
 
 const DIALOGUE_BLOCK = '“不可能。”赵擎冷笑一声，把合同摔在桌上。';
-const PLAIN_BLOCK = '林晚没说话，她弯腰捡起那张纸，指尖压住签名栏，屋子里静得能听见呼吸。';
+const PLAIN_BLOCK = '测试角色没说话，她弯腰捡起那张纸，指尖压住签名栏，屋子里静得能听见呼吸。';
 const HOOK_TAIL = '这单到底是谁签的？';
 
 /** 造一段字数**精确**为 n 的正文（机器字数口径 = 去空白后的字符数）：短段 + 隔段对白。 */
@@ -107,7 +107,7 @@ test('T3 判定项 value 不回显命中的词（报告不许是作弊指南）'
 });
 
 test('T2/T4 first-3-faceslap：标签说实话 + 降为 warn + 窗口写清楚', () => {
-    const noSlap = Array.from({ length: 40 }, (_, i) => '第' + (i + 1) + '节，林晚把账本翻过一页，把当天的数目记下来，窗外的雨一直没停。').join('\n\n');
+    const noSlap = Array.from({ length: 40 }, (_, i) => '第' + (i + 1) + '节，测试角色把账本翻过一页，把当天的数目记下来，窗外的雨一直没停。').join('\n\n');
     const f = reviewForPlatform({ content: noSlap, chapter: 1, platform: 'fanqie' });
     const c = checkOf(f, 'first-3-faceslap');
     assert.equal(c.ok, false, '无打脸词的正文本项不通过');

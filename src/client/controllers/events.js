@@ -22,6 +22,7 @@ export function createEventsController(ctx) {
 		state.error = ''; state.notice = '';
 		switch (action) {
 			case 'reload-proposals': state.proposalsError = null; await ctx.loadProposals(state.selected); break;
+			case 'refresh-dashboard': await ctx.loadDashboard(state.selected); break;
 			case 'refresh-projects': await ctx.refreshProjects(); break;
 			case 'toggle-scope':
 				if (!state.sessionId) break; // 无会话标识时本来就是全量，无可切换
@@ -107,6 +108,21 @@ export function createEventsController(ctx) {
 				notify();
 				break;
 			}
+				case 'review-open-chapter': {
+					// 平台审稿抽样不是终审，只是把“去哪改”落到动作面：打开命中章。
+					// 未保存草稿沿用统一确认，绝不直接覆盖编辑现场。
+					const no = Number(target.dataset.id);
+					if (!Number.isFinite(no) || no <= 0) {
+						state.error = `拿不到要打开的章号（审稿条目上应有 data-id，实际是 "${target.dataset.id ?? ''}"）`;
+						notify();
+						break;
+					}
+					state.detailTab = 'info';
+					if (no === state.chapterNo) break;
+					if (!intentLeave({ kind: 'chapter', no })) break;
+					await ctx.loadChapter(no);
+					break;
+				}
 			case 'close-reader': state.reader = null; notify(); break;
 			case 'playback-pause': player.pause(); notify(); break;
 			case 'playback-resume': player.resume(); notify(); break;

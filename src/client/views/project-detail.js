@@ -152,6 +152,92 @@ export function ProjectDetailView({ state: s }) {
 	const pendingCount = pendingProposals.filter((p) => p.status === 'pending').length;
 	const revising = s.revising ?? null;
 
+	// ── 创作驾驶舱（GET /dashboard · 只读聚合，零 token）──
+	const dash = s.dashboard;
+	const review = dash?.platformReview;
+	const readinessMeta = {
+		blocked: { label: '受阻', tone: 'danger', card: 'danger' },
+		attention: { label: '需处理', tone: 'warn', card: 'warn' },
+		ready: { label: '可推进', tone: 'ok', card: 'plain' },
+	}[dash?.readiness ?? 'ready'];
+	const dashboardBlock = Card({ tone: readinessMeta.card },
+		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' } },
+			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small } }, '🎛 创作驾驶舱'),
+			dash ? Chip({ tone: readinessMeta.tone }, readinessMeta.label) : null,
+			h('span', { style: { flex: '1 1 auto' } }),
+			Btn({
+				size: 'sm', variant: dash ? 'ghost' : 'secondary', action: 'refresh-dashboard',
+				disabled: s.dashboardLoading,
+			}, s.dashboardLoading ? '汇总中…' : dash ? '↻ 刷新' : '汇总'),
+		),
+		s.dashboardLoading && !dash
+			? h('div', { style: { ...hintStyle, marginTop: space.sm } }, '正在聚合进度、体检、大纲、提案与平台口径……')
+			: s.dashboardError
+				? h('div', { style: { ...errStyle, fontSize: font.small, marginTop: space.sm, lineHeight: 1.7 } },
+					`⚠️ 驾驶舱加载失败：${s.dashboardError}——先点重试；它失败不影响保存和写作。`)
+				: !dash
+					? h('div', { style: { ...hintStyle, fontSize: font.caption, marginTop: space.sm, lineHeight: 1.7 } },
+						'把已有信号折叠成一个判断：现在该继续写、改体检、收大纲欠账，还是处理提案。')
+					: h('div', { style: { marginTop: space.md } },
+						h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: space.sm, marginBottom: space.sm } },
+							StatTile({ value: dash.progress.chapterCount, label: '已写章' }),
+							StatTile({ value: dash.progress.nextChapter, label: '下一章', tone: 'accent' }),
+							StatTile({ value: dash.quality.errors, label: '硬伤', tone: dash.quality.errors > 0 ? 'danger' : 'ok' }),
+							StatTile({ value: dash.quality.warnings, label: '警告', tone: dash.quality.warnings > 0 ? 'warn' : 'neutral' }),
+							StatTile({ value: dash.outline.overdue, label: '欠账候选', tone: dash.outline.overdue > 0 ? 'warn' : 'neutral' }),
+							StatTile({ value: dash.proposals.pending, label: '待批提案', tone: dash.proposals.pending > 0 ? 'warn' : 'neutral' }),
+						),
+						h('div', { style: { display: 'flex', flexDirection: 'column', gap: space.xs } },
+							...(dash.actions ?? []).map((a, i) => h('div', {
+								key: i,
+								style: {
+									display: 'flex', gap: space.sm, alignItems: 'flex-start',
+									padding: `${space.xs}px 0`, borderTop: i === 0 ? 'none' : `1px solid ${color.border1}`,
+								},
+							},
+								h('span', {
+									style: {
+										flex: 'none', fontSize: font.small,
+										color: a.level === 'danger' ? color.danger : a.level === 'warn' ? color.warn : a.level === 'ok' ? color.ok : color.text3,
+									},
+								}, a.level === 'danger' ? '✗' : a.level === 'warn' ? '⚠' : a.level === 'ok' ? '✓' : '·'),
+								h('span', { style: { flex: '1 1 auto', fontSize: font.small, lineHeight: 1.7 } }, a.text),
+							))),
+						h('div', { style: { ...hintStyle, fontSize: font.caption, marginTop: space.sm } },
+							`平台口径：${dash.platform.charMin ?? '?'}–${dash.platform.charMax ?? '?'} 字（${dash.charSourceLabel ?? '默认'}）`)),
+		review?.available
+			? h('div', { style: { marginTop: space.sm, paddingTop: space.sm, borderTop: `1px solid ${color.border1}` } },
+				h('div', { style: { display: 'flex', gap: space.sm, flexWrap: 'wrap', alignItems: 'baseline' } },
+					h('span', { style: { fontWeight: weight.semibold, fontSize: font.small } }, '平台审稿抽样'),
+					h('span', { style: { ...hintStyle, fontSize: font.caption } },
+						`${review.name} · 前 3 + 最近 12 · ${review.scanned} 章 · 平均分 ${review.avgScore} · 硬伤 ${review.errors} · 警告 ${review.warnings}`)),
+				review.topIssues?.length > 0
+					? h('div', { style: { display: 'flex', flexDirection: 'column', gap: space.xs, marginTop: space.sm } },
+						review.topIssues.map((item, i) => h('div', {
+							key: `${item.chapter}-${item.key}-${i}`,
+							style: {
+								paddingLeft: space.sm,
+								borderLeft: `2px solid ${item.level === 'error' ? color.danger : color.warn}`,
+								fontSize: font.caption, lineHeight: 1.7,
+							},
+						},
+							h('div', { style: { color: item.level === 'error' ? color.danger : color.warn } },
+								`第 ${item.chapter} 章 · ${item.label}：${item.value}${item.target ? `（目标 ${item.target}）` : ''}`),
+							item.advice ? h('div', { style: { color: color.text3 } }, item.advice) : null,
+							Number.isInteger(item.chapter) && item.chapter > 0
+								? h('div', { style: { marginTop: space.xs } },
+									Btn({
+										size: 'sm', variant: 'ghost', action: 'review-open-chapter', id: item.chapter,
+										title: `打开第 ${item.chapter} 章编辑`,
+										ariaLabel: `打开第 ${item.chapter} 章编辑`,
+									}, `打开第 ${item.chapter} 章`),
+								)
+								: null,
+						)))
+					: h('div', { style: { ...hintStyle, fontSize: font.caption, marginTop: space.xs } }, '抽样没有命中平台硬伤或警告。'))
+			: null,
+	);
+
 	// ── 面包屑 ──
 	const crumb = h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, minWidth: 0 } },
 		Btn({ variant: 'ghost', size: 'sm', action: 'back' }, '← 返回'),
@@ -545,6 +631,7 @@ h('span', { style: { flex: '1 1 auto' } }),
 	// 注意别在这里套 Section 标题：卡片自己已经带标题了，套一层会得到
 	// 「✍️ 本章 / ✍️ 本章编辑」这种双标题。
 	const infoView = h('div', { style: stackStyle(space.lg) },
+		dashboardBlock,
 		ProjectOverviewView({ state: s }),
 		charLimitsBlock,
 		continuityBlock,

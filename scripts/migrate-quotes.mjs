@@ -1,4 +1,4 @@
-// scripts/migrate-quotes.mjs — 一次性存量迁移：《食妖帖》正文 25 章直角引号 → 国标弯引号。
+// scripts/migrate-quotes.mjs — 一次性存量迁移：指定书正文里的直角引号 → 国标弯引号。
 // 报告 P0 路线（用户已批）：只动正文文件，不动 novel.json（引号转换不改变字符数，
 // chars 口径不受影响）；转换用插件同一份 normalizeQuotes（lib/punctuation.js），
 // 逐章双验证（长度不变 + 剥引号等价）后才写回，任何一章验证不过即中止不写。
@@ -7,7 +7,12 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const dir = join(root, '食妖帖', '正文');
+const book = process.argv[2];
+if (!book || book.trim() === '') {
+    console.error('用法：node scripts/migrate-quotes.mjs <书目录名>');
+    process.exit(1);
+}
+const dir = join(root, book, '正文');
 const { normalizeQuotes } = await import(join(root, 'lib', 'punctuation.js'));
 
 const stripQuotes = (s) => s.replace(/[「」『』“”‘’]/g, '');
@@ -31,7 +36,7 @@ for (const f of files) {
 }
 
 const line = `${new Date().toISOString()} | migrate/quotes | chapters=${files.length} converted=${totalConverted} | GB/T 15834—2011 直角引号→弯引号（normalizeQuotes 同源转换，双验证通过）\n`;
-try { appendFileSync(join(root, '食妖帖', '.novel', 'audit.jsonl'), line); } catch {}
+try { appendFileSync(join(root, book, '.novel', 'audit.jsonl'), line); } catch {}
 
 console.log(summary.join('\n'));
 console.log(`\n合计转换 ${totalConverted} 处，${files.length} 个文件，审计行已追加。`);
