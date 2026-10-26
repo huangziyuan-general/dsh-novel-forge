@@ -1,4 +1,4 @@
-// test/monitor-fixes.test.mjs — 0.20.0 真机《夜半来客》监控轮修复的行为锁定：
+// test/monitor-fixes.test.mjs — 0.20.0 真机《样书C》监控轮修复的行为锁定：
 // ① proximityHit 短别名同窗共现 ② sceneMatched 2 字别名 ③ detectHookKind foreshadow
 // ④ computeGateMetrics chars/targetRatio ⑤ computeAudit metaNarrative
 import { test } from 'node:test';
@@ -41,7 +41,7 @@ test('sceneMatched：3+ 字别名仍要连续词面（共现只放宽到 2 字�
     assert.equal(sceneMatched('夜里门闩落下了，客人们安歇。', scene), true);
 });
 
-test('detectHookKind：预告式收尾（真机《夜半来客》6/6 漏检样例）', () => {
+test('detectHookKind：预告式收尾（真机《样书C》6/6 漏检样例）', () => {
     assert.equal(detectHookKind('明日，第三位客人的日子，就到了。'), 'foreshadow');
     assert.equal(detectHookKind('“他的账，”陈拾说，“簿子也在等。”'), 'foreshadow');
     assert.equal(detectHookKind('是簿子还没落笔。'), 'foreshadow');

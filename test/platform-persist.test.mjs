@@ -156,10 +156,10 @@ test('平台值收口：不认识的平台报错且不改动落库值；空串�
 });
 
 test('★ 场景契约漏配 hidden 要提示（M4）：显式传空串则不提示', async () => {
-    const miss = await tool('novel_scene').execute({ action: 'save', book: '番茄书', chapter: 1, participants: '林晚' }, exec);
+    const miss = await tool('novel_scene').execute({ action: 'save', book: '番茄书', chapter: 1, participants: '测试角色' }, exec);
     assert.ok((miss.warnings ?? []).some((w) => w.includes('未声明 hidden')), '漏配隐藏人物要当场提示');
     const explicit = await tool('novel_scene').execute(
-        { action: 'save', book: '番茄书', chapter: 2, participants: '林晚', hidden: '' }, exec,
+        { action: 'save', book: '番茄书', chapter: 2, participants: '测试角色', hidden: '' }, exec,
     );
     assert.equal((explicit.warnings ?? []).filter((w) => w.includes('未声明 hidden')).length, 0, '显式传空串＝确实没有');
 });

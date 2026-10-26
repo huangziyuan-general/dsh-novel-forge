@@ -118,6 +118,7 @@ novel_project init → novel_project phase (see the nine-stage board, fill entry
 | --- | --- | --- |
 | Project list | "🔨 Forge" tab | filtered by **session** (projects follow the session); rename / delete / clone; filter box appears above 8 books |
 | Claim old books | bottom of list | books built before 0.5.0 with no owner, claim to current session in one click |
+| 🎛 Creation cockpit | detail page | automatically aggregates progress, health checks, outline, proposals, diagnosis, and book-scoped char limits; samples the first 3 plus latest 12 chapters for platform review, so the next action comes before a pile of per-chapter tables |
 | 📋 Overview | detail page | archive / outline / character cards / timeline summary; read chapter (📖 reading card), save, **export**, **golden-three-chapter diagnosis** |
 | 🎧 Chapter TTS | detail page | TOC + continuous speech (pause / resume / stop, auto-advances to next chapter when done); each row has 📖 read / ▶ speak, reading and listening are independent |
 | One-click polish / mechanical proofread | chapter | runs through the side-channel engine, output is a **proposal**, doesn't touch the body directly; proofread guard is stricter (length cap 1.06) |
@@ -162,7 +163,7 @@ novel_project init → novel_project phase (see the nine-stage board, fill entry
 ├─ novel.json            # machine state: nine stages / approvals / chapter index / cast / proposal index / circuit-breaker count
 ├─ 大纲/全书大纲.md
 ├─ 大纲/细纲/第3章.md
-├─ 人物/林晚.md           # character card (Markdown, injected verbatim into briefing)
+├─ 人物/测试角色.md           # character card (Markdown, injected verbatim into briefing)
 ├─ 设定/世界书.json        # [{id, keywords[], content, always, priority}]
 ├─ 设定/术语表.json        # [{term, definition}]
 ├─ 设定/场景契约.json      # per-chapter cast / hidden characters / worldbook whitelist / forbidden items

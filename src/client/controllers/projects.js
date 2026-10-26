@@ -156,6 +156,7 @@ export function createProjectsController(ctx) {
 		// 换书：体检结果与批量结果都属于「上一本书」，必须清掉（否则会把 A 书的红字
 		// 挂在 B 书头上——这类串台比不显示更糟）
 		state.continuity = null; state.continuityError = ''; state.batchResult = null; state.revising = null;
+		state.dashboard = null; state.dashboardError = '';
 		state.diagnosis = null; state.diagnosisError = '';
 		state.reader = null; // 阅读器也属于「上一本书」
 		player.stop();
@@ -182,7 +183,7 @@ export function createProjectsController(ctx) {
 		} catch (error) { if (myOpen === seq.open) state.error = String(error?.message ?? error); }
 		if (myOpen !== seq.open) return; // 失败路径同样不再追拉旧书的目录/要素/提案
 		notify();
-		await Promise.all([loadChapterList(id), loadElements(id), ctx.loadProposals(id)]);
+		await Promise.all([loadChapterList(id), loadElements(id), ctx.loadProposals(id), loadDashboard(id)]);
 		if (myOpen !== seq.open) return; // 期间已切书：定位逻辑作废，避免把 A 书的章号盖到 B 书
 		// 默认定位到最新已落盘章（而非第 1 章）：打开书通常是要「接着写」
 		const maxNo = (state.chapterList ?? []).reduce((m, c) => Math.max(m, c.no ?? 0), 0);
@@ -290,6 +291,25 @@ export function createProjectsController(ctx) {
 			state.continuity = null;
 			state.continuityError = String(error?.message ?? error);
 		} finally { if (mine === seq.open) { state.continuityLoading = false; notify(); } }
+	};
+
+	/** 创作驾驶舱：把进度/体检/大纲/提案/口径折成同一块“下一步”。失败可见，不装作健康。 */
+	const loadDashboard = async (id) => {
+		const bookId = id || state.selected;
+		if (!bookId) return;
+		const mine = seq.open;
+		state.dashboardLoading = true; state.dashboardError = ''; notify();
+		try {
+			const result = await apiFetch(`/projects/${encodeURIComponent(bookId)}/dashboard`);
+			if (mine !== seq.open) return;
+			state.dashboard = result;
+		} catch (error) {
+			if (mine !== seq.open) return;
+			state.dashboard = null;
+			state.dashboardError = String(error?.message ?? error);
+		} finally {
+			if (mine === seq.open) { state.dashboardLoading = false; notify(); }
+		}
 	};
 
 	/** 黄金三章诊断：钩子/开场/冲突/灌输四维数字。与 novel_diagnose 同一纯函数，零 token。 */
@@ -522,6 +542,6 @@ export function createProjectsController(ctx) {
 	return {
 		loadElements, loadChapterList, refreshProjects, claimProject, renameProject, cloneProject,
 		deleteListProject, openProject, createProject, deleteProject, goBack, rotateSession, createSession,
-		loadContinuity, loadDiagnosis, runRevision, writeSingleChapter, runBatch, saveBookChars,
+		loadContinuity, loadDiagnosis, loadDashboard, runRevision, writeSingleChapter, runBatch, saveBookChars,
 	};
 }

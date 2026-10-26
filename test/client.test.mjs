@@ -33,6 +33,16 @@ function scriptedFetch(sequence) {
     let i = 0;
     const fetch = (url, init) => {
         requests.push({ url: String(url), init });
+        // openProject 现在并行拉驾驶舱。这些序列原本只按保存/提案等目标请求排列，
+        // 让 dashboard 消耗槽位会把错误响应挪给别的端点，所以这里按 URL 直给最小回包。
+        if (/\/dashboard(\?|$)/.test(String(url))) {
+            return Promise.resolve({ json: () => Promise.resolve({ ok: true, value: {
+                readiness: 'ok', progress: { chapterCount: 1, maxChapter: 1, nextChapter: 2, missingChapters: [], totalChars: 12, avgChars: 12 },
+                quality: { errors: 0, warnings: 0, issues: [] }, outline: { present: true, total: 1, active: 1, overdue: 0, upcoming: 0, missedTerms: [] },
+                diagnosis: { issueCount: 0, issues: [] }, proposals: { total: 0, pending: 0, superseded: 0, missing: 0, top: [] },
+                platform: { name: '', minChars: 2000, maxChars: 4000 }, actions: [], readinessLabel: '基础信号健康', charSourceLabel: '插件默认',
+            } }) });
+        }
         const step = sequence[Math.min(i, sequence.length - 1)];
         i += 1;
         if (step && step.reject) return Promise.reject(new Error(step.reject));
@@ -411,7 +421,7 @@ test('★ 疲劳横幅「创建新会话并交接」：单击即 POST /session/c
         // detail 同时带**内部 id**（novel.json 的 nb_…）与 **bookId**（目录名）：
         // 交接必须送目录名——服务端 locateBook/认领认的都是它，拿内部 id 等于双失效
         // （真机：新会话建好了却 claimed:false、面板 0 本书）。
-        { value: { id: 'nb_internal_id', bookId: '星海拾骨', title: '星海拾骨', stage: 'planning', chapters: {}, session: { chapters: 9, firstAvg: 800, bookFirstAvg: 2000, referenceChapters: 12, firstSeries: [{ chapter: 7, chars: 2300 }, { chapter: 8, chars: 900 }], warn: '本会话首稿逐章变短', handoff: '交接摘要内容', canCreate: true } } },
+        { value: { id: 'nb_internal_id', bookId: '示例书', title: '示例书', stage: 'planning', chapters: {}, session: { chapters: 9, firstAvg: 800, bookFirstAvg: 2000, referenceChapters: 12, firstSeries: [{ chapter: 7, chars: 2300 }, { chapter: 8, chars: 900 }], warn: '本会话首稿逐章变短', handoff: '交接摘要内容', canCreate: true } } },
         { value: '' }, // 第 1 章正文
         { value: [] }, { value: [] },
         { value: { created: true, createdSessionId: 's-new-1', workspaceMatched: true } },
@@ -419,7 +429,7 @@ test('★ 疲劳横幅「创建新会话并交接」：单击即 POST /session/c
     const dom = createDom();
     const mod = loadClient(dom, BUNDLE, { fetch: seq.fetch });
     const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
-    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    await controller.handleAction('open', { dataset: { id: '示例书' } });
     assert.equal(controller.state.detail?.session?.canCreate, true, '能力位亮起才该有按钮');
 
     await controller.handleAction('session-create', { dataset: {} });
@@ -427,7 +437,7 @@ test('★ 疲劳横幅「创建新会话并交接」：单击即 POST /session/c
     assert.ok(post, '单击必须发创建请求');
     const body = JSON.parse(post.init.body);
     assert.equal(body.session, 's1', '带当前会话 id 供工作区匹配');
-    assert.equal(body.book, '星海拾骨', '★ book 必须是目录名（bookId），不能是 novel.json 的内部 id');
+    assert.equal(body.book, '示例书', '★ book 必须是目录名（bookId），不能是 novel.json 的内部 id');
     assert.ok(body.book !== 'nb_internal_id', '★ 内部 id 传过去 = 书根定位与认领双双落空');
     assert.ok(controller.state.notice.includes('已创建'), '成功提示要指路：去会话列表按名字找新会话');
     assert.ok(controller.state.notice.includes('手动归档'), '归档不可自动——如实告知手动路径');
@@ -437,7 +447,7 @@ test('★ 疲劳横幅「创建新会话并交接」：单击即 POST /session/c
 test('★ 会话疲劳一键轮换：第一击只 arm 不发请求，第二击才 POST /session/rotate 并带会话 id', async () => {
     // 501 降级形态由 server 侧契约覆盖（scriptedFetch 只能回 ok:true）——这里锁两段确认与请求形状
     const seq = scriptedFetch([
-        { value: { title: '星海拾骨', stage: 'planning', chapters: {}, session: { chapters: 9, firstAvg: 800, bookFirstAvg: 2000, referenceChapters: 12, firstSeries: [{ chapter: 7, chars: 2300 }, { chapter: 8, chars: 900 }], warn: '本会话首稿逐章变短', handoff: '交接摘要', rotate: true } } },
+        { value: { title: '示例书', stage: 'planning', chapters: {}, session: { chapters: 9, firstAvg: 800, bookFirstAvg: 2000, referenceChapters: 12, firstSeries: [{ chapter: 7, chars: 2300 }, { chapter: 8, chars: 900 }], warn: '本会话首稿逐章变短', handoff: '交接摘要', rotate: true } } },
         { value: '' }, // 第 1 章正文
         { value: [] }, { value: [] }, // elements / 章节目录（openProject 并行追拉）
         { value: { rotated: true, newSessionId: 's-new-1', archived: true } }, // POST /session/rotate（尾值重复，落在队尾必被 POST 拿到）
@@ -445,7 +455,7 @@ test('★ 会话疲劳一键轮换：第一击只 arm 不发请求，第二击�
     const dom = createDom();
     const mod = loadClient(dom, BUNDLE, { fetch: seq.fetch });
     const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
-    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    await controller.handleAction('open', { dataset: { id: '示例书' } });
     assert.equal(controller.state.detail?.session?.rotate, true, '详情块带能力位，横幅才有第二个按钮');
 
     await controller.handleAction('session-rotate', { dataset: {} });
@@ -463,7 +473,7 @@ test('★ 会话疲劳一键轮换：第一击只 arm 不发请求，第二击�
 
 test('★ 面板保存被门禁拦下：原文进 saveBlocked，第二击才带 force，且不再送占位标题', async () => {
     const seq = scriptedFetch([
-        { value: { title: '星海拾骨', stage: 'writing', chapters: { 1: { chars: 2400, title: '雨夜来客' } } } },
+        { value: { title: '示例书', stage: 'writing', chapters: { 1: { chars: 2400, title: '雨夜来客' } } } },
         { value: '夜色像墨，她推开了义庄的门。' },   // loadChapter
         { value: [] }, { value: [] }, { value: [] },   // 章节目录 / elements / 提案队列
         { status: 409, error: { code: 'GATE_REJECTED', message: '机审未通过，未保存：正文 1450 字，低于下限 2000' } },
@@ -472,7 +482,7 @@ test('★ 面板保存被门禁拦下：原文进 saveBlocked，第二击才带 
     const dom = createDom();
     const mod = loadClient(dom, BUNDLE, { fetch: seq.fetch });
     const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
-    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    await controller.handleAction('open', { dataset: { id: '示例书' } });
     // 保存请求的 URL 现在带 ?session=（书作用域统一附加），锚点必须放到查询串之前
     const posts = () => seq.requests.filter((r) => /\/chapters\/1(\?|$)/.test(r.url) && r.init?.method === 'POST');
 
@@ -497,13 +507,56 @@ test('★ 认领未归属的书：POST /projects/claim 带 session 与 ids', asy
     const mod = loadClient(dom, BUNDLE, { fetch: seq.fetch });
     const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
 
-    await controller.handleAction('claim', { dataset: { id: '星海拾骨' } });
+    await controller.handleAction('claim', { dataset: { id: '示例书' } });
 
     const post = seq.requests.find((r) => r.url.endsWith('/projects/claim'));
     assert.ok(post, '必须走认领端点');
     const body = JSON.parse(post.init.body);
     assert.equal(body.session, 's1');
-    assert.deepEqual(body.ids, ['星海拾骨'], '认领单本时只带这一本');
+    assert.deepEqual(body.ids, ['示例书'], '认领单本时只带这一本');
+});
+
+test('★ 平台审稿抽样能落到动作面：打开命中章；未保存草稿先确认', async () => {
+    const seq = scriptedFetch([
+        { value: { title: '示例书', stage: 'writing', chapters: {} } },
+        { value: '' },                       // 第 1 章正文
+        { value: [] }, { value: [] }, { value: [] }, // 目录 / elements / proposals
+        { value: '第三章正文' }, { value: '第四章正文' },
+    ]);
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch: seq.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+    await controller.handleAction('open', { dataset: { id: '示例书' } });
+    controller.state.dashboard = {
+        readiness: 'attention', progress: { chapterCount: 1, maxChapter: 1, nextChapter: 2, missingChapters: [], totalChars: 0, avgChars: 0 },
+        quality: { errors: 0, warnings: 0, issues: [] }, outline: { present: true, total: 1, active: 1, overdue: 0, upcoming: 0, missedTerms: [] },
+        diagnosis: { issueCount: 0, issues: [] }, proposals: { total: 0, pending: 0, superseded: 0, missing: 0, top: [] },
+        platform: { id: 'qidian', charMin: 2000, charMax: 4000 }, actions: [],
+        platformReview: {
+            available: true, name: '起点', scanned: 1, errors: 1, warnings: 0, passed: 0, avgScore: 70,
+            topIssues: [{ chapter: 3, key: 'ending-hook', label: '章末钩子', level: 'error', value: '无', target: '问句/悬念', advice: '补悬念' }],
+        },
+        charSourceLabel: '起点平台口径',
+    };
+
+    await controller.handleAction('review-open-chapter', { dataset: { id: '3' } });
+    assert.equal(controller.state.detailTab, 'info', '打开审稿章后应回到本章编辑区');
+    assert.equal(controller.state.chapterNo, 3);
+    assert.equal(controller.state.draft, '第三章正文');
+    assert.ok(seq.requests.some((r) => /\/chapters\/3($|\?)/.test(r.url)), '必须真的载入命中章');
+
+    // 未保存现场：不能因为抽样按钮就静默换章
+    controller.state.draft = '还没保存的改动';
+    controller.state.draftModified = true;
+    controller.state.dashboard.platformReview.topIssues = [{ chapter: 4, key: 'chapter-length', label: '字数', level: 'warn', value: '1200', target: '2000+', advice: '补拍' }];
+    await controller.handleAction('review-open-chapter', { dataset: { id: '4' } });
+    assert.equal(controller.state.discardPending?.kind, 'chapter', '未保存改动必须先挂起确认');
+    assert.equal(controller.state.discardPending?.no, 4);
+    assert.ok(!seq.requests.some((r) => /\/chapters\/4($|\?)/.test(r.url)), '确认前不得换章');
+
+    await controller.handleAction('discard-confirm', { dataset: {} });
+    assert.equal(controller.state.chapterNo, 4);
+    assert.equal(controller.state.draft, '第四章正文');
 });
 
 test('拿不到会话 id 时降级：请求不带 session（显示全部，不静默失败）', async () => {
@@ -573,17 +626,17 @@ function makeSynth() {
 /** 按路径分发的假 fetch：目录 3 章、每章同一段正文、要素齐全。 */
 function makeFetchRouter(requests) {
     const CHAPTERS = [
-        { no: 1, title: '初入剑冢', chars: 20 },
+        { no: 1, title: '初入试炼地', chars: 20 },
         { no: 2, title: '夜训', chars: 20 },
         { no: 3, title: '飞刀', chars: 20 },
     ];
-    const CHAPTER_TEXT = '剑冢的清晨来得比城市早。\n操场上已经站满了人。';
+    const CHAPTER_TEXT = '试炼地的清晨来得比城市早。\n操场上已经站满了人。';
     const ELEMENTS = {
-        meta: { title: '星海拾骨', genre: '玄幻', logline: '在星海捡骨头的人。', stage: 'planning', createdAt: '2026-09-13T04:55:48Z', updatedAt: '2026-09-13T04:55:48Z', cast: ['林晚'] },
+        meta: { title: '示例书', genre: '玄幻', logline: '在星海捡骨头的人。', stage: 'planning', createdAt: '2026-09-13T04:55:48Z', updatedAt: '2026-09-13T04:55:48Z', cast: ['测试角色'] },
         outline: { full: null, chapterOutlines: [] },
-        characters: [{ name: '林晚', text: '主角卡内容' }],
+        characters: [{ name: '测试角色', text: '主角卡内容' }],
         worldbookCount: 0, glossaryCount: 0,
-        facts: [{ entity: '林晚', key: '境界', value: '拾骨锻体一炉', chapter: 1 }],
+        facts: [{ entity: '测试角色', key: '境界', value: '拾骨锻体一炉', chapter: 1 }],
         foreshadows: [],
     };
     return (url, init) => {
@@ -593,16 +646,16 @@ function makeFetchRouter(requests) {
         const respond = (value) => Promise.resolve({ json: () => Promise.resolve({ ok: true, value }) });
         if (/\/elements($|\?)/.test(u)) return respond(ELEMENTS);
         if (/\/proposals\/P\d[^/]*($|\?)/.test(u)) {
-            return respond({ id: 'P1-x', chapter: 1, title: '初入剑冢', reason: '补章末钩子', status: 'pending', content: '修订后的全文——结尾改成悬念对白。' });
+            return respond({ id: 'P1-x', chapter: 1, title: '初入试炼地', reason: '补章末钩子', status: 'pending', content: '修订后的全文——结尾改成悬念对白。' });
         }
         if (/\/proposals($|\?)/.test(u)) {
-            return respond({ proposals: [{ id: 'P1-x', chapter: 1, status: 'pending', createdAt: '2026-09-15T06:39:13.577Z', title: '初入剑冢', reason: '补章末钩子', preview: '把结尾改成悬念对白' }] });
+            return respond({ proposals: [{ id: 'P1-x', chapter: 1, status: 'pending', createdAt: '2026-09-15T06:39:13.577Z', title: '初入试炼地', reason: '补章末钩子', preview: '把结尾改成悬念对白' }] });
         }
         if (/\/chapters\/\d+($|\?)/.test(u)) return respond(CHAPTER_TEXT);
         if (/\/chapters($|\?)/.test(u)) return respond(CHAPTERS);
-        if (/\/projects\/[^/?]+($|\?)/.test(u)) return respond({ title: '星海拾骨', stage: 'planning', chapters: {} });
+        if (/\/projects\/[^/?]+($|\?)/.test(u)) return respond({ title: '示例书', stage: 'planning', chapters: {} });
         if (u.includes('scope=unclaimed')) return respond([]);
-        return respond([{ name: '星海拾骨' }]);
+        return respond([{ name: '示例书' }]);
     };
 }
 
@@ -624,8 +677,8 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 test('★ 听书目录：openProject 拉章节目录；两个标签可来回切', async () => {
     const { requests, controller } = bootBook();
-    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
-    assert.ok(requests.some((r) => /\/projects\/星海拾骨\/chapters($|\?)/.test(r.url)),
+    await controller.handleAction('open', { dataset: { id: '示例书' } });
+    assert.ok(requests.some((r) => /\/projects\/示例书\/chapters($|\?)/.test(r.url)),
         '★ 打开书必须拉章节目录（它既是听书清单，也是连播的边界）');
     assert.equal(controller.state.chapterList.length, 3, '目录落到 state.chapterList');
     assert.equal(controller.state.detailTab, 'info', '默认落在「基本信息」标签');
@@ -638,7 +691,7 @@ test('★ 听书目录：openProject 拉章节目录；两个标签可来回切'
 
 test('★ 未保存草稿：返回前先确认（丢弃改动才离开，取消留在原地）', async () => {
     const { controller } = bootBook();
-    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    await controller.handleAction('open', { dataset: { id: '示例书' } });
     assert.equal(controller.state.view, 'detail');
     // 模拟用户在草稿里打字产生未保存改动（onInput field=draft 的等价结果）
     controller.state.draft = '写了一半的字'; controller.state.draftModified = true;
@@ -664,7 +717,7 @@ test('★ 未保存草稿：返回前先确认（丢弃改动才离开，取消�
 
 test('★ 删除有取消出口：误触「删除」后点「取消」不删书', async () => {
     const { requests, controller } = bootBook();
-    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    await controller.handleAction('open', { dataset: { id: '示例书' } });
     await controller.handleAction('delete', { dataset: {} });
     assert.equal(controller.state.deleteState, 'confirm', '第一次点只进确认态，不删');
     await controller.handleAction('delete-cancel', { dataset: {} });
@@ -676,9 +729,9 @@ test('★ 列表改名：确认后 POST /projects/:id/rename 带新书名；空�
     const { requests, controller } = bootBook();
     await controller.refreshProjects(); // 载入列表，让 rename 能拿当前书名做预填
     // 打开改名表单
-    await controller.handleAction('rename-open', { dataset: { id: '星海拾骨' } });
-    assert.equal(controller.state.rename?.id, '星海拾骨', '改名表单打开');
-    assert.equal(controller.state.rename.value, '星海拾骨', '预填当前书名');
+    await controller.handleAction('rename-open', { dataset: { id: '示例书' } });
+    assert.equal(controller.state.rename?.id, '示例书', '改名表单打开');
+    assert.equal(controller.state.rename.value, '示例书', '预填当前书名');
     // 空名被拦，不发请求
     controller.state.rename.value = '   ';
     await controller.handleAction('rename-confirm', { dataset: {} });
@@ -697,30 +750,30 @@ test('★ 列表改名：确认后 POST /projects/:id/rename 带新书名；空�
 test('★ 列表删除：两步确认走 DELETE；取消不删', async () => {
     const { requests, controller } = bootBook();
     // 第一次点只进确认，不发删除
-    await controller.handleAction('list-delete', { dataset: { id: '星海拾骨' } });
-    assert.equal(controller.state.listDeleteId, '星海拾骨', '第一次点只进确认态');
+    await controller.handleAction('list-delete', { dataset: { id: '示例书' } });
+    assert.equal(controller.state.listDeleteId, '示例书', '第一次点只进确认态');
     assert.ok(!requests.some((r) => r.init?.method === 'DELETE'), '确认前没删');
     // 取消后离开确认态、仍不删
     await controller.handleAction('list-delete-cancel', { dataset: {} });
     assert.equal(controller.state.listDeleteId, null, '取消后离开确认态');
     assert.ok(!requests.some((r) => r.init?.method === 'DELETE'), '取消后没删');
     // 再来一遍并确认删除 → 发 DELETE，目标书正确
-    await controller.handleAction('list-delete', { dataset: { id: '星海拾骨' } });
-    await controller.handleAction('list-delete', { dataset: { id: '星海拾骨' } });
+    await controller.handleAction('list-delete', { dataset: { id: '示例书' } });
+    await controller.handleAction('list-delete', { dataset: { id: '示例书' } });
     const del = requests.find((r) => r.init?.method === 'DELETE');
     assert.ok(del, '确认后发出 DELETE');
-    assert.ok(del.url.includes('/projects/星海拾骨'), 'DELETE 目标书正确');
+    assert.ok(del.url.includes('/projects/示例书'), 'DELETE 目标书正确');
     assert.equal(controller.state.listDeleteId, null, '删完回到非确认态');
 });
 
 test('★ 基本要素：openProject 拉 /elements（档案/大纲/角色卡/设定/账本），失败置空不炸', async () => {
     const { requests, controller } = bootBook();
-    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
-    assert.ok(requests.some((r) => /\/projects\/星海拾骨\/elements($|\?)/.test(r.url)),
+    await controller.handleAction('open', { dataset: { id: '示例书' } });
+    assert.ok(requests.some((r) => /\/projects\/示例书\/elements($|\?)/.test(r.url)),
         '★ 打开书必须拉基本要素（基本信息标签就是要素总览）');
     const el = controller.state.elements;
     assert.ok(el && el.meta, '要素落到 state.elements');
-    assert.equal(el.meta.title, '星海拾骨');
+    assert.equal(el.meta.title, '示例书');
     assert.equal(el.characters.length, 1, '角色卡列表落地');
     assert.equal(el.facts.length, 1, '账本事实落地（时间线数据源）');
 
@@ -745,7 +798,7 @@ test('★ 基本要素：openProject 拉 /elements（档案/大纲/角色卡/设
 
 test('★ 连播：从指定章开始，读完自动接下一章，目录尽头自动停', async () => {
     const { synth, requests, controller } = bootBook();
-    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    await controller.handleAction('open', { dataset: { id: '示例书' } });
 
     // 指定从第 2 章开始听
     // ⚠️ 这里必须用 `id`：视图是 `Btn({ action:'play-from', id: c.no })`，
@@ -757,7 +810,7 @@ test('★ 连播：从指定章开始，读完自动接下一章，目录尽头�
     assert.equal(controller.state.playback.currentNo, 2, '★ 「从哪章听」由用户指定');
     assert.equal(controller.state.playback.status, 'playing');
     assert.equal(synth.spoken.length, 1, '第 2 章正文已入朗读队列');
-    assert.ok(synth.spoken[0].text.includes('剑冢的清晨'), '读的是取回来的章节文本');
+    assert.ok(synth.spoken[0].text.includes('试炼地的清晨'), '读的是取回来的章节文本');
 
     // 读完第 2 章（触发末块 onend）→ 自动取并读第 3 章
     synth.spoken[synth.spoken.length - 1].onend();
@@ -775,7 +828,7 @@ test('★ 连播：从指定章开始，读完自动接下一章，目录尽头�
 
 test('★ 播放钮的章号只认 data-id（视图怎么渲染，控制器就怎么读）', async () => {
     const { synth, controller } = bootBook();
-    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    await controller.handleAction('open', { dataset: { id: '示例书' } });
 
     // 视图真渲染出来的属性是 data-id（Btn 把 id 写成 data-id）
     await controller.handleAction('play-from', { dataset: { id: '3' } });
@@ -793,7 +846,7 @@ test('★ 播放钮的章号只认 data-id（视图怎么渲染，控制器就�
 
 test('★ 静默失败防线：任何 handler 都不该"点了跟没点一样"', async () => {
     const { controller } = bootBook();
-    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    await controller.handleAction('open', { dataset: { id: '示例书' } });
 
     // 空 dataset / 脏 dataset 一律要留下痕迹（error 或 notice），否则用户只会看到"按钮坏了"
     for (const [action, dataset] of [
@@ -813,7 +866,7 @@ test('★ 静默失败防线：任何 handler 都不该"点了跟没点一样"',
 
 test('★ stop 即停：必须 cancel 语音引擎，迟到的 onend 不复活播放', async () => {
     const { synth, controller } = bootBook();
-    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    await controller.handleAction('open', { dataset: { id: '示例书' } });
     await controller.handleAction('play-from', { dataset: { id: '1' } });
     assert.equal(controller.state.playback.status, 'playing', '前置：已在播放');
 
@@ -831,7 +884,7 @@ test('★ stop 即停：必须 cancel 语音引擎，迟到的 onend 不复活�
 
 test('暂停 / 继续：状态机 playing ↔ paused', async () => {
     const { synth, controller } = bootBook();
-    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    await controller.handleAction('open', { dataset: { id: '示例书' } });
     await controller.handleAction('play-from', { dataset: { id: '1' } });
 
     await controller.handleAction('playback-pause', { dataset: {} });
@@ -845,7 +898,7 @@ test('暂停 / 继续：状态机 playing ↔ paused', async () => {
 
 test('★ 无语音引擎：给可读报错而不是静默炸掉', async () => {
     const { controller } = bootBook({ withSynth: false });
-    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    await controller.handleAction('open', { dataset: { id: '示例书' } });
     controller.state.error = '';
     await controller.handleAction('play-from', { dataset: { id: '1' } });
     assert.match(controller.state.error, /语音|speechSynthesis/, '★ 报错要说人话（用户能看懂为什么没声音）');
@@ -1094,14 +1147,14 @@ test('★ 样式表注入是 DOM 单例：反复装配只留一份，内容过�
 
 test('★ 阅读器：📖 取正文展开；✕ 收起；章号只认 data-id（同播放钮的教训）', async () => {
     const { requests, controller } = bootBook();
-    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    await controller.handleAction('open', { dataset: { id: '示例书' } });
 
     // 点第 2 章的 📖 → 取正文、落 reader（标题取自目录）
     await controller.handleAction('read-chapter', { dataset: { id: '2' } });
     assert.ok(requests.some((r) => /\/chapters\/2($|\?)/.test(r.url)), '★ 阅读必须真的去取该章正文');
     assert.equal(controller.state.reader?.no, 2);
     assert.equal(controller.state.reader?.loading, false, '取完后退出加载态');
-    assert.ok(controller.state.reader?.text.includes('剑冢的清晨'), '正文落进 reader');
+    assert.ok(controller.state.reader?.text.includes('试炼地的清晨'), '正文落进 reader');
     assert.equal(controller.state.reader?.title, '夜训', '标题取自章节目录');
 
     // ✕ 收起
@@ -1140,7 +1193,8 @@ function gatedFetch(auto = []) {
         const u = String(url);
         requests.push({ url: u, init });
         const key = stripSession(u);
-        const rule = auto.find((r) => (typeof r.match === 'string' ? key.includes(r.match) : r.match.test(key)));
+        const rules = key.includes('/dashboard') ? [{ value: { readiness: 'ok', progress: { chapterCount: 0, maxChapter: 0, nextChapter: 1, missingChapters: [], totalChars: 0, avgChars: 0 }, quality: { errors: 0, warnings: 0, issues: [] }, outline: { present: false, total: 0, active: 0, overdue: 0, upcoming: 0, missedTerms: [] }, diagnosis: { issueCount: 0, issues: [] }, proposals: { total: 0, pending: 0, superseded: 0, missing: 0, top: [] }, platform: { name: '', minChars: 2000, maxChars: 4000 }, actions: [], readinessLabel: '基础信号健康', charSourceLabel: '插件默认' } }, ...auto] : auto;
+        const rule = rules.find((r) => (typeof r.match === 'string' ? key.includes(r.match) : r.match.test(key)));
         if (rule) return Promise.resolve({ json: () => Promise.resolve({ ok: true, value: rule.value }) });
         let resolve, reject;
         const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
@@ -1264,8 +1318,8 @@ test('★ 列表克隆：确认后 POST /projects/:id/clone 带新书目录名�
     const { requests, controller } = bootBook();
     await controller.refreshProjects();
     // 打开克隆表单（互斥：开克隆要关掉改名/删除确认）
-    await controller.handleAction('clone-open', { dataset: { id: '星海拾骨' } });
-    assert.equal(controller.state.clone?.id, '星海拾骨', '克隆表单打开');
+    await controller.handleAction('clone-open', { dataset: { id: '示例书' } });
+    assert.equal(controller.state.clone?.id, '示例书', '克隆表单打开');
     assert.equal(controller.state.clone.value, '', '新书目录名预填为空（让用户自己起名）');
     // 反向锁定：按钮缺 data-id 必须报错，不许静默（同 play-from / read-chapter 契约）
     await controller.handleAction('clone-open', { dataset: {} });
@@ -1275,13 +1329,13 @@ test('★ 列表克隆：确认后 POST /projects/:id/clone 带新书目录名�
     assert.equal(controller.state.error, '新书目名不能为空', '空目录名被拦');
     assert.ok(!requests.some((r) => r.url.includes('/clone')), '空名没发 clone 请求');
     // 填目录名提交 → POST /projects/:id/clone，body 带新书名与会话
-    controller.state.clone.value = '星海拾骨-模板';
+    controller.state.clone.value = '示例书-模板';
     await controller.handleAction('clone-confirm', { dataset: {} });
     const req = requests.find((r) => r.url.includes('/clone'));
     assert.ok(req, '发出了 clone 请求');
     assert.equal(req.init.method, 'POST', 'clone 是 POST');
     const body = JSON.parse(req.init.body);
-    assert.equal(body.newBook, '星海拾骨-模板', 'body 带新书目录名');
+    assert.equal(body.newBook, '示例书-模板', 'body 带新书目录名');
     assert.ok(body.session, 'body 带会话戳（新书归属本会话）');
     assert.equal(controller.state.clone, null, '克隆后表单关闭');
 });
@@ -1308,10 +1362,10 @@ test('★ Feedback：错误是 alert、通知是 status——异步反馈读屏�
 
 test('★ projectMatches：书名/目录名/显示题材子串匹配，空白查询全过', () => {
     const { projectMatches } = boot().mod.exports.__internals;
-    const p = { name: 'xinghai', title: '星海拾骨', genre: 'xuanhuan' };
+    const p = { name: 'xinghai', title: '示例书', genre: 'xuanhuan' };
     assert.equal(projectMatches(p, ''), true);
     assert.equal(projectMatches(p, '   '), true, '纯空白等同未筛');
-    assert.equal(projectMatches(p, '星海'), true);
+    assert.equal(projectMatches(p, '示例'), true, '书名中文子串匹配');
     assert.equal(projectMatches(p, 'XINGHAI'), true, '目录名大小写不敏感');
     assert.equal(projectMatches(p, '玄幻'), true, '按显示层映射后的中文题材匹配');
     assert.equal(projectMatches(p, '科幻'), false);
@@ -1440,11 +1494,11 @@ test('★ 世界书「编辑/启用停用」对工具生成的字符串 id（W1�
 
 test('★ 提案卡富化：👁 查看拉全文展开（再点收起）；提案号缺失必须报错——提案不再只有「第 N 章」', async () => {
     const { requests, controller } = bootBook();
-    await controller.handleAction('open', { dataset: { id: '星海拾骨' } });
+    await controller.handleAction('open', { dataset: { id: '示例书' } });
 
     // 队列富化：章标题 / 理由 / 摘要随列表落 state（视图直接可显示）
     assert.equal(controller.state.proposals?.length, 1, '提案队列落到 state');
-    assert.equal(controller.state.proposals[0].title, '初入剑冢');
+    assert.equal(controller.state.proposals[0].title, '初入试炼地');
     assert.equal(controller.state.proposals[0].reason, '补章末钩子');
     assert.ok(controller.state.proposals[0].preview);
 
@@ -1619,7 +1673,7 @@ function bootWith(fetch) {
 test('★ 应用提案：服务端 gate 的阻断/警告必须进 state 并在文案留痕（面板丢弃 = M6 只修了数据层）', async () => {
     const gate = {
         ok: false,
-        blocking: ['第1章 林晚 已死亡仍行动'],
+        blocking: ['第1章 测试角色 已死亡仍行动'],
         warnings: ['悬念保护：隐藏人物「白衣人」在正文出现'],
     };
     const requests = [];
@@ -1806,6 +1860,22 @@ test('★ 动作契约对账：视图发出的每个 data-action 控制器都有
         proposalDetail: null, proposalBusy: null, proposalsLoading: false, proposalsError: null,
         continuity: null, continuityLoading: false, continuityError: null,
         diagnosis: null, diagnosisLoading: false, diagnosisError: null,
+        dashboard: {
+            readiness: 'attention',
+            progress: { chapterCount: 3, maxChapter: 3, nextChapter: 4, missingChapters: [], totalChars: 6600, avgChars: 2200 },
+            quality: { errors: 0, warnings: 0, storageIssues: 0, topIssues: [] },
+            outline: { present: true, total: 2, active: 1, overdue: 0, upcoming: 1, missedTerms: [] },
+            diagnosis: { overall: '良', issueCount: 0, issues: [] },
+            platform: { id: 'qidian', charMin: 2000, charMax: 4000, source: 'platform' },
+            proposals: { total: 0, pending: 0, superseded: 0, missing: 0, top: [] },
+            actions: [{ level: 'ok', action: 'write', text: '基础信号健康——写第 4 章前仍要 novel_outline align。' }],
+            platformReview: {
+                available: true, platform: 'qidian', name: '起点', scanned: 3,
+                errors: 1, warnings: 1, passed: 1, avgScore: 80,
+                topIssues: [{ chapter: 1, key: 'ending-hook', label: '章末钩子', level: 'error', value: '无', target: '问句/悬念', advice: '补悬念' }],
+            },
+            charSourceLabel: '起点平台口径',
+        },
         revising: null, batchBusy: false, batchResult: null,
         batchFrom: 2, batchCount: 3, batchConcurrency: 1, batchForce: false,
         discardPending: { kind: 'back' }, deleteState: 'confirm', exporting: false, gateNotice: null,
