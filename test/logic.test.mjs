@@ -55,7 +55,7 @@ test('versioning: nextVersion 跨标题取章内最大版本（唯一版本计�
 // ── gate ────────────────────────────────────────────────────────────────────
 
 test('gate: 细纲未批准拒绝，force 放行留痕，批准后通过', () => {
-    const novel = defaultNovel({ title: '星海拾骨', genre: '科幻' });
+    const novel = defaultNovel({ title: '示例书', genre: '科幻' });
     assert.equal(gateChapterWrite(novel, 1).ok, false);
     const forced = gateChapterWrite(novel, 1, { force: true });
     assert.equal(forced.ok, true);
@@ -82,32 +82,32 @@ test('gate: advanceStage 只前进不后退（旧名映射进九阶段）', () =
 
 test('ledger: 追加/幂等/同章冲突拒绝/跨章推进放行', () => {
     let facts = [];
-    const r1 = applyFactUpdates(facts, [{ entity: '林晚', key: '境界', value: '练气三层' }], { chapter: 3, now: 't1' });
+    const r1 = applyFactUpdates(facts, [{ entity: '测试角色', key: '境界', value: '练气三层' }], { chapter: 3, now: 't1' });
     assert.equal(r1.conflicts.length, 0);
     assert.equal(r1.added.length, 1);
     facts = r1.facts;
 
-    const r2 = applyFactUpdates(facts, [{ entity: '林晚', key: '境界', value: '练气三层' }], { chapter: 4, now: 't2' });
+    const r2 = applyFactUpdates(facts, [{ entity: '测试角色', key: '境界', value: '练气三层' }], { chapter: 4, now: 't2' });
     assert.equal(r2.added.length, 0, '同值幂等');
 
-    const r3 = applyFactUpdates(facts, [{ entity: '林晚', key: '境界', value: '筑基一层' }], { chapter: 3, now: 't3' });
+    const r3 = applyFactUpdates(facts, [{ entity: '测试角色', key: '境界', value: '筑基一层' }], { chapter: 3, now: 't3' });
     assert.equal(r3.conflicts.length, 1, '同章内改值=冲突');
     assert.equal(r3.facts.length, 1, '冲突不落账');
 
-    const r4 = applyFactUpdates(facts, [{ entity: '林晚', key: '境界', value: '筑基一层' }], { chapter: 12, now: 't4' });
+    const r4 = applyFactUpdates(facts, [{ entity: '测试角色', key: '境界', value: '筑基一层' }], { chapter: 12, now: 't4' });
     assert.equal(r4.conflicts.length, 0);
     assert.equal(r4.added[0].chapter, 12);
 
-    const latest = queryFacts(r4.facts, { entity: '林晚' });
+    const latest = queryFacts(r4.facts, { entity: '测试角色' });
     assert.equal(latest.length, 1);
     assert.equal(latest[0].value, '筑基一层');
-    assert.ok(factsDigest(r4.facts, ['林晚'])[0].includes('第12章起'));
+    assert.ok(factsDigest(r4.facts, ['测试角色'])[0].includes('第12章起'));
 });
 
 test('ledger: 冲突 reason 里的取值被截断（完整值可能上千字），结构化字段仍保留全值', () => {
     const long = '甲'.repeat(500);
-    const facts = [{ entity: '林晚', key: '位置', value: long, chapter: 3, note: '', ts: 't1' }];
-    const { conflicts } = applyFactUpdates(facts, [{ entity: '林晚', key: '位置', value: `${long}乙` }], { chapter: 3, now: 't2' });
+    const facts = [{ entity: '测试角色', key: '位置', value: long, chapter: 3, note: '', ts: 't1' }];
+    const { conflicts } = applyFactUpdates(facts, [{ entity: '测试角色', key: '位置', value: `${long}乙` }], { chapter: 3, now: 't2' });
     assert.equal(conflicts.length, 1);
     // 1.0.2 复核轮：文案补了「重写同章省略已落账的键」指引，固定部分变长——
     // 上限随放（320）；截断语义不变：值不被 clipValue 截的话会是 1100+ 字。
@@ -133,20 +133,20 @@ test('ledger: 章号护栏——不得超前于已写章节+1', () => {
 
 test('ledger: 时点推演——第 n 章看到的是当时的值，不是最新值', () => {
     const facts = [
-        { entity: '林晚', key: '境界', value: '练气三层', chapter: 3, note: '' },
-        { entity: '林晚', key: '境界', value: '筑基一层', chapter: 12, note: '' },
-        { entity: '林晚', key: '境界', value: '练气九层', chapter: 8, note: '' }, // 补录：章号居中、写入最后
-        { entity: '林晚', key: '位置', value: '青云峰', chapter: 5, note: '' },
+        { entity: '测试角色', key: '境界', value: '练气三层', chapter: 3, note: '' },
+        { entity: '测试角色', key: '境界', value: '筑基一层', chapter: 12, note: '' },
+        { entity: '测试角色', key: '境界', value: '练气九层', chapter: 8, note: '' }, // 补录：章号居中、写入最后
+        { entity: '测试角色', key: '位置', value: '青云峰', chapter: 5, note: '' },
         { entity: '沈砚', key: '境界', value: '金丹', chapter: 4, note: '' },
     ];
     const at10 = factsAt(facts, 10);
-    assert.equal(at10.find((r) => r.key === '境界').value, '练气九层', '取章号 ≤10 里最大的那条，与写入顺序无关');
+    assert.equal(at10.find((r) => r.entity === '测试角色' && r.key === '境界').value, '练气九层', '取章号 ≤10 里最大的那条，与写入顺序无关');
     assert.equal(at10.find((r) => r.key === '位置').value, '青云峰', '第5章的位置记到第10章仍有效');
-    assert.equal(factsAt(facts, 12).find((r) => r.key === '境界').value, '筑基一层', '第12章之后才是最新值');
+    assert.equal(factsAt(facts, 12).find((r) => r.entity === '测试角色' && r.key === '境界').value, '筑基一层', '第12章之后才是最新值');
     assert.equal(factsAt(facts, 2).length, 0, '第2章时还没人登场');
-    assert.equal(factsAt(facts, 5).length, 3, '第5章：林晚两键 + 沈砚一键');
-    assert.deepEqual(factsAt(facts, 6, { entities: ['林晚'] }).map((r) => r.key).sort(), ['位置', '境界'].sort(), '实体过滤');
-    assert.deepEqual(factsAt(facts, 6, { keys: ['境界'] }).map((r) => r.entity).sort(), ['林晚', '沈砚'].sort(), '键过滤');
+    assert.equal(factsAt(facts, 5).length, 3, '第5章：测试角色两键 + 沈砚一键');
+    assert.deepEqual(factsAt(facts, 6, { entities: ['测试角色'] }).map((r) => r.key).sort(), ['位置', '境界'].sort(), '实体过滤');
+    assert.deepEqual(factsAt(facts, 6, { keys: ['境界'] }).map((r) => r.entity).sort(), ['测试角色', '沈砚'].sort(), '键过滤');
     assert.throws(() => factsAt(facts, 0), /正整数/);
 });
 
@@ -160,16 +160,16 @@ test('ledger: 时点推演——同章多条取最后写入的那条', () => {
 
 test('ledger: statusTimeline——按章升序给演化线', () => {
     const facts = [
-        { entity: '林晚', key: '境界', value: '筑基一层', chapter: 12, note: '突破' },
-        { entity: '林晚', key: '境界', value: '练气三层', chapter: 3, note: '' },
-        { entity: '林晚', key: '位置', value: '青云峰', chapter: 5, note: '' },
+        { entity: '测试角色', key: '境界', value: '筑基一层', chapter: 12, note: '突破' },
+        { entity: '测试角色', key: '境界', value: '练气三层', chapter: 3, note: '' },
+        { entity: '测试角色', key: '位置', value: '青云峰', chapter: 5, note: '' },
         { entity: '沈砚', key: '境界', value: '金丹', chapter: 4, note: '' },
     ];
-    const t = statusTimeline(facts, '林晚');
+    const t = statusTimeline(facts, '测试角色');
     assert.deepEqual(t.map((r) => r.chapter), [3, 5, 12], '章号升序，与写入顺序无关');
     assert.deepEqual(t.map((r) => r.key), ['境界', '位置', '境界']);
     assert.equal(t[2].note, '突破');
-    assert.deepEqual(statusTimeline(facts, '林晚', { keys: ['境界'] }).map((r) => r.chapter), [3, 12]);
+    assert.deepEqual(statusTimeline(facts, '测试角色', { keys: ['境界'] }).map((r) => r.chapter), [3, 12]);
     assert.deepEqual(statusTimeline(facts, '查无此人'), [], '查无此人不报错');
     assert.throws(() => statusTimeline(facts, ''), /entity/);
 });
@@ -217,8 +217,8 @@ const para = (t) => `${t}\n\n`;
 test('audit: 钩子/对话占比/重复率', () => {
     // 0.19.2：对话行用中文双引号（横排合规引号）——直角引号「」不再计入对话占比
     // （它只用于竖排版，且是 AI 检测特征），本用例改成 "…" 形态。
-    const withHook = para('夜风把灯笼吹得摇晃。林晚按住刀柄，慢慢走进院子。\n\n"谁？"她低声问。\n\n门外的人影停住了，却不知是敌是友。');
-    const a1 = computeAudit({ content: withHook, previous: [], terms: ['林晚'] });
+    const withHook = para('夜风把灯笼吹得摇晃。测试角色按住刀柄，慢慢走进院子。\n\n"谁？"她低声问。\n\n门外的人影停住了，却不知是敌是友。');
+    const a1 = computeAudit({ content: withHook, previous: [], terms: ['测试角色'] });
     assert.equal(a1.endingHook.detected, true);
     assert.ok(['question', 'suspense'].includes(a1.endingHook.kind));
     assert.equal(a1.coverage.missing.length, 0);
@@ -232,7 +232,7 @@ test('audit: 钩子/对话占比/重复率', () => {
 test('audit: 直引号对话必须计入对话占比（《遗物手账》226 个直引号四章全报 0% 的根因）', () => {
     // 插件自己的写作规矩就是对话用直引号（U+0022）——旧正则 /[「“]/ 不认，四章
     // dialogueRatio 全 0%，连带番茄平台审查「对话占比 15%–45%」直接判失败。
-    const body = para('夜风把灯笼吹得摇晃。林晚按住刀柄，慢慢走进院子。\n\n"谁？"她低声问。\n\n门外的人影停住了，没有回答。');
+    const body = para('夜风把灯笼吹得摇晃。测试角色按住刀柄，慢慢走进院子。\n\n"谁？"她低声问。\n\n门外的人影停住了，没有回答。');
     const a = computeAudit({ content: body, previous: [], terms: [] });
     assert.ok(a.dialogueRatio > 0, '★ 直引号行必须计入对话——插件规矩的引号不许被检测器当空气');
 });
@@ -249,7 +249,7 @@ test('audit: 与前文复读检测', () => {
 });
 
 test('audit: 字数上下限与要素缺失警告', () => {
-    const a = computeAudit({ content: '太短。', previous: [], terms: ['林晚'] });
+    const a = computeAudit({ content: '太短。', previous: [], terms: ['测试角色'] });
     const v = auditVerdict(a, { minChapterChars: 500, maxChapterChars: 12000 });
     assert.equal(v.ok, false);
     assert.ok(v.problems.some((p) => p.includes('低于下限')));
@@ -312,7 +312,7 @@ test('detectHookKind: 章末强调标记不再吞检——语义钩不被排版�
     assert.equal(detectHookKind('夜色平静地合拢，一切如常。'), null, '真没钩子的照旧报 null');
 });
 
-test('detectHookKind: 修辞性问句（句号收尾）按 question 检出——《第七夜班》第 2 章真机漏检样例（E3）', () => {
+test('detectHookKind: 修辞性问句（句号收尾）按 question 检出——《样书B》第 2 章真机漏检样例（E3）', () => {
     assert.equal(detectHookKind('小满把照片攥得更紧了。沈一觉看了一眼表，零点零一分，又看了一眼门。三声之内，应，还是不应。'), 'question', '★ 「，还是不应。」句号问句');
     assert.equal(detectHookKind('他望着那扇门。走，还是不走。'), 'question', '★ 「，还是不走。」');
     assert.equal(detectHookKind('七日之内，启事填格；四十九夜之前，位子要人。那么这一页呢。三声之内，谁动过我哥的账。'), 'question', '★ 特指问「，谁…账。」——第 9 章闭环验证抓出的 E3b');
@@ -401,7 +401,7 @@ test('contextpack: 世界书关键词命中与 always 常驻', () => {
         { id: 'W2', keywords: ['无关词'], content: '不该命中。', always: false },
         { id: 'W3', keywords: [], content: '全书核心设定。', always: true },
     ];
-    const hit = matchWorldEntries(entries, ['第三章：灵潮将至', '林晚']);
+    const hit = matchWorldEntries(entries, ['第三章：灵潮将至', '测试角色']);
     assert.deepEqual(hit.map((e) => e.id), ['W1', 'W3']);
     assert.equal(matchWorldEntries(entries, ['没有触发词']).map((e) => e.id)[0], 'W3');
 });
@@ -411,8 +411,8 @@ test('contextpack: 覆盖率要素收敛——世界书泛词只在细纲点过�
         { id: 'W1', keywords: ['觉醒', '本命神兵', '弹匣', '膛纹', '灵弹'], content: 'x' },
         { id: 'W2', keywords: ['灵潮'], content: 'y' },
     ];
-    const terms = declaredCoverageTerms({ outline: '本章写觉醒与灵潮，主角林晚出场。', castNames: ['林晚'], worldEntries: entries });
-    assert.deepEqual(terms, ['林晚', '觉醒', '灵潮'], '未在细纲出现的泛词（本命神兵/弹匣/膛纹/灵弹）不得计入');
+    const terms = declaredCoverageTerms({ outline: '本章写觉醒与灵潮，主角测试角色出场。', castNames: ['测试角色'], worldEntries: entries });
+    assert.deepEqual(terms, ['测试角色', '觉醒', '灵潮'], '未在细纲出现的泛词（本命神兵/弹匣/膛纹/灵弹）不得计入');
     assert.deepEqual(declaredCoverageTerms({ outline: '无关正文', castNames: [], worldEntries: entries }), [], '细纲没点名的条目关键词全过滤');
     assert.deepEqual(declaredCoverageTerms(), [], '缺参不抛');
 });
@@ -422,7 +422,7 @@ test('contextpack: 预算裁剪优先保细纲，先丢大纲', () => {
         chapter: 3,
         chapterOutline: '细纲：'.padEnd(200, 'A'),
         bookOutline: '全书大纲：'.padEnd(5000, 'B'),
-        castCards: [{ name: '林晚', card: '卡'.padEnd(300, 'C') }],
+        castCards: [{ name: '测试角色', card: '卡'.padEnd(300, 'C') }],
         budget: 800,
     });
     assert.ok(pack.sections[0].name.includes('细纲'));
@@ -437,7 +437,7 @@ test('contextpack: 人物卡均摊预算，账本不被挤掉', () => {
         chapter: 2,
         chapterOutline: '细纲'.padEnd(300, 'A'),
         castCards: cards,
-        factsDigest: ['林晚·境界: 筑基一层（第1章起）'],
+        factsDigest: ['测试角色·境界: 筑基一层（第1章起）'],
         budget: 6000,
     });
     const names = pack.sections.map((s) => s.name);
@@ -459,13 +459,13 @@ test('contextpack: 世界书 priority 排序与递归激活', () => {
 // ── store ───────────────────────────────────────────────────────────────────
 
 test('store: 章节记录版本追踪与路径表', () => {
-    const p = pathsFor('星海拾骨');
-    assert.equal(p.meta, '星海拾骨/novel.json');
-    assert.equal(p.chapterOutline(3), '星海拾骨/大纲/细纲/第3章.md');
-    assert.equal(p.chapterFile(3, '雨夜来客', 2), '星海拾骨/正文/第3章-雨夜来客-v2.md');
+    const p = pathsFor('示例书');
+    assert.equal(p.meta, '示例书/novel.json');
+    assert.equal(p.chapterOutline(3), '示例书/大纲/细纲/第3章.md');
+    assert.equal(p.chapterFile(3, '雨夜来客', 2), '示例书/正文/第3章-雨夜来客-v2.md');
     // 正文目录单点定义：写入走 chapterFile，repair 的孤儿扫描走 chaptersDir。
     // 两处各自拼字面量的失效方式是"目录改名后扫描静默扫不到 → 报零孤儿"，那是假清白。
-    assert.equal(p.chaptersDir, '星海拾骨/正文');
+    assert.equal(p.chaptersDir, '示例书/正文');
     assert.ok(p.chapterFile(1, '题', 1).startsWith(`${p.chaptersDir}/`), 'chapterFile 必须由 chaptersDir 派生');
 
     let rec = chapterRecord(undefined, { title: '雨夜来客', version: 1, file: 'x/第3章-雨夜来客-v1.md', chars: 100, summary: 's' });
@@ -532,7 +532,7 @@ test('★ store: 世界书触发词兜底——先抽本书已知实体名，抽
 // ── noai ────────────────────────────────────────────────────────────────────
 
 const AI_FLAVORED = [
-    '夜色如水，空气仿佛凝固了。林晚站在窗前，一一丝不易察觉的笑意在她眼底闪过一丝。',
+    '夜色如水，空气仿佛凝固了。测试角色站在窗前，一一丝不易察觉的笑意在她眼底闪过一丝。',
     '她缓缓开口，声音里带着一丝颤抖：「你终于来了。」陈默的下意识地握紧了拳头，心中一紧。',
     '这不是愤怒，而是一种更深的东西。仿佛命运的车轮，冥冥之中早已注定了一切。',
     '他的眼中闪过一丝精光，嘴角勾起一抹弧度。空气仿佛凝固了，时间仿佛静止了。',
@@ -541,9 +541,9 @@ const AI_FLAVORED = [
 ].join('\n\n');
 
 const CLEAN = [
-    '林晚把最后一枚铜钱按进香炉，灰烬腾起来，呛得她直咳嗽。',
+    '测试角色把最后一枚铜钱按进香炉，灰烬腾起来，呛得她直咳嗽。',
     '院门吱呀一声开了条缝。她没有回头，只是把刀往膝盖边挪了半寸。\n\n「进来吧，别站在风口上。」她说。',
-    '来人在门槛外站了很久，久到灯笼里的蜡油淌到了托盘上。然后他笑了，把一只湿透的布鞋放在了台阶上。\n\n林晚盯着那只鞋看了两息，忽然吹熄了灯。',
+    '来人在门槛外站了很久，久到灯笼里的蜡油淌到了托盘上。然后他笑了，把一只湿透的布鞋放在了台阶上。\n\n测试角色盯着那只鞋看了两息，忽然吹熄了灯。',
 ].join('\n\n');
 
 test('noai: AI 味样本显著高于干净样本，且模板句被点名', () => {
@@ -604,12 +604,12 @@ test('import: roughOutline 生成含钩子与人物信息的回补粗纲（含�
     const md = roughOutline({
         n: 2, title: '布鞋', chars: 900,
         opening: '门前放着一只湿透的布鞋', tail: '她忽然吹熄了灯。',
-        hookKind: 'suspense', cast: ['林晚'],
+        hookKind: 'suspense', cast: ['测试角色'],
     });
     assert.ok(md.includes('第2章 布鞋'));
     assert.ok(md.includes('导入回补'));
     assert.ok(md.includes('钩子：suspense'));
-    assert.ok(md.includes('林晚'));
+    assert.ok(md.includes('测试角色'));
     // 契约段：新书（含导入书）默认 outlineContract=strict，粗纲必须能过 save_chapter 的契约段检查
     assert.ok(md.includes('## 本章必写场景'));
     assert.ok(md.includes('- 开场复现：门前放着一只湿透的布鞋'));
@@ -622,7 +622,7 @@ test('import: roughOutline 生成含钩子与人物信息的回补粗纲（含�
 
 test('diagnose: 词库外置到 lib/data 后四维诊断照常工作', () => {
     const content = [
-        '林晚在香炉前醒来，灰烬呛得她咳。',
+        '测试角色在香炉前醒来，灰烬呛得她咳。',
         '「谁？」她拔出刀，与黑影对峙。那人不肯让步，冷笑一声反扑上来。',
         '据说这大陆上有一种规矩，可将亡者分为三等。',
         '她突然停住了脚步……',
@@ -693,9 +693,9 @@ test('parseFactLines: 空白 entity/key 被拒绝', () => {
     assert.throws(() => parseFactLines(' | key | value'), /实体名不能为空/);
     assert.throws(() => parseFactLines('entity |  | value'), /键名不能为空/);
     assert.throws(() => parseFactLines('  |  | value'), /实体名不能为空/);
-    const ok = parseFactLines('林晚 | 境界 | 筑基三层');
+    const ok = parseFactLines('测试角色 | 境界 | 筑基三层');
     assert.equal(ok.length, 1);
-    assert.equal(ok[0].entity, '林晚');
+    assert.equal(ok[0].entity, '测试角色');
 });
 
 test('contextpack: glossaryDigest 注入上下文包', () => {
@@ -832,7 +832,7 @@ test('style: 氛围光谱——词表重复词不去重则悬疑轴双倍计分'
 test('continuity: 死亡判定认死亡词、排反例，取最早死亡章', () => {
     assert.equal(isDeathRecord({ entity: '赵擎', key: '状态', value: '阵亡', chapter: 5 }), true);
     assert.equal(isDeathRecord({ entity: '赵擎', key: '生死', value: '未死', chapter: 5 }), false, '「未死」不是死亡');
-    assert.equal(isDeathRecord({ entity: '林晚', key: '境界', value: '死寂之地', chapter: 5 }), false, '键名不命中就不算死亡记录');
+    assert.equal(isDeathRecord({ entity: '测试角色', key: '境界', value: '死寂之地', chapter: 5 }), false, '键名不命中就不算死亡记录');
     assert.equal(isDeathRecord({ entity: 'a', key: '状态', value: '不死之身', chapter: 1 }), false, '反例词必须排掉');
     assert.equal(isDeathRecord({ entity: 'a', key: '状态', value: '拼死一战', chapter: 1 }), false);
     const t = deathTimeline([
@@ -860,8 +860,8 @@ test('continuity: 数值口径漂移——短值数词不一致警告，长叙�
     assert.ok(!same.issues.some((i) => i.code === 'numeric-drift'), '同值多章不报');
 
     const withChapterRef = validateContinuity({ novel, facts: [
-        { entity: '林晚', key: '进度', value: '第3章', chapter: 3 },
-        { entity: '林晚', key: '进度', value: '第5章', chapter: 5 },
+        { entity: '测试角色', key: '进度', value: '第3章', chapter: 3 },
+        { entity: '测试角色', key: '进度', value: '第5章', chapter: 5 },
     ] });
     assert.ok(!withChapterRef.issues.some((i) => i.code === 'numeric-drift'), '「第X章」剔除后无口径冲突');
 
@@ -873,7 +873,7 @@ test('continuity: 数值口径漂移——短值数词不一致警告，长叙�
 });
 
 test('continuity: 死人复活报硬伤；细纲有闪回标记则降级为警告', () => {
-    const novel = { cast: ['林晚', '赵擎'], chapters: {
+    const novel = { cast: ['测试角色', '赵擎'], chapters: {
         1: { title: 'a', path: 'b/正文/第1章-a-v1.md', latest: 1, files: [{ file: 'b/正文/第1章-a-v1.md' }], summary: 's' },
         2: { title: 'b', path: 'b/正文/第2章-b-v1.md', latest: 1, files: [{ file: 'b/正文/第2章-b-v1.md' }], summary: 's' },
     } };
@@ -898,8 +898,8 @@ test('continuity: 伏笔倒挂/超期/重复 id、索引缺文件、账本同章
         3: { title: 'c', path: 'b/缺失.md', latest: 1, files: [{ file: 'b/缺失.md' }], summary: '' },
     } };
     const facts = [
-        { entity: '林晚', key: '境界', value: '筑基', chapter: 2 },
-        { entity: '林晚', key: '境界', value: '金丹', chapter: 2 },
+        { entity: '测试角色', key: '境界', value: '筑基', chapter: 2 },
+        { entity: '测试角色', key: '境界', value: '金丹', chapter: 2 },
         { entity: '甲', key: 'k', value: 'v', chapter: 99 },
     ];
     const foreshadows = [
@@ -916,9 +916,9 @@ test('continuity: 伏笔倒挂/超期/重复 id、索引缺文件、账本同章
     }
     assert.equal(r.ok, false);
     // 缺卡检查：给了 castCards 才查
-    const withCards = validateContinuity({ novel: { ...novel, cast: ['林晚'] }, facts: [], foreshadows: [], castCards: {} });
+    const withCards = validateContinuity({ novel: { ...novel, cast: ['测试角色'] }, facts: [], foreshadows: [], castCards: {} });
     assert.ok(withCards.issues.some((i) => i.code === 'character-card-missing'));
-    const noCards = validateContinuity({ novel: { ...novel, cast: ['林晚'] }, facts: [], foreshadows: [], castCards: null });
+    const noCards = validateContinuity({ novel: { ...novel, cast: ['测试角色'] }, facts: [], foreshadows: [], castCards: null });
     assert.ok(!noCards.issues.some((i) => i.code === 'character-card-missing'), '不传 castCards 就不查卡');
 });
 
@@ -927,22 +927,22 @@ test('continuity: 伏笔倒挂/超期/重复 id、索引缺文件、账本同章
 test('content-gate: 死人复活阻断；账本旧值仍在用则警告', () => {
     const facts = [
         { entity: '赵擎', key: '状态', value: '阵亡', chapter: 2 },
-        { entity: '林晚', key: '境界', value: '筑基三层', chapter: 1 },
-        { entity: '林晚', key: '境界', value: '金丹一层', chapter: 5 },
+        { entity: '测试角色', key: '境界', value: '筑基三层', chapter: 1 },
+        { entity: '测试角色', key: '境界', value: '金丹一层', chapter: 5 },
     ];
-    const g = contentGate({ content: '赵擎站在门口。林晚仍只有筑基三层的修为，她自己也知道。', chapter: 6, facts, actorNames: ['赵擎', '林晚'] });
+    const g = contentGate({ content: '赵擎站在门口。测试角色仍只有筑基三层的修为，她自己也知道。', chapter: 6, facts, actorNames: ['赵擎', '测试角色'] });
     assert.equal(g.ok, false);
     assert.ok(g.blocking.some((b) => b.code === 'dead-character-present'));
     assert.ok(g.warnings.some((w) => w.code === 'stale-state' && w.message.includes('筑基三层')));
 
-    const clean = contentGate({ content: '林晚已是金丹一层，抬手压住了风。', chapter: 6, facts });
+    const clean = contentGate({ content: '测试角色已是金丹一层，抬手压住了风。', chapter: 6, facts });
     assert.equal(clean.ok, true);
     assert.equal(clean.warnings.length, 0);
 });
 
 test('content-gate: 到期伏笔零回应且开了新钩 → 阻断；回应了则放行', () => {
     const foreshadows = [{ id: 'F1', setup: '断刃的下落', chapter: 1, plan: 3, payoffChapter: null }];
-    const body = '林晚走进院子，把灯芯挑亮了一寸。她坐下，又站起来。';
+    const body = '测试角色走进院子，把灯芯挑亮了一寸。她坐下，又站起来。';
     const withNewHook = `${body.repeat(8)}\n\n门外忽然传来一声轻响。`;
     const blocked = contentGate({ content: withNewHook, chapter: 4, foreshadows });
     assert.equal(blocked.ok, false);
@@ -1002,7 +1002,7 @@ test('gate volumeSection/outlineDivergence: 卷段定位 + 2-gram 重合度（0.
 });
 
 test('content-gate: 占位符阻断、人称混用警告', () => {
-    const ph = contentGate({ content: '林晚走进来。\n\n（此处省略打斗过程）\n\n她坐下。', chapter: 1 });
+    const ph = contentGate({ content: '测试角色走进来。\n\n（此处省略打斗过程）\n\n她坐下。', chapter: 1 });
     assert.equal(ph.ok, false);
     assert.ok(ph.blocking.some((b) => b.code === 'placeholder'));
 
@@ -1038,7 +1038,7 @@ test('content-gate: 占位符阻断、人称混用警告', () => {
     const switched = contentGate({ content: [
         '我推开门，风灌了进来。', '我数了数抽屉里的银钱，数目不对。', '我把灯芯捻短，坐回椅子上。',
         '我把账本压在枕头底下，吹了灯。我想不明白她为什么这时候来。', '我竖着耳朵听了半宿，没睡着。',
-        '林晚站在廊下。她把伞收了，抖掉水珠。她看了看天色。', '她走进正厅，脚步很轻。她把伞放在架上。',
+        '测试角色站在廊下。她把伞收了，抖掉水珠。她看了看天色。', '她走进正厅，脚步很轻。她把伞放在架上。',
         '掌柜从柜台后抬头。他看了她一眼，又低下头去。他把算盘拨得噼啪响。',
         '她在厅里站定。她看着那块匾，很久没有说话。她终于开口问了价。',
     ].join('\n\n'), chapter: 1 });
@@ -1052,11 +1052,11 @@ test('content-gate: 关键词提取过滤虚词，账本状态推演带历史值
     assert.ok(!kws.some((k) => k.startsWith('的')), '虚词开头片段必须滤掉');
 
     const states = factStatesAt([
-        { entity: '林晚', key: '境界', value: '筑基三层', chapter: 1 },
-        { entity: '林晚', key: '境界', value: '筑基三层', chapter: 3 },
-        { entity: '林晚', key: '境界', value: '金丹一层', chapter: 5 },
+        { entity: '测试角色', key: '境界', value: '筑基三层', chapter: 1 },
+        { entity: '测试角色', key: '境界', value: '筑基三层', chapter: 3 },
+        { entity: '测试角色', key: '境界', value: '金丹一层', chapter: 5 },
     ], 6);
-    const s = states.get('林晚\u0000境界');
+    const s = states.get('测试角色\u0000境界');
     assert.equal(s.value, '金丹一层');
     assert.deepEqual(s.history.map((h) => h.value), ['筑基三层']);
     assert.equal(factStatesAt([{ entity: 'x', key: 'y', value: 'z', chapter: 9 }], 3).size, 0, '未来章不算当前值');
@@ -1065,14 +1065,14 @@ test('content-gate: 关键词提取过滤虚词，账本状态推演带历史值
 // ── 第二批融合 C1：润色保守编辑守卫（来源：dsh-tool-writing autoproof）──────
 
 test('polish 守卫：改标题/引入易混字 → 阻断；正常润色 → 通过', () => {
-    const paras = Array.from({ length: 6 }, (_, i) => `第${i}段：林晚在院子里擦刀，露水顺着刀鞘滑下来，她没说话。`);
+    const paras = Array.from({ length: 6 }, (_, i) => `第${i}段：测试角色在院子里擦刀，露水顺着刀鞘滑下来，她没说话。`);
     const orig = ['第3章 雨夜来客', ...paras].join('\n\n');
 
     const heading = validatePolishEdits(orig, orig.replace('第3章 雨夜来客', '第3章 雨夜来客改'));
     assert.equal(heading.ok, false);
     assert.ok(heading.blocking.some((b) => b.code === 'heading-changed'));
 
-    const confusable = validatePolishEdits(orig, orig.replace('林晚在院子里擦刀', '林晚在院子里擦刀，戌时的风起了'));
+    const confusable = validatePolishEdits(orig, orig.replace('测试角色在院子里擦刀', '测试角色在院子里擦刀，戌时的风起了'));
     assert.equal(confusable.ok, false);
     assert.ok(confusable.blocking.some((b) => b.code === 'confusable-char'));
 
@@ -1082,7 +1082,7 @@ test('polish 守卫：改标题/引入易混字 → 阻断；正常润色 → �
 });
 
 test('polish 守卫：整章膨胀与大面积重写只警告不阻断', () => {
-    const paras = Array.from({ length: 6 }, (_, i) => `第${i}段：林晚在院子里擦刀，露水顺着刀鞘滑下来，她没说话。`);
+    const paras = Array.from({ length: 6 }, (_, i) => `第${i}段：测试角色在院子里擦刀，露水顺着刀鞘滑下来，她没说话。`);
     const orig = ['第3章 雨夜来客', ...paras].join('\n\n');
 
     const bloated = validatePolishEdits(orig, `${orig}\n\n${'补充的一大段无关描写，纯粹注水。'.repeat(20)}`);
@@ -1095,8 +1095,8 @@ test('polish 守卫：整章膨胀与大面积重写只警告不阻断', () => {
 });
 
 test('polish 守卫：首行不是标题时不做标题保护', () => {
-    const orig = '林晚把刀放在桌上。\n\n她没说话。';
-    const g = validatePolishEdits(orig, '林晚把刀搁在桌上。\n\n她没吭声。');
+    const orig = '测试角色把刀放在桌上。\n\n她没说话。';
+    const g = validatePolishEdits(orig, '测试角色把刀搁在桌上。\n\n她没吭声。');
     assert.equal(g.ok, true, '首行是正文时改动不该被当成改标题');
 });
 
@@ -1112,54 +1112,54 @@ import { normalizeVoice, renderVoiceCard, voiceConsistency, isEmptyVoice } from 
 import { parseScenes, parseBanRules, computeGateMetrics, sceneMatched } from '../lib/gate-metrics.js';
 
 test('B3 契约归一：中文别名、清单容错、字段补齐', () => {
-    const c = normalizeContract({ chapter: 3, 场景: '雨夜断刃', 出场: '林晚、赵擎,陆寒', 隐藏: ['陆寒'], 禁项: '储物戒指' });
+    const c = normalizeContract({ chapter: 3, 场景: '雨夜断刃', 出场: '测试角色、赵擎,陆寒', 隐藏: ['陆寒'], 禁项: '储物戒指' });
     assert.equal(c.chapter, 3);
     assert.equal(c.scene, '雨夜断刃');
-    assert.deepEqual(c.participants, ['林晚', '赵擎', '陆寒']);
+    assert.deepEqual(c.participants, ['测试角色', '赵擎', '陆寒']);
     assert.deepEqual(c.hidden, ['陆寒']);
     assert.deepEqual(c.forbidden, ['储物戒指']);
     assert.deepEqual(c.settings, [], '缺省字段补空数组，输出契约才稳定');
 });
 
 test('B3 契约裁剪：hidden 绝不进注入名单；无契约退回 cast 全员', () => {
-    const c = normalizeContract({ chapter: 3, participants: '林晚,陆寒', hidden: '陆寒' });
-    const r = resolveSceneCast({ contract: c, cast: ['林晚', '陆寒', '小满'] });
-    assert.deepEqual(r.inject, ['林晚'], '★ 隐藏人物不得进注入名单');
+    const c = normalizeContract({ chapter: 3, participants: '测试角色,陆寒', hidden: '陆寒' });
+    const r = resolveSceneCast({ contract: c, cast: ['测试角色', '陆寒', '小满'] });
+    assert.deepEqual(r.inject, ['测试角色'], '★ 隐藏人物不得进注入名单');
     assert.deepEqual(r.hidden, ['陆寒']);
     assert.ok(r.dropped.includes('小满'), '契约外的人被剔出（省 token）');
     assert.deepEqual(r.contradictions, ['陆寒'], '出场∩隐藏 要报矛盾（保护优先）');
     assert.equal(r.source, 'contract');
 
-    const fb = resolveSceneCast({ contract: null, cast: ['林晚', '赵擎'] });
-    assert.deepEqual(fb.inject, ['林晚', '赵擎']);
+    const fb = resolveSceneCast({ contract: null, cast: ['测试角色', '赵擎'] });
+    assert.deepEqual(fb.inject, ['测试角色', '赵擎']);
     assert.equal(fb.source, 'fallback', '无契约时退回原行为');
 });
 
 test('B3 悬念保护：注入区块绝不出现隐藏人物名（本模块存在的全部意义）', () => {
-    const c = normalizeContract({ chapter: 3, scene: '雨夜', participants: '林晚、陆寒', hidden: '陆寒' });
+    const c = normalizeContract({ chapter: 3, scene: '雨夜', participants: '测试角色、陆寒', hidden: '陆寒' });
     const block = renderContractSection(c);
     assert.ok(!block.includes('陆寒'), '★ 隐藏人物的名字不得出现在模型可见的任何文本里');
-    assert.ok(block.includes('林晚'), '出场人物要在场');
+    assert.ok(block.includes('测试角色'), '出场人物要在场');
     assert.ok(block.includes('未登场'), '要告诉模型「有人身份未揭晓」，但不给名字');
     assert.equal(renderContractSection(null), '', '无契约不给空区块');
 });
 
 test('B3 泄漏检查 + 契约表不可变', () => {
-    assert.deepEqual(hiddenLeakCheck({ content: '林晚看见陆寒站在雨里。', hidden: ['陆寒'] }), ['陆寒']);
+    assert.deepEqual(hiddenLeakCheck({ content: '测试角色看见陆寒站在雨里。', hidden: ['陆寒'] }), ['陆寒']);
     assert.deepEqual(hiddenLeakCheck({ content: '只有雨声。', hidden: ['陆寒'] }), []);
 
     const t0 = {};
-    const t1 = setContract(t0, { chapter: 2, participants: '林晚' });
+    const t1 = setContract(t0, { chapter: 2, participants: '测试角色' });
     const t2 = removeContract(t1, 2);
     assert.deepEqual(Object.keys(t0), [], '原表不被原地改动');
-    assert.equal(contractFor(t1, 2).participants[0], '林晚');
+    assert.equal(contractFor(t1, 2).participants[0], '测试角色');
     assert.equal(contractFor(t2, 2), null);
     assert.equal(contractFor(t1, 9), null, '没契约的章回 null（不造空壳）');
 
     // 时钟盖章权在调用方（体检轮：scene-contract 在纯函数名单里，不许碰 new Date——不变量 2）
-    const t3 = setContract({}, { chapter: 3, participants: '林晚' }, '2026-10-22T00:00:00.000Z');
+    const t3 = setContract({}, { chapter: 3, participants: '测试角色' }, '2026-10-22T00:00:00.000Z');
     assert.equal(contractFor(t3, 3).updatedAt, '2026-10-22T00:00:00.000Z', '调用方传的 now 直接落进 updatedAt');
-    assert.equal(contractFor(setContract({}, { chapter: 3, participants: '林晚' }), 3).updatedAt, null, '不传 now 就不盖章（缺省 null，不静默造时间）');
+    assert.equal(contractFor(setContract({}, { chapter: 3, participants: '测试角色' }), 3).updatedAt, null, '不传 now 就不盖章（缺省 null，不静默造时间）');
 });
 
 test('★ 门禁拒绝分类认 code 标记：文案随便改，409 判定不坏（体检轮）', () => {
@@ -1183,27 +1183,27 @@ test('E3 语言基因卡：对象与「键|值」行两种输入归一', () => {
     assert.equal(b.register, '市井白话');
     assert.equal(isEmptyVoice(normalizeVoice('乱七八糟没有冒号')), true, '解析不出内容＝空卡');
     assert.equal(isEmptyVoice(a), false);
-    assert.ok(renderVoiceCard('林晚', a).includes('说话方式'));
-    assert.equal(renderVoiceCard('林晚', {}), '', '空卡不占预算');
+    assert.ok(renderVoiceCard('测试角色', a).includes('说话方式'));
+    assert.equal(renderVoiceCard('测试角色', {}), '', '空卡不占预算');
 });
 
 test('E3 语言一致性：禁忌词命中＝硬伤；有台词无口头禅＝提示；没台词不报', () => {
     const voice = normalizeVoice({ 口头禅: '呵', 禁忌: '人家' });
-    const hitTaboo = voiceConsistency({ content: '林晚说：「人家不去了。」', voices: [{ name: '林晚', voice }] });
+    const hitTaboo = voiceConsistency({ content: '测试角色说：「人家不去了。」', voices: [{ name: '测试角色', voice }] });
     assert.equal(hitTaboo.stats.errors, 1, '说了自己声明过的禁忌词要当硬伤');
     assert.equal(hitTaboo.issues[0].code, 'voice-taboo');
 
-    const noTic = voiceConsistency({ content: '林晚说：「那就走吧。」', voices: [{ name: '林晚', voice }] });
+    const noTic = voiceConsistency({ content: '测试角色说：「那就走吧。」', voices: [{ name: '测试角色', voice }] });
     assert.equal(noTic.stats.warnings, 1, '有台词没口头禅只提示（口头禅是习惯不是义务）');
     assert.equal(noTic.issues[0].code, 'voice-tics-missing');
 
-    const silent = voiceConsistency({ content: '林晚站在雨里，一动不动。', voices: [{ name: '林晚', voice }] });
+    const silent = voiceConsistency({ content: '测试角色站在雨里，一动不动。', voices: [{ name: '测试角色', voice }] });
     assert.equal(silent.issues.length, 0, '★ 本章没开口就不该报口头禅缺失');
     assert.equal(silent.checked, 1, '仍算核对过一个人');
 });
 
 test('A3/A4 细纲解析：序号/加粗/列表/复选框都要认（格式漂移容错）', () => {
-    const scenes = parseScenes('- [ ] 雨夜相遇：林晚在码头遇见赵擎\n1. **断刃现世**：断刃浮起\n2、第三场');
+    const scenes = parseScenes('- [ ] 雨夜相遇：测试角色在码头遇见赵擎\n1. **断刃现世**：断刃浮起\n2、第三场');
     assert.equal(scenes.length, 3);
     assert.equal(scenes[0].title, '雨夜相遇');
     assert.equal(scenes[1].title, '断刃现世');
@@ -1229,7 +1229,7 @@ test('★ 禁项解析：前置否定句式不得把否定词本身当禁词（�
     assert.ok(subjFirst.banned.includes('现代词汇'), '主语前置句式（「X不得出现」）照旧收X');
 });
 
-test('★ 禁项解析：允许性例词（只写/应写/只能写）是应该出现的写法——《第七夜班》第7章真机自相矛盾拦截根因（E10）', () => {
+test('★ 禁项解析：允许性例词（只写/应写/只能写）是应该出现的写法——《样书B》第7章真机自相矛盾拦截根因（E10）', () => {
     const r = parseBanRules('- 旧报纸只写「多年前的旧报」\n- 概念词「灯苗」一概不出现');
     assert.ok(!r.banned.includes('多年前的旧报'), '★ 「只写X」是许可语境，X 是应出现的写法');
     assert.ok(r.banned.includes('灯苗'), '真禁词照旧收');
@@ -1283,14 +1283,14 @@ test('★ 禁项解析：裸词表行逐项生效（禁项段最朴素写法；�
 test('A3/A4 契约指标：覆盖率/漏写/偏离度/场景豁免', () => {
     // drift 源用真禁词（「禁止使用X」——排除型）；登场禁令（不得让陆寒出场）经 E12
     // 降条件型，不计偏离度——下方专设断言钉住这个行为
-    const outline = '## 本章必写场景\n1. 雨夜相遇：林晚在码头遇见赵擎\n2. 断刃现世：断刃从江底浮起\n\n## 本章禁止偏离项\n- 禁止使用「储物戒指」\n- 不得让陆寒出场\n';
-    const full = computeGateMetrics({ content: '雨夜，林晚在码头遇见赵擎。断刃从江底浮起。', outline });
+    const outline = '## 本章必写场景\n1. 雨夜相遇：测试角色在码头遇见赵擎\n2. 断刃现世：断刃从江底浮起\n\n## 本章禁止偏离项\n- 禁止使用「储物戒指」\n- 不得让陆寒出场\n';
+    const full = computeGateMetrics({ content: '雨夜，测试角色在码头遇见赵擎。断刃从江底浮起。', outline });
     assert.equal(full.available, true);
     assert.equal(full.coverage, 100);
     assert.equal(full.drift, 0);
     assert.equal(full.passed, true);
 
-    const partial = computeGateMetrics({ content: '雨夜，林晚在码头遇见赵擎。', outline });
+    const partial = computeGateMetrics({ content: '雨夜，测试角色在码头遇见赵擎。', outline });
     assert.equal(partial.coverage, 50);
     assert.deepEqual(partial.missedScenes, ['断刃现世']);
     assert.equal(partial.passed, false, '漏场景＝不通过');
@@ -1300,7 +1300,7 @@ test('A3/A4 契约指标：覆盖率/漏写/偏离度/场景豁免', () => {
     assert.equal(hit.drift, 100);
     assert.equal(hit.passed, false);
     // E12 回归钉：登场禁令人名出现在正文（提及/在场）不算命中禁项
-    const mention = computeGateMetrics({ content: '雨夜，林晚在码头遇见赵擎。断刃从江底浮起。她想起陆寒说过的话。', outline });
+    const mention = computeGateMetrics({ content: '雨夜，测试角色在码头遇见赵擎。断刃从江底浮起。她想起陆寒说过的话。', outline });
     assert.ok(!mention.bannedHits.includes('陆寒'), '登场禁令的人名命中不进 bannedHits（条件型人工复核）');
     assert.equal(mention.passed, true);
 
@@ -1379,7 +1379,7 @@ test('★ 0.19.1 E11：主宾并存禁项收宾语不收主语（对账单不得
 });
 
 test('★ 0.19.1 E20：跨标点滑窗——细纲与正文的标点/措辞微差不灭场景命中', () => {
-    // 真机《食妖帖》第 1 章实证：细纲「杂役按手印领食」正文「按手印，领份饭」——
+    // 真机《样书A》第 1 章实证：细纲「杂役按手印领食」正文「按手印，领份饭」——
     // 一个逗号把 4 字滑窗全灭，场景写全仍判漏写（E9 只清洗了拍元信息，这是更深层）。
     const scene = { title: '汤执事摇铃', desc: '铜铃两下开饭，杂役按手印领食；端碗时汤执事盯着他看。' };
     const content = '铜铃响了两下。两下是开饭。江离排在队尾，按手印，领份饭。汤执事盯着他看。';
@@ -1544,14 +1544,14 @@ test('★ E2 熔断：同章连续驳回 3 次触发；成功/重批/改契约�
 
 const FQ_GOOD = [
     '「你也配？」赵擎冷笑一声，把合同摔在桌上。',
-    '林晚没说话。她弯腰捡起那张纸，指尖压住签名栏。',
+    '测试角色没说话。她弯腰捡起那张纸，指尖压住签名栏。',
     '「昨天你说我签不了这一单。」她抬头，「现在呢？」',
     '满屋子的呼吸声都停了。赵擎的脸一点点涨红，又一点点发白。',
     '「不可能。」他后退半步，「这单早被……」',
-    '「被我签了。」林晚把合同推回去，「三天前。」',
+    '「被我签了。」测试角色把合同推回去，「三天前。」',
     '有人噗地笑出声。赵擎的手指在桌面上抓了两下，什么也没抓住。',
     '「你等着。」他撂下这句，转身撞开门走了。',
-    '林晚看着那扇晃动的门，慢慢把手机翻过来。屏幕上是一条未读消息，发信人那一栏是空的。',
+    '测试角色看着那扇晃动的门，慢慢把手机翻过来。屏幕上是一条未读消息，发信人那一栏是空的。',
     '「明天，会有人来找你。」她盯着那行字，忽然明白了什么。',
 ].join('\n\n').repeat(7);
 
@@ -1571,7 +1571,7 @@ test('★ C4 平台审稿：起点看结构与章末钩子，番茄看前千字�
     assert.ok(f.checks.some((c) => c.key === 'first-3-faceslap' && c.ok), '前 3 章打脸是番茄签约判据');
 
     // 憋屈不过夜：连续压抑段落累计字数
-    const suffer = Array.from({ length: 60 }, (_, i) => '林晚低着头，把委屈咽回去。她不敢说话，只能忍着。第' + i + '次了。').join('\n\n');
+    const suffer = Array.from({ length: 60 }, (_, i) => '测试角色低着头，把委屈咽回去。她不敢说话，只能忍着。第' + i + '次了。').join('\n\n');
     assert.ok(longestSufferingRun(suffer) > 1200, '连续憋屈段要能被算出来');
     const f2 = reviewForPlatform({ content: suffer, chapter: 5, platform: 'fanqie' });
     assert.equal(f2.checks.find((c) => c.key === 'suffering-duration').ok, false, '憋屈过长 → 番茄红线报警');
@@ -1590,7 +1590,7 @@ test('★ C4 平台审稿：起点看结构与章末钩子，番茄看前千字�
 test('★ C5 敏感自查：七类红线 + 未成年邻近共现 + 题材豁免', () => {
     assert.equal(CENSOR_KEYS.length, 7);
 
-    const clean = scanSensitive({ content: '林晚在雨里跑了很久，鞋子里全是水。' });
+    const clean = scanSensitive({ content: '测试角色在雨里跑了很久，鞋子里全是水。' });
     assert.equal(clean.level, 'clean');
     assert.deepEqual(clean.categories, []);
 
@@ -1821,12 +1821,12 @@ test('★ 逐场景字数预算：把「本章 3000 字」翻译成「这一场 
     const sum = budget.reduce((a, b) => a + b.suggested, 0);
     assert.ok(sum >= 3000 * 0.9 && sum <= 3000 * 1.2, `预算合计要贴着目标（实际 ${sum}）`);
     // 没写场景段 → 不编预算（briefing 退化为通用段落规格）
-    assert.equal(sceneCharBudget({ outline: '第2章：来客。出场：林晚。', target: 3000, minChars: 2000 }), null);
+    assert.equal(sceneCharBudget({ outline: '第2章：来客。出场：测试角色。', target: 3000, minChars: 2000 }), null);
     assert.equal(sceneCharBudget({ outline, target: 0 }), null, '没有目标就不判');
 });
 
 test('细纲容量估算：不误判——没写场景段 / 段里没条目 / 没给下限', () => {
-    assert.equal(outlineCapacityEstimate({ outline: '第2章：来客。出场：林晚。事件：收殓尸体。', minChars: 2000 }), null);
+    assert.equal(outlineCapacityEstimate({ outline: '第2章：来客。出场：测试角色。事件：收殓尸体。', minChars: 2000 }), null);
     assert.equal(outlineCapacityEstimate({ outline: '## 本章必写场景\n\n', minChars: 2000 }), null);
     assert.equal(outlineCapacityEstimate({ outline: '## 本章必写场景\n- 甲：乙', minChars: Number.NaN }), null, '没给下限不判（否则凭空造出差额）');
     // 单场景 + 低下限（玩具配置）→ 放行，不拿目标当驳回线
@@ -2468,7 +2468,7 @@ test('★ listProposals 富化 + readProposal：reason/摘要/章标题齐备，
     const files = new Map();
     files.set('书/novel.json', JSON.stringify({
         title: '书', stage: 'drafting',
-        chapters: { 1: { title: '初入剑冢', files: [{ version: 1, file: '书/正文/第1章-v1.md' }], latest: 1, path: '书/正文/第1章-v1.md' } },
+        chapters: { 1: { title: '初入试炼地', files: [{ version: 1, file: '书/正文/第1章-v1.md' }], latest: 1, path: '书/正文/第1章-v1.md' } },
         proposals: [
             { id: 'P1-a', chapter: 1, status: 'pending', createdAt: '2026-09-15T06:39:13.577Z' },
             { id: 'P9-lost', chapter: 2, status: 'pending', createdAt: '2026-09-15T07:00:00.000Z' },
@@ -2489,7 +2489,7 @@ test('★ listProposals 富化 + readProposal：reason/摘要/章标题齐备，
     const v = await listProposals(io, '书');
     assert.equal(v.proposals.length, 2);
     const p1 = v.proposals[0];
-    assert.equal(p1.title, '初入剑冢', '章标题随列表给出——UI 才能显示「第 1 章 · 初入剑冢」');
+    assert.equal(p1.title, '初入试炼地', '章标题随列表给出——UI 才能显示「第 1 章 · 初入试炼地」');
     assert.equal(p1.reason, '机审检出章末无钩子', '模型附的说明必须出列');
     assert.ok(p1.preview.includes('悬念对白'), '摘要是正文压缩');
     assert.ok(!p1.preview.includes('\n'), '摘要内换行必须压平（UI 单行显示）');
@@ -2499,7 +2499,7 @@ test('★ listProposals 富化 + readProposal：reason/摘要/章标题齐备，
 
     const full = await readProposal(io, '书', 'P1-a');
     assert.ok(full.content.includes('第二段'), '全文可读（应用前让人看清改了什么）');
-    assert.equal(full.title, '初入剑冢');
+    assert.equal(full.title, '初入试炼地');
     await assert.rejects(readProposal(io, '书', 'P9-lost'), /缺失/, '丢文件要给人话报错');
     await assert.rejects(readProposal(io, '书', 'P404'), /不存在/);
 });
@@ -2572,7 +2572,7 @@ test('diagnoseIntro: 空书给「先写第 1 章」，超三章只取前三', ()
 //    lossless-JSON 校验，undefined / 未声明字段都会被判 invalid output ──
 
 test('judgeAgainstBaseline: 旧基线条目缺 sigma/tolerance → 输出补齐、无 undefined 混入', () => {
-    const metrics = measureStyleMetrics('林晚把刀收进鞘，转身走了。雨还在下，落在青石板上。');
+    const metrics = measureStyleMetrics('测试角色把刀收进鞘，转身走了。雨还在下，落在青石板上。');
     // 模拟旧版本基线：条目只有 mu（没有 sigma / tolerance）
     const legacy = { chapters: 3, dims: { syntax: { mu: 2 }, modifier: { mu: 20, tolerance: 30 } } };
     const judged = judgeAgainstBaseline(metrics, legacy, {});

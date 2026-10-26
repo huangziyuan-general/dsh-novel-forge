@@ -50,6 +50,7 @@ const ROUTES = [
     { name: 'GET /projects/:id/chapters/:no', method: 'GET', url: `${PREFIX}/projects/护栏本/chapters/1` },
     { name: 'GET /projects/:id/continuity', method: 'GET', url: `${PREFIX}/projects/护栏本/continuity` },
     { name: 'GET /projects/:id/diagnose', method: 'GET', url: `${PREFIX}/projects/护栏本/diagnose` },
+    { name: 'GET /projects/:id/dashboard', method: 'GET', url: `${PREFIX}/projects/护栏本/dashboard` },
     { name: 'POST /projects/:id/chapters/:no（保存）', method: 'POST', url: `${PREFIX}/projects/护栏本/chapters/1` },
     { name: 'POST .../chapters/:no/write', method: 'POST', url: `${PREFIX}/projects/护栏本/chapters/1/write` },
     { name: 'POST .../chapters/:no/polish', method: 'POST', url: `${PREFIX}/projects/护栏本/chapters/1/polish` },
@@ -748,7 +749,7 @@ test('R1-00 路由清单与源码计数同步（清单烂掉即红）', () => {
         `源码 fence 检查条数（${trustedChecks.length}）≠ 路由条数（${ROUTES.length}）——有端点漏写 trusted(req)！`);
 });
 
-test('R1 fence 全覆盖：28 条路由逐个不带 fence 头 → 403 FORBIDDEN', async () => {
+test('R1 fence 全覆盖：清单内路由逐个不带 fence 头 → 403 FORBIDDEN', async () => {
     for (const r of ROUTES) {
         const res = await drive({ method: r.method, url: r.url, fence: false, body: {} });
         assert.equal(res.statusCode, 403, `${r.name}：缺 fence 必须 403，实际 ${res.statusCode}`);
@@ -1252,6 +1253,82 @@ test('R7 /continuity 归并 health 体检：控制字符路径 / NaN→null 残�
     // 只读体检不得有写副作用：以前 openIndexForBook 会 mkdir + new DatabaseSync，
     // 一次 GET /continuity 就凭空建出 .novel/index.db。这里锁死「库不存在就不建」。
     assert.equal(fs.existsSync(path.join(bookDir, '.novel', 'index.db')), false, '只读体检不得凭空建出索引库');
+});
+
+test('R8 /dashboard 聚合进度/体检/提案/口径，且保持只读', async () => {
+    const created = await createBook('驾驶舱书');
+    assert.equal(created.statusCode, 200);
+    const bookDir = path.join(root, '驾驶舱书');
+    const chapterRel = '驾驶舱书/正文/第1章-驾驶舱-v1.md';
+    fs.mkdirSync(path.join(bookDir, '正文'), { recursive: true });
+    fs.mkdirSync(path.join(bookDir, '大纲'), { recursive: true });
+    fs.mkdirSync(path.join(bookDir, '.novel', 'proposals'), { recursive: true });
+    fs.writeFileSync(path.join(bookDir, '正文', '第1章-驾驶舱-v1.md'), '他到了码头，夺下符牌，身后追兵也到了。');
+    fs.writeFileSync(path.join(bookDir, '大纲', '全书大纲.md'), '### 卷一（第 1-10 章）\n- 第 1-10 章：码头据点战、夺符。');
+    fs.writeFileSync(path.join(bookDir, '.novel', 'proposals', 'P1.json'), JSON.stringify({
+        id: 'P1', chapter: 1, status: 'pending', reason: '补钩子', content: '修订正文。',
+    }));
+    fs.writeFileSync(path.join(bookDir, 'novel.json'), JSON.stringify({
+        id: 'nb_r8', title: '驾驶舱书', stage: 'writing', platform: 'qidian',
+        sessions: [], proposals: [{ id: 'P1', chapter: 1, status: 'pending' }],
+        chapters: {
+            1: {
+                title: '码头夺符', latest: 1, versions: [1], chars: 18,
+                files: [{ file: chapterRel, version: 1 }], path: chapterRel,
+            },
+        },
+    }, null, 2));
+
+    const res = await drive({ method: 'GET', url: `${PREFIX}/projects/${encodeURIComponent('驾驶舱书')}/dashboard?session=s1` });
+    assert.equal(res.statusCode, 200, res.body);
+    const dash = res.json.value;
+    assert.equal(dash.progress.chapterCount, 1);
+    assert.equal(dash.progress.nextChapter, 2);
+    assert.deepEqual(dash.progress.missingChapters, []);
+    assert.equal(dash.outline.present, true);
+    assert.equal(dash.proposals.pending, 1);
+    assert.equal(dash.platform.id, 'qidian');
+    assert.equal(dash.platform.charMin, 2000);
+    assert.equal(dash.platformReview.available, true);
+    assert.equal(dash.platformReview.name, '起点');
+    assert.equal(dash.platformReview.scanned, 1);
+    assert.ok(dash.platformReview.errors >= 1);
+    assert.ok(dash.platformReview.topIssues.some((x) => x.key === 'ending-hook'));
+    assert.equal(dash.charSourceLabel, '起点平台口径');
+    assert.ok(Array.isArray(dash.actions));
+    assert.ok(dash.actions.length > 0);
+
+    // 只读聚合不创建派生索引，也不改机器状态；下一次 GET 结果保持同一指纹。
+    assert.equal(fs.existsSync(path.join(bookDir, '.novel', 'index.db')), false);
+    const before = fs.readFileSync(path.join(bookDir, 'novel.json'), 'utf8');
+    const second = await drive({ method: 'GET', url: `${PREFIX}/projects/${encodeURIComponent('驾驶舱书')}/dashboard?session=s1` });
+    assert.equal(second.statusCode, 200);
+    assert.deepEqual(second.json.value, dash);
+    assert.equal(fs.readFileSync(path.join(bookDir, 'novel.json'), 'utf8'), before);
+});
+
+test('R8B /dashboard 审稿平台只认书上的落库平台，不默认成起点', async () => {
+    const created = await createBook('番茄驾驶舱');
+    assert.equal(created.statusCode, 200);
+    const bookDir = path.join(root, '番茄驾驶舱');
+    const chapterRel = '番茄驾驶舱/正文/第1章-番茄-v1.md';
+    fs.mkdirSync(path.join(bookDir, '正文'), { recursive: true });
+    fs.writeFileSync(path.join(bookDir, '正文', '第1章-番茄-v1.md'), '他盯着账单看不出来路，突然手机响了。');
+    fs.writeFileSync(path.join(bookDir, 'novel.json'), JSON.stringify({
+        id: 'nb_r8b', title: '番茄驾驶舱', stage: 'writing', platform: 'fanqie',
+        sessions: [], chapters: {
+            1: {
+                title: '突然来电', latest: 1, versions: [1], chars: 18,
+                files: [{ file: chapterRel, version: 1 }], path: chapterRel,
+            },
+        },
+    }, null, 2));
+
+    const res = await drive({ method: 'GET', url: `${PREFIX}/projects/${encodeURIComponent('番茄驾驶舱')}/dashboard` });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json.value.platform.id, 'fanqie');
+    assert.equal(res.json.value.platformReview.available, true);
+    assert.equal(res.json.value.platformReview.name, '番茄');
 });
 
 test('R-疲劳 详情按 ?session= 聚合首稿趋势并给交接摘要（面板横幅数据面）', async () => {

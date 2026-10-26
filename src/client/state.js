@@ -54,6 +54,8 @@ export function initialState() {
 		revising: null,
 		// 全书体检（GET /continuity，纯函数零 token）：null = 没查过
 		continuity: null, continuityLoading: false, continuityError: '',
+		// 创作驾驶舱（GET /dashboard，只读聚合）：打开详情自动拉，手动可刷新
+		dashboard: null, dashboardLoading: false, dashboardError: '',
 		// 黄金三章诊断（GET /diagnose，同为纯函数零 token）：null = 没查过
 		diagnosis: null, diagnosisLoading: false, diagnosisError: '',
 		// 批量起草（D2）：表单值 + 忙标记 + 结果

@@ -108,7 +108,7 @@ const MOCK = {
 	session: 'preview-session',
 	projects: [
 		{
-			name: '星海拾骨', title: '星海拾骨', genre: '东方玄幻', stage: 'writing', stageLabel: '正文',
+			name: '示例书', title: '示例书', genre: '东方玄幻', stage: 'writing', stageLabel: '正文',
 			chapters: 12, approved: 12, castCount: 4, facts: 34, maxChapter: 12,
 			foreshadows: { total: 5, open: 2, overdue: 1 },
 			style: { built: true, chapters: 12 },
@@ -128,35 +128,35 @@ const MOCK = {
 	],
 	unclaimed: [{ name: '旧实验稿', title: '旧实验稿（0.5.0 之前）' }],
 	detail: {
-		id: '星海拾骨', title: '星海拾骨', genre: '东方玄幻', stage: 'writing',
+		id: '示例书', title: '示例书', genre: '东方玄幻', stage: 'writing',
 		chapters: Object.fromEntries(Array.from({ length: 12 }, (_, i) => [String(i + 1), { title: `第 ${i + 1} 章`, version: 1 }])),
 	},
 	elements: {
 		meta: {
-			title: '星海拾骨', genre: '东方玄幻', stage: '正文',
+			title: '示例书', genre: '东方玄幻', stage: '正文',
 			logline: '捡骨人逆改星图：一个替死人收拾身后事的姑娘，发现整座城的命数被改写。',
 			createdAt: '2026-08-02T10:00:00.000Z', updatedAt: '2026-09-13T22:41:00.000Z',
-			cast: ['林晚', '陈九', '沈砚', '老周'],
+			cast: ['测试角色', '陈九', '沈砚', '老周'],
 		},
 		outline: {
-			full: '第一部 · 拾骨\n第 1–12 章：林晚在城南义庄收殓一具无名单，牵出「空棺」旧案。\n\n第二部 · 逆星\n第 13–26 章：星图被改的真相浮出，林晚必须决定要不要把名字还回去。',
+			full: '第一部 · 拾骨\n第 1–12 章：测试角色在城南义庄收殓一具无名单，牵出「空棺」旧案。\n\n第二部 · 逆星\n第 13–26 章：星图被改的真相浮出，测试角色必须决定要不要把名字还回去。',
 			chapterOutlines: ['第1章-雨夜来客.md', '第2章-空棺.md', '第3章-红泥.md', '第4章-问路.md', '第5章-旧契.md', '第6章-星图.md'],
 		},
 		characters: [
-			{ name: '林晚', text: '外在：城南拾骨人，寡言，惯用短刃。\n隐性欲望：查清师父的死因。\n语言基因：短句、反问、从不先下结论。' },
+			{ name: '测试角色', text: '外在：城南拾骨人，寡言，惯用短刃。\n隐性欲望：查清师父的死因。\n语言基因：短句、反问、从不先下结论。' },
 			{ name: '陈九', text: '外在：更夫，瘸腿，爱喝酒。\n隐性欲望：替兄弟还债。\n语言基因：爱绕弯子，一紧张就报更点。' },
 			{ name: '沈砚', text: '外在：县衙书吏，白面，手上有旧墨。\n隐性欲望：把案卷里的名字改回来。' },
 		],
 		worldbookCount: 4, glossaryCount: 1,
 		facts: [
-			{ entity: '林晚', key: '位置', value: '城南义庄', chapter: 1 },
-			{ entity: '林晚', key: '持有', value: '红泥布鞋', chapter: 1 },
+			{ entity: '测试角色', key: '位置', value: '城南义庄', chapter: 1 },
+			{ entity: '测试角色', key: '持有', value: '红泥布鞋', chapter: 1 },
 			{ entity: '布鞋', key: '来源', value: '门槛来客', chapter: 1 },
 			{ entity: '空棺', key: '数量', value: '三口', chapter: 2 },
-			{ entity: '林晚', key: '位置', value: '城西乱葬岗', chapter: 2 },
+			{ entity: '测试角色', key: '位置', value: '城西乱葬岗', chapter: 2 },
 			{ entity: '陈九', key: '状态', value: '战死', chapter: 9 },
 			{ entity: '陈九', key: '位置', value: '城北更楼', chapter: 14 },
-			{ entity: '林晚', key: '境界', value: '引星境一层', chapter: 12 },
+			{ entity: '测试角色', key: '境界', value: '引星境一层', chapter: 12 },
 		],
 		foreshadows: [
 			{ id: 'F1', chapter: 1, plan: 8, payoffChapter: 10, setup: '来客留下沾红泥的布鞋 —— 鞋底红泥只产于城西乱葬岗。' },
@@ -171,7 +171,7 @@ const MOCK = {
 		version: i === 8 ? 2 : 1,
 	})),
 	chapterText: [
-		'林晚把最后一枚铜钱按进香炉，灰烬腾起来，呛得她直咳嗽。',
+		'测试角色把最后一枚铜钱按进香炉，灰烬腾起来，呛得她直咳嗽。',
 		'',
 		'院门吱呀一声开了条缝。她没有回头，只是把刀往膝盖边挪了半寸。',
 		'',
@@ -197,7 +197,7 @@ const MOCK = {
 		stats: { chapters: 12, facts: 34, foreshadows: 5, deaths: 1, errors: 2, warnings: 3 },
 		issues: [
 			{ severity: 'error', code: 'posthumous-change', where: '第9章·陈九', message: '陈九在第 9 章已记为战死，第 14 章却又出现状态变更（位置 → 城北更楼）——死后仍在活动。' },
-			{ severity: 'error', code: 'ledger-same-chapter-conflict', where: '林晚·位置', message: '同一章（第 2 章）里林晚的位置先后写成「城南义庄」与「城西乱葬岗」，账本自相矛盾。' },
+			{ severity: 'error', code: 'ledger-same-chapter-conflict', where: '测试角色·位置', message: '同一章（第 2 章）里测试角色的位置先后写成「城南义庄」与「城西乱葬岗」，账本自相矛盾。' },
 			{ severity: 'warning', code: 'foreshadow-overdue', where: '伏笔 F3', message: '伏笔 F3 计划第 7 章回收，全书已写到第 12 章仍未回收。' },
 			{ severity: 'warning', code: 'chapter-gap', where: '第6→7章', message: '章号不连续：第 6 章之后直接是第 7 章之外的空档（请确认是不是漏写）。' },
 			{ severity: 'warning', code: 'chapter-version-mismatch', where: '第9章', message: 'novel.json 记的版本号与实际正文文件名不一致（v2 vs v1）。' },
@@ -315,7 +315,7 @@ h1 .ver { font-size: 11px; font-weight: 500; padding: 1px 7px; border-radius: 99
   <div class="bar" id="tour">
     <span class="lab">走一遍：</span>
     <button data-do="list">📚 项目列表</button>
-    <button data-do="open">🔎 打开《星海拾骨》</button>
+    <button data-do="open">🔎 打开《示例书》</button>
     <button data-do="checkup">🩺 全书体检</button>
     <button data-do="info">📋 基本信息</button>
     <button data-do="chapters">🎧 章节听书</button>
@@ -462,7 +462,7 @@ const tour = {
       break;
     }
   },
-  open: async () => click('[data-action="open"][data-id="星海拾骨"]'),
+  open: async () => click('[data-action="open"][data-id="示例书"]'),
   checkup: async () => click('[data-action="continuity"]'),
   diagnose: async () => click('[data-action="diagnose"]'),
   write: async () => click('[data-action="write"]'),
@@ -524,11 +524,11 @@ window.addEventListener('unhandledrejection', (e) => pageErrors.push('unhandled:
 
 const SWEEP_VIEWS = [
   { name: '项目列表', go: async () => { await tour.list(); } },
-  { name: '详情 · 基本信息', go: async () => { await tour.list(); click('[data-action="open"][data-id="星海拾骨"]'); await sleep(420); click('[data-action="detail-tab"][data-tab="info"]'); await sleep(180); } },
-  { name: '详情 · 章节听书', go: async () => { await tour.list(); click('[data-action="open"][data-id="星海拾骨"]'); await sleep(420); click('[data-action="detail-tab"][data-tab="chapters"]'); await sleep(220); } },
+  { name: '详情 · 基本信息', go: async () => { await tour.list(); click('[data-action="open"][data-id="示例书"]'); await sleep(420); click('[data-action="detail-tab"][data-tab="info"]'); await sleep(180); } },
+  { name: '详情 · 章节听书', go: async () => { await tour.list(); click('[data-action="open"][data-id="示例书"]'); await sleep(420); click('[data-action="detail-tab"][data-tab="chapters"]'); await sleep(220); } },
   // 世界书要自己走完「回列表 → 开书 → 基本信息 → 进世界书」四步：
   // 直接调 tour.lore() 会在别的视图上点空（tour 的导航前摇只在它自己的处理器里）
-  { name: '世界书', go: async () => { await tour.list(); click('[data-action="open"][data-id="星海拾骨"]'); await sleep(420); click('[data-action="detail-tab"][data-tab="info"]'); await sleep(180); click('[data-action="goto-lorebook"]'); await sleep(260); } },
+  { name: '世界书', go: async () => { await tour.list(); click('[data-action="open"][data-id="示例书"]'); await sleep(420); click('[data-action="detail-tab"][data-tab="info"]'); await sleep(180); click('[data-action="goto-lorebook"]'); await sleep(260); } },
   { name: '设置', go: async () => { await tour.settings(); } },
 ];
 
@@ -628,7 +628,7 @@ document.getElementById('tour').addEventListener('click', async (e) => {
     // 导览按钮就变成"有时灵有时不灵"（真机调试最烦这种）。
     await tour.list();
     await sleep(200);
-    if (what !== 'list') { click('[data-action="open"][data-id="星海拾骨"]'); await sleep(500); }
+    if (what !== 'list') { click('[data-action="open"][data-id="示例书"]'); await sleep(500); }
   }
   const fn = tour[what];
   if (fn) { await fn(); await sleep(300); }

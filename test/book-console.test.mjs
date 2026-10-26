@@ -21,7 +21,7 @@ const SAMPLE_NOVEL = JSON.stringify({
         2: { title: '灰谷', versions: [1], latest: 1, chars: 4100 },
         3: { title: '拾骨', versions: [1, 2], latest: 2, chars: 3900 },
     },
-    cast: ['林晚', '北望'],
+    cast: ['测试角色', '北望'],
     proposals: [],
 });
 
@@ -48,15 +48,15 @@ test('parseNovel: 缺失/非法 JSON 都降级，不抛', () => {
 
 test('parseFacts + currentFacts: 账本计数与每 entity·key 最新值（同章优先保留后写）', () => {
     const rows = [
-        { entity: '林晚', key: '境界', value: '筑基一层', chapter: 1, ts: 't1' },
-        { entity: '林晚', key: '境界', value: '筑基三层', chapter: 2, ts: 't2' },
+        { entity: '测试角色', key: '境界', value: '筑基一层', chapter: 1, ts: 't1' },
+        { entity: '测试角色', key: '境界', value: '筑基三层', chapter: 2, ts: 't2' },
         { entity: '北望', key: '位置', value: '灰谷', chapter: 3, ts: 't3' },
     ];
     const f = parseFacts(JSON.stringify(rows));
     assert.equal(f.ok, true);
     assert.equal(f.rows.length, 3);
     assert.equal(currentFacts(rows).length, 2, '同 entity·key 只留最新');
-    const lw = currentFacts(rows).find((r) => r.entity === '林晚');
+    const lw = currentFacts(rows).find((r) => r.entity === '测试角色');
     assert.equal(lw.value, '筑基三层');
 });
 
@@ -90,7 +90,7 @@ test('summarizeBook: 一书整体摘要（全字段都给的正常样本）', ()
     const b = summarizeBook({
         name: '星尘小记',
         novel: SAMPLE_NOVEL,
-        facts: JSON.stringify([{ entity: '林晚', key: '境界', value: '筑基三层', chapter: 2 }]),
+        facts: JSON.stringify([{ entity: '测试角色', key: '境界', value: '筑基三层', chapter: 2 }]),
         foreshadows: JSON.stringify([{ id: 'F1', setup: '雾', chapter: 1, plan: 2, payoffChapter: null }]),
         style: JSON.stringify({ book: '星尘小记', chapters: 3, baseline: { dims: {} }, builtAt: 't' }),
         currentChapter: 3,

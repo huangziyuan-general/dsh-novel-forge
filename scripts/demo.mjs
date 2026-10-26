@@ -59,7 +59,7 @@ apply(ctx, { minChapterChars: 150, maxChapterChars: 5000, contextBudgetChars: 40
 const T = (name) => registered.find((t) => t.name === name);
 
 const CHAPTER = [
-    '林晚把最后一枚铜钱按进香炉，灰烬腾起来，呛得她直咳嗽。',
+    '测试角色把最后一枚铜钱按进香炉，灰烬腾起来，呛得她直咳嗽。',
     '',
     '院门吱呀一声开了条缝。她没有回头，只是把刀往膝盖边挪了半寸。',
     '',
@@ -69,33 +69,33 @@ const CHAPTER = [
     '',
     '「义庄的后墙，昨夜塌了个角。」他说，「棺材板翻出来三口，都是空的。」',
     '',
-    '林晚盯着那只湿透的布鞋看了两息。鞋底沾的红泥，是城西乱葬岗才有的颜色。',
+    '测试角色盯着那只湿透的布鞋看了两息。鞋底沾的红泥，是城西乱葬岗才有的颜色。',
     '',
     '她忽然吹熄了灯。',
 ].join('\n');
 
 try {
-    const init = await T('novel_project').execute({ action: 'init', book: '星海拾骨', genre: '东方玄幻', logline: '捡骨人逆改星图' }, exec);
-    say('① 创建书目工程', [g(`init：《${init.title}》（${init.genre}）→ ${path.basename(root)}/星海拾骨/`)]);
+    const init = await T('novel_project').execute({ action: 'init', book: '示例书', genre: '东方玄幻', logline: '捡骨人逆改星图' }, exec);
+    say('① 创建书目工程', [g(`init：《${init.title}》（${init.genre}）→ ${path.basename(root)}/示例书/`)]);
 
-    await T('novel_character').execute({ action: 'save', book: '星海拾骨', name: '林晚', card: '外在：拾骨人，寡言。隐性欲望：查清师父死因。语言基因：短句、反问、从不先下结论。' }, exec);
-    await T('novel_worldbook').execute({ action: 'add', book: '星海拾骨', keywords: '乱葬岗,红泥', content: '城西乱葬岗的红泥遇水不散，是识尸标记。' }, exec);
-    await T('novel_outline').execute({ action: 'save_chapter', book: '星海拾骨', chapter: 1, outline: '第1章：雨夜来客。出场：林晚。事件：来客留下乱葬岗红泥布鞋（伏笔）。' }, exec);
+    await T('novel_character').execute({ action: 'save', book: '示例书', name: '测试角色', card: '外在：拾骨人，寡言。隐性欲望：查清师父死因。语言基因：短句、反问、从不先下结论。' }, exec);
+    await T('novel_worldbook').execute({ action: 'add', book: '示例书', keywords: '乱葬岗,红泥', content: '城西乱葬岗的红泥遇水不散，是识尸标记。' }, exec);
+    await T('novel_outline').execute({ action: 'save_chapter', book: '示例书', chapter: 1, outline: '第1章：雨夜来客。出场：测试角色。事件：来客留下乱葬岗红泥布鞋（伏笔）。' }, exec);
 
     say('② 阶段门禁（细纲未批准就写章）', []);
     try {
-        await T('novel_write_chapter').execute({ book: '星海拾骨', chapter: 1, title: '雨夜来客', content: CHAPTER, summary: 'x' }, exec);
+        await T('novel_write_chapter').execute({ book: '示例书', chapter: 1, title: '雨夜来客', content: CHAPTER, summary: 'x' }, exec);
         say('', [r('  ✗ 不应到达这里')]);
     } catch (e) {
         say('', [r(`  ✗ 被拒绝：${e.message}`)]);
     }
 
-    await T('novel_outline').execute({ action: 'approve', book: '星海拾骨', chapter: 1 }, exec);
+    await T('novel_outline').execute({ action: 'approve', book: '示例书', chapter: 1 }, exec);
     say('③ 批准后写章（机审→账本→版本化）', []);
     const w = await T('novel_write_chapter').execute({
-        book: '星海拾骨', chapter: 1, title: '雨夜来客', content: CHAPTER,
-        summary: '林晚雨夜收殓，来客留下乱葬岗红泥布鞋。', cast: '林晚',
-        facts_updates: '林晚|位置|城南义庄\n布鞋|持有|门槛来客',
+        book: '示例书', chapter: 1, title: '雨夜来客', content: CHAPTER,
+        summary: '测试角色雨夜收殓，来客留下乱葬岗红泥布鞋。', cast: '测试角色',
+        facts_updates: '测试角色|位置|城南义庄\n布鞋|持有|门槛来客',
     }, exec);
     say('', [
         g(`  ✓ 保存 ${w.path}（v${w.version}，${w.chars} 字）`),
@@ -105,11 +105,11 @@ try {
 
     say('④ 账本硬约束（同章改值）', []);
     const CH2 = [
-        '天亮前最黑的那阵，林晚到了城西。塌墙处果然露出三口棺材，棺盖朝天翻着，内里干干净净。',
+        '天亮前最黑的那阵，测试角色到了城西。塌墙处果然露出三口棺材，棺盖朝天翻着，内里干干净净。',
         '',
         '她蹲下去捻了一撮红泥。泥是湿的，可昨夜之后并没有再下过雨。',
         '',
-        '「所以你半夜跑来，就为了告诉我这个？」身后有人说话。林晚没有回头。',
+        '「所以你半夜跑来，就为了告诉我这个？」身后有人说话。测试角色没有回头。',
         '',
         '「我来看看，」她说，「你到底想让我看见什么。」',
         '',
@@ -117,29 +117,29 @@ try {
     ].join('\n\n');
     try {
         await T('novel_write_chapter').execute({
-            book: '星海拾骨', chapter: 2, title: '试探', force: true, content: CH2, summary: 'x',
-            facts_updates: '林晚|位置|城北\n林晚|位置|城西',
+            book: '示例书', chapter: 2, title: '试探', force: true, content: CH2, summary: 'x',
+            facts_updates: '测试角色|位置|城北\n测试角色|位置|城西',
         }, exec);
     } catch (e) {
         say('', [r(`  ✗ 被拒绝：${e.message.slice(0, 72)}…`)]);
     }
 
-    const a = await T('novel_audit').execute({ book: '星海拾骨', chapter: 1 }, exec);
+    const a = await T('novel_audit').execute({ book: '示例书', chapter: 1 }, exec);
     say('⑤ 确定性审计（模型审稿必须引用这些数字）', [
         `  字数 ${a.chars}｜段 ${a.paragraphCount}｜对话占比 ${a.dialogueRatio}｜钩子 ${a.endingHook.kind}｜与前文重合 ${a.repetition.jaccard}`,
         `  判定：${a.verdict.ok ? g('通过') : r('不通过')}，警告 ${a.verdict.warnings.length}`,
     ]);
 
-    const p = await T('novel_propose').execute({ action: 'propose', book: '星海拾骨', chapter: 1, content: `${CHAPTER}\n\n她把那只鞋收进了棺材底下。`, reason: '补收束动作' }, exec);
+    const p = await T('novel_propose').execute({ action: 'propose', book: '示例书', chapter: 1, content: `${CHAPTER}\n\n她把那只鞋收进了棺材底下。`, reason: '补收束动作' }, exec);
     // apply 是面板上的用户主权动作（工具面已移除）；这里经 proposals 库模拟面板点击。
     const io = createFsio(ctx, exec, root);
-    const ap = await applyProposal(io, '星海拾骨', p.id, { minChapterChars: 150, maxChapterChars: 5000, repetitionWindow: 10 }, 'user');
+    const ap = await applyProposal(io, '示例书', p.id, { minChapterChars: 150, maxChapterChars: 5000, repetitionWindow: 10 }, 'user');
     say('⑥ 提案制修订（apply=面板用户主权；旧版永不覆盖）', [
         `  提案 ${p.id} → 面板应用 → ${ap.path}`,
-        `  v1 仍在：${fs.existsSync(path.join(root, '星海拾骨', '正文', '第1章-雨夜来客-v1.md')) ? g('是') : r('否')}`,
+        `  v1 仍在：${fs.existsSync(path.join(root, '示例书', '正文', '第1章-雨夜来客-v1.md')) ? g('是') : r('否')}`,
     ]);
 
-    say('⑦ 审计日志（.novel/audit.jsonl）', fs.readFileSync(path.join(root, '星海拾骨', '.novel', 'audit.jsonl'), 'utf8')
+    say('⑦ 审计日志（.novel/audit.jsonl）', fs.readFileSync(path.join(root, '示例书', '.novel', 'audit.jsonl'), 'utf8')
         .trim().split('\n').slice(-6).map((l) => `  ${y('·')} ${JSON.parse(l).action}`));
 } finally {
     fs.rmSync(root, { recursive: true, force: true });
