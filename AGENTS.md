@@ -26,7 +26,7 @@ DSH（DeepSeek Harness）小说创作插件。设计主线：**代码强制 > �
    内部走 `mkdir(directory, { recursive: true })` 建父目录。因此 `novel_project init`
    只写 `novel.json` 是**正确行为，不是缺陷**；别去造 `.gitkeep` 占位文件，
    也别为了建目录破例用 node:fs。工具描述已按此改口径（1.0.2）。
-2. **纯逻辑与 io 分离**：`lib/{noai,noai-cross,ledger,gate,versioning,audit,contextpack,basis}.js` 必须保持
+2. **纯逻辑与 io 分离**：`lib/{noai,noai-cross,ledger,pacing,gate,versioning,audit,contextpack,basis}.js` 必须保持
    纯函数（输入输出皆数据），便于 `node --test` 直测；io 只发生在 `lib/fsio.js` 与工具层。
 3. **`output.schema` 与 execute 返回值逐字段一致**（additionalProperties:false），
    新增返回字段必须同步 schema，否则 INVALID_TOOL_OUTPUT。
