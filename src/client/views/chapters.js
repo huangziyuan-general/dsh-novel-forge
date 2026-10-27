@@ -51,10 +51,33 @@ export function ChapterListView({ state: s }) {
 				: '读完一章自动接下一章；章号有缺口会跳到下一个存在的章。'),
 	);
 
+	// ── 阅读卡（点行内 📖 展开）：正文可滚动，顺手能切朗读 ──
+	// 位置在**对应章节行的正下方**（下面 rows 的 flatMap 里插入），不是固定在列表顶上——
+	// 点哪章的 📖 就展开在哪章下面，长目录里不用回头找。可以一边听一边看：reader 与 playback 互不干扰。
+	// 外面套 display:contents 的 keyed 容器：React 混排列表里给阅读卡一个稳定 key，且不引入额外布局层。
+	const reader = s.reader ? h('div', { key: 'reader', style: { display: 'contents' } },
+		Card({ tone: 'accent', pad: space.md },
+		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm } },
+			h('span', {
+				style: { flex: '1 1 auto', minWidth: 0, fontWeight: weight.semibold, fontSize: font.small },
+			}, `📖 第 ${s.reader.no} 章 · ${s.reader.title}`),
+			Btn({ variant: 'secondary', size: 'sm', action: 'play-from', id: s.reader.no, title: `从第 ${s.reader.no} 章开始听` }, '▶ 朗读本章'),
+			Btn({ variant: 'ghost', size: 'sm', action: 'close-reader', title: '收起阅读器', ariaLabel: '收起阅读器' }, '✕'),
+		),
+		h('div', {
+			style: {
+				marginTop: space.sm,
+				maxHeight: '420px', overflowY: 'auto',
+				fontSize: font.small, lineHeight: 1.85,
+				whiteSpace: 'pre-wrap', color: color.text,
+			},
+		}, s.reader.loading ? '正文加载中…' : (s.reader.text || '（本章正文为空）')),
+	)) : null;
+
 	// ── 目录 ──
-	const rows = s.chapterList.map((c) => {
+	const rows = s.chapterList.flatMap((c) => {
 		const isCurrent = pb.currentNo === c.no && (playing || paused);
-		return h('div', {
+		const row = h('div', {
 			key: c.no,
 			style: {
 				display: 'flex', alignItems: 'center', gap: space.sm,
@@ -86,32 +109,13 @@ export function ChapterListView({ state: s }) {
 			Btn({ variant: 'ghost', size: 'sm', action: 'read-chapter', id: c.no, title: `阅读第 ${c.no} 章`, ariaLabel: `阅读第 ${c.no} 章` }, '📖'),
 			Btn({ variant: 'ghost', size: 'sm', action: 'play-from', id: c.no, title: `从第 ${c.no} 章开始听`, ariaLabel: `从第 ${c.no} 章开始听` }, '▶'),
 		);
+		// 阅读卡插在命中的那一行后面（flatMap 展平，其余行保持原序）
+		return s.reader?.no === c.no ? [row, reader] : [row];
 	});
-
-	// ── 阅读卡（点行内 📖 展开）：正文可滚动，顺手能切朗读 ──
-	// 可以一边听一边看：reader 与 playback 互不干扰。
-	const reader = s.reader ? Card({ tone: 'accent', pad: space.md },
-		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm } },
-			h('span', {
-				style: { flex: '1 1 auto', minWidth: 0, fontWeight: weight.semibold, fontSize: font.small },
-			}, `📖 第 ${s.reader.no} 章 · ${s.reader.title}`),
-			Btn({ variant: 'secondary', size: 'sm', action: 'play-from', id: s.reader.no, title: `从第 ${s.reader.no} 章开始听` }, '▶ 朗读本章'),
-			Btn({ variant: 'ghost', size: 'sm', action: 'close-reader', title: '收起阅读器', ariaLabel: '收起阅读器' }, '✕'),
-		),
-		h('div', {
-			style: {
-				marginTop: space.sm,
-				maxHeight: '420px', overflowY: 'auto',
-				fontSize: font.small, lineHeight: 1.85,
-				whiteSpace: 'pre-wrap', color: color.text,
-			},
-		}, s.reader.loading ? '正文加载中…' : (s.reader.text || '（本章正文为空）')),
-	) : null;
 
 	return h('div', { style: stackStyle(space.md) },
 		controls,
 		s.error ? Feedback({ tone: 'err' }, s.error) : null,
-		reader,
 		h('div', { style: stackStyle(space.xs) }, ...rows),
 	);
 }
