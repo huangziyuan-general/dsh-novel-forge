@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import {
     analyzePacing, analyzeResolutionBrake, detectEventTypes, detectTempoTier,
     parseOutlineTypes, pacingRecommendation, pacingRecord, onCooldown, lastUsedChapter,
-    EVENT_TYPES, PACING_DEFAULTS,
+    consecutiveFastChain, EVENT_TYPES, PACING_DEFAULTS,
 } from '../lib/pacing.js';
 import { bootPlugin, chapterOf } from './helpers/plugin.mjs';
 
@@ -166,6 +166,68 @@ test('干净章节：一条都不该报（不许制造噪声）', () => {
     assert.equal(r.brake.triggered, false);
 });
 
+// ── ③.1 连续快档的章号相邻性 ───────────────────────────────────────────────
+//
+// 「连续」必须按**章号**算，不能按「最近一条记录」算：第 10 章是快档、第 13 章
+// 才动笔，中间两章没有记录——那不叫「连着快档」。按记录链算会得出「第10章是
+// 快档、连着 2 章爽点」这种章号和数字对不上的告警，属于凭空捏造的证据。
+// 缺记录 ≠ 快档（宁可漏判也不误判）。
+
+test('★ 连续快档只看章号紧邻的：第10章是快档、第13章才写 → 不算连着', () => {
+    const p = state({ 10: { types: [], tier: 'fast' } });
+    const r = analyzePacing({
+        content: '他一鸣惊人，震惊全场，反杀横扫，技惊四座。',
+        chapter: 13, pacing: p,
+    });
+    assert.ok(!r.issues.some((x) => x.includes('连续快档')),
+        `不该报连续快档：${r.issues.join(' | ')}`);
+    assert.equal(r.metrics.tempo.consecutiveFast, 0);
+});
+
+test('连续快档：紧邻才报，且告警里的章号是真实的相邻章', () => {
+    const p = state({ 12: { types: [], tier: 'fast' } });
+    const r = analyzePacing({
+        content: '他一鸣惊人，震惊全场，反杀横扫，技惊四座。',
+        chapter: 13, pacing: p,
+    });
+    const hit = r.issues.find((x) => x.includes('连续快档'));
+    assert.ok(hit, `必须报：${r.issues.join(' | ')}`);
+    assert.match(hit, /第12章/, '告警要指向紧邻的第12章');
+    assert.ok(!hit.includes('第10章'), '不能拿不相邻的章号凑证据');
+    assert.equal(r.metrics.tempo.consecutiveFast, 1);
+});
+
+test('连续快档链：连着数出来的章数要对（告警要写清是哪几章）', () => {
+    const p = state({ 11: { types: [], tier: 'fast' }, 12: { types: [], tier: 'fast' } });
+    const r = analyzePacing({
+        content: '他一鸣惊人，震惊全场，反杀横扫，技惊四座。',
+        chapter: 13, pacing: p,
+    });
+    assert.equal(r.metrics.tempo.consecutiveFast, 2);
+    const hit = r.issues.find((x) => x.includes('连续快档'));
+    assert.match(hit, /第11–12章/, '告警要写清连着的是哪几章');
+});
+
+test('consecutiveFastChain：章号必须相邻（缺记录≠快档，上限可覆盖）', () => {
+    const two = [{ chapter: 10, types: [], tier: 'fast' }, { chapter: 11, types: [], tier: 'fast' }];
+    assert.equal(consecutiveFastChain(two, 13), 0, '第12章没记录 → 链断');
+    assert.equal(consecutiveFastChain(two, 12), 2, '第11、10章都紧邻且都是快档');
+    assert.equal(consecutiveFastChain([...two, { chapter: 12, types: [], tier: 'fast' }], 13), 3);
+    assert.equal(consecutiveFastChain([
+        { chapter: 10, types: [], tier: 'fast' }, { chapter: 11, types: [], tier: 'normal' },
+    ], 12), 0, '上一章是 normal → 链断');
+});
+
+test('连续快档阈值可覆盖（maxConsecutiveFast=2 时连着 2 章不算超限）', () => {
+    const p = state({ 12: { types: [], tier: 'fast' } });
+    const r = analyzePacing({
+        content: '他一鸣惊人，震惊全场，反杀横扫，技惊四座。',
+        chapter: 13, pacing: p, options: { maxConsecutiveFast: 2 },
+    });
+    assert.ok(!r.issues.some((x) => x.includes('连续快档')),
+        `连着 2 章 = 上限 2，不该报：${r.issues.join(' | ')}`);
+});
+
 // ── 写前推荐 ────────────────────────────────────────────────────────────────
 
 test('写前推荐：冷却中的类型不进推荐位（推荐的是现在能写的）', () => {
@@ -182,6 +244,16 @@ test('写前推荐：无历史时推荐最饿的类型，且摘要不啰嗦', ()
     assert.ok(rec.recommended.length > 0);
     assert.equal(rec.cooling.length, 0);
     assert.ok(rec.recommended.every((r) => r.why.includes('还没写过')));
+});
+
+test('写前推荐：只有紧邻的上一章是快档才提示「别再连着快」（与体检同口径）', () => {
+    const 跳章 = pacingRecommendation({ pacing: state({ 10: { types: [], tier: 'fast' } }), chapter: 13 });
+    assert.ok(!跳章.line.includes('别再连着快'), `不该提示：${跳章.line}`);
+    assert.equal(跳章.tempo.consecutiveFast, 0);
+
+    const 紧邻 = pacingRecommendation({ pacing: state({ 12: { types: [], tier: 'fast' } }), chapter: 13 });
+    assert.match(紧邻.line, /别再连着快/);
+    assert.equal(紧邻.tempo.consecutiveFast, 1);
 });
 
 test('节奏记录：同一份正文 + 同一份细纲 → 同一份记录（可重放可对账）', () => {
