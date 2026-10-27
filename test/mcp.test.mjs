@@ -142,6 +142,40 @@ test('standalone: novel_import 的 .docx 通路在 MCP 通道可用（readBytes 
     assert.match(r.previews[0].title, /铁轨|第一章/);
 });
 
+test('standalone: inputSchema 直通不再二次包裹（外部缺陷回归）', async () => {
+    if (!hasSdk) return;
+    const { toInputSchema } = await import('../lib/mcp-standalone.js');
+    for (const t of standalone.tools) {
+        const schema = toInputSchema(t.parameters);
+        assert.equal(schema.type, 'object', t.name);
+        assert.ok(schema.properties && typeof schema.properties === 'object', t.name);
+        // 二次包裹的特征残骸：properties 里出现 type/properties/required 这三个「假参数」。
+        assert.ok(!('type' in schema.properties), `${t.name}: inputSchema 被二次包裹（properties 出现 type）`);
+        assert.ok(!('required' in schema.properties), `${t.name}: inputSchema 被二次包裹（properties 出现 required）`);
+    }
+    const outline = toInputSchema(standalone.tools.find((t) => t.name === 'novel_outline').parameters);
+    assert.ok(outline.properties.book, 'novel_outline 未暴露 book 参数');
+    assert.ok(outline.properties.action, 'novel_outline 未暴露 action 参数');
+    assert.ok(outline.required.includes('book') && outline.required.includes('action'), 'novel_outline 必填项缺失');
+});
+
+test('standalone: toInputSchema 兼容旧「参数名 → spec」形状（宿主包缺席时垫片直通的形状）', async () => {
+    if (!hasSdk) return;
+    const { toInputSchema } = await import('../lib/mcp-standalone.js');
+    const schema = toInputSchema({
+        book: { type: 'string', description: '书目录名', required: true },
+        chapter: { type: 'number', description: '章号', enum: undefined },
+    });
+    assert.deepEqual(schema, {
+        type: 'object',
+        properties: {
+            book: { type: 'string', description: '书目录名' },
+            chapter: { type: 'number', description: '章号' },
+        },
+        required: ['book'],
+    });
+});
+
 test('stdio server: initialize → tools/list → tools/call 全链', async () => {
     if (!hasSdk) return;
     const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-mcp-ws-'));
@@ -180,6 +214,10 @@ test('stdio server: initialize → tools/list → tools/call 全链', async () =
         const listed = await rpc('tools/list', {});
         assert.equal(listed.result.tools.length, 20);
         assert.ok(listed.result.tools.every((t) => t.inputSchema.type === 'object'));
+        // inputSchema 必须暴露真实参数（二次包裹回归：全部工具的 properties 都曾是空壳）。
+        const outlineTool = listed.result.tools.find((t) => t.name === 'novel_outline');
+        assert.ok(outlineTool.inputSchema.properties.book, 'stdio tools/list: novel_outline 未暴露 book（inputSchema 被二次包裹？）');
+        assert.ok(outlineTool.inputSchema.required.includes('book'), 'stdio tools/list: novel_outline 必填项缺失');
 
         const called = await rpc('tools/call', {
             name: 'novel_project',

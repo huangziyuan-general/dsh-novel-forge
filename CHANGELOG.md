@@ -1,5 +1,12 @@
 # Changelog
 
+## 未发布
+
+### 修复
+
+- **MCP 通道**：`tools/list` 的 `inputSchema` 不再把已是 JSON Schema 的参数表二次包裹——此前 20 个工具全部暴露空参数表，按 `inputSchema` 渲染参数表单的 MCP 客户端（Claude Desktop / Cursor 等）一个参数都填不了；schema 生成下沉为 `lib/mcp-standalone.js` 的 `toInputSchema`（成品直通 + 兼容旧「参数名 → spec」形状），回归由 stdio 全链测试钉住。
+- **MCP 通道**：独立启动不再因宿主 peer 包缺席崩溃——`@deepseek-ai/dsh-tools` 与 `@deepseek-ai/schemastery` 改为动态导入 + 缺席回退（输出校验退化、Config 走构造壳），零宿主环境可正常 `initialize` / `tools/list` / `tools/call`。
+
 ## v1.0.7 (2026-10-26)
 
 ### 新增
