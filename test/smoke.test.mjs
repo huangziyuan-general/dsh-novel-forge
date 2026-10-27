@@ -162,9 +162,9 @@ const GOOD_CHAPTER = [
     '她忽然吹熄了灯。',
 ].join('\n');
 
-test('装载：20 个工具注册 + 系统提示注入', () => {
+test('装载：21 个工具注册 + 系统提示注入', () => {
     assert.equal(hasSdk, true, '缺宿主 SDK symlink：先 npm run setup-dev');
-    assert.equal(ctx._registered.length, 20);
+    assert.equal(ctx._registered.length, 21);
     // 全工具 schema 形状守卫（parameters 已被 define-tool 归一为 JSON Schema）：
     // 新工具最容易漏 output.schema 声明 / additionalProperties:false / required 指向不存在的字段。
     for (const t of ctx._registered) {
@@ -199,7 +199,7 @@ test('严格参数：垫片包装 execute 拒绝未知字段（宿主参数 sche
     assert.deepEqual(
         ctx._registered.map((t) => t.name),
         ['novel_project', 'novel_outline', 'novel_character', 'novel_worldbook', 'novel_scene', 'novel_briefing',
-         'novel_write_chapter', 'novel_ledger', 'novel_noai_scan', 'novel_audit', 'novel_style',
+         'novel_write_chapter', 'novel_ledger', 'novel_quality', 'novel_noai_scan', 'novel_audit', 'novel_style',
          'novel_propose', 'novel_import', 'novel_export', 'novel_glossary', 'novel_clone_project',
          'novel_diagnose', 'novel_polish', 'novel_search', 'novel_library'],
     );
