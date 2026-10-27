@@ -442,7 +442,7 @@ test('retrieval: bigrams 中文二元切分；ftsQuery 保留字符过滤防注�
     assert.equal(normalizeForIndex('  多   空格  '), '多 空格');
 });
 
-test('retrieval: chunkChapter 按段聚块、序号递增、指纹随标签变化', () => {
+test('retrieval: chunkChapter 按段聚块、序号递增、指纹只吃内容与语料', () => {
     const body = ['第一段内容。'.repeat(10), '第二段内容。'.repeat(10), '第三段内容。'.repeat(3)].join('\n\n');
     const chunks = chunkChapter(body, { chapter: 5, target: 60 });
     assert.ok(chunks.length >= 2, '超过目标字数要切块');
@@ -453,11 +453,15 @@ test('retrieval: chunkChapter 按段聚块、序号递增、指纹随标签变�
 
     const plain = chunkChapter('同一段正文。', { chapter: 1 })[0];
     const tagged = chunkChapter('同一段正文。', { chapter: 1, tags: '飞刀 雪夜' })[0];
-    assert.notEqual(plain.hash, tagged.hash, '标签变了指纹要变，否则增量索引会跳过它');
+    // ★ 标签**不进**指纹（v1.3.0 改）。标签是派生属性（模型对「这段文字写什么」的
+    // 描述），不是这段文字的一部分。标签进了指纹，打标这个动作就会改掉块的指纹
+    // → 下次建索引整章判为「更新」→ 被章级继承的那份标签重写 → 给第 2 段打的标签
+    // 盖到第 1、3、4 段身上（已复现的张冠李戴）。
+    assert.equal(plain.hash, tagged.hash, '标签变了指纹不该变——标签是派生属性，不是内容的一部分');
     assert.match(plain.hash, /^[0-9a-f]{16}$/);
-    // 指纹 = hash(正文\0标签\0语料)。**语料必须进指纹**：同一段文字换个语料种类
+    // 指纹 = hash(正文\0语料)。**语料必须进指纹**：同一段文字换个语料种类
     // 若指纹不变，增量索引会因「没变」跳过它，库里就留着旧的语料标记——隔离闸门漏了。
-    assert.equal(plain.hash, hashChunk(`${plain.text}\u0000\u0000project`), '指纹 = hash(正文\\0标签\\0语料)，标签与语料空也要有分隔符');
+    assert.equal(plain.hash, hashChunk(`${plain.text}\u0000project`), '指纹 = hash(正文\\0语料)');
     const other = chunkChapter('同一段正文。', { chapter: 1, corpus: 'reference' })[0];
     assert.notEqual(plain.hash, other.hash, '语料变了指纹要变');
 });
