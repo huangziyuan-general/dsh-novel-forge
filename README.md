@@ -228,7 +228,8 @@ Claude Desktop / Cursor 等任意 MCP 客户端——工作区根取 `NOVEL_FORG
 }
 ```
 
-零依赖实现（原生 JSON-RPC 2.0 over stdio）；宿主外的 fs 后端带同样的
+零依赖实现（原生 JSON-RPC 2.0 over stdio；宿主 peer 包缺席也能启动——输出校验
+退化为不校验、工具本体照常）；宿主外的 fs 后端带同样的
 containment 与版本守卫语义（含 `readBytes` 字节原语——`.docx` 导入在 MCP 通道同样可用）。
 
 ## 排障 FAQ
