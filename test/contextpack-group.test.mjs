@@ -47,6 +47,30 @@ test('★ 冲突组：人物卡 vs 讲同一人的世界书条目 → 留人物�
     assert.match(r.conflicts[0].reason, /权威性/, '理由要点明为什么留这一份');
 });
 
+test('★ 裁决理由：方向不许反（v1.2.1 修）——败者侧不得印出假的不等式', () => {
+    const r = resolveEntityConflicts({
+        castCards: [{ name: '张三', card: '张三：青州人，寡言。' }],
+        worldEntries: [{ id: 'W1', content: '张三其实是流亡的皇子。', keywords: ['张三'], priority: 90 }],
+    });
+    const reason = r.conflicts[0].reason;
+    // 人物卡权威性 100 > 世界书 50；败者侧必须说「低于」而不是拿 > 当分隔符
+    assert.match(reason, /权威性 100 高于对方 50/, '胜者侧要说清高在哪');
+    assert.match(reason, /权威性 50 低于对方 100/, '败者侧不得印出「50 > 100」这种假不等式');
+    assert.doesNotMatch(reason, /权威性 \d+ > \d+/, '不得用 > 当「对」的分隔符');
+    // 只说决定胜负的那一个键：人物卡赢在权威性，优先级它反而更低，不该并列出来
+    assert.doesNotMatch(reason, /优先级/, '优先级不是决定胜负的键，不该出现在理由里');
+});
+
+test('裁决理由：权威性相同但新鲜度不同时，说新鲜度', () => {
+    const r = resolveConflicts([
+        { key: 'a', name: '甲', group: 'g', authority: 50, freshness: 10, priority: 50, required: false, order: 0 },
+        { key: 'b', name: '乙', group: 'g', authority: 50, freshness: 90, priority: 50, required: false, order: 1 },
+    ]);
+    assert.equal(r.kept.length, 1);
+    assert.equal(r.kept[0].name, '乙');
+    assert.match(r.dropped[0].reason, /同样权威，但新鲜度 10 低于对方 90/);
+});
+
 test('冲突组：人物卡缺失时世界书条目照常进包（没冲突就不裁决）', () => {
     const r = resolveEntityConflicts({
         castCards: [],
