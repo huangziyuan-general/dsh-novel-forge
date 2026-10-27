@@ -1168,6 +1168,47 @@ test('★ 阅读器：📖 取正文展开；✕ 收起；章号只认 data-id�
     assert.equal(controller.state.reader, null, '失败时不留半开的阅读器');
 });
 
+test('★ 阅读器位置：点哪章的 📖，阅读卡就插在哪章行下面（不置顶）', () => {
+    const { mod } = boot();
+    const { ChapterListView } = mod.exports.__internals;
+    const mkState = (readerNo) => ({
+        chapterList: [
+            { no: 1, title: '一章', chars: 20, version: 1 },
+            { no: 2, title: '二章', chars: 20, version: 1 },
+            { no: 3, title: '三章', chars: 20, version: 1 },
+        ],
+        chapterListLoading: false,
+        playback: { status: 'idle', currentNo: null },
+        reader: readerNo == null ? null : { no: readerNo, title: '样章', text: '正文', loading: false },
+        chapterNo: 1, selected: '书A', batchBusy: false, writing: false, revising: null,
+    });
+    // 行元素以章号为 key（视图 key: c.no），阅读卡 wrapper 的 key 是 'reader'
+    const rowEls = (tree) => collect(tree, (el) => typeof el.key === 'number' && el.key >= 1 && el.key <= 3);
+    const readerEls = (tree) => collect(tree, (el) => el.key === 'reader');
+    const order = (tree, el) => collect(tree, () => true).indexOf(el);
+
+    // 点第 2 章：阅读卡必须在「第 2 竧行之后、第 3 竧行之前」，且只有一张
+    const open2 = ChapterListView({ state: mkState(2) });
+    const r2 = readerEls(open2);
+    assert.equal(r2.length, 1, '阅读卡只有一张');
+    const rows2 = rowEls(open2);
+    assert.deepEqual(rows2.map((el) => el.key), [1, 2, 3], '前置：三行目录都在');
+    assert.ok(order(open2, r2[0]) > order(open2, rows2[1]), '★ 阅读卡必须在第 2 竧行之后');
+    assert.ok(order(open2, r2[0]) < order(open2, rows2[2]), '★ 阅读卡必须在第 3 竧行之前');
+
+    // 换开第 1 章：阅读卡跟着挪到第 1 章行后面——不是永远置顶
+    const open1 = ChapterListView({ state: mkState(1) });
+    const r1 = readerEls(open1);
+    const rows1 = rowEls(open1);
+    assert.equal(r1.length, 1);
+    assert.ok(order(open1, r1[0]) > order(open1, rows1[0]), '★ 点第 1 章：阅读卡在第 1 竧行之后');
+    assert.ok(order(open1, r1[0]) < order(open1, rows1[1]), '★ 且在第 2 竧行之前（不是列表顶上）');
+
+    // 收起：没有 reader 时一张都不该有
+    const closed = ChapterListView({ state: mkState(null) });
+    assert.equal(readerEls(closed).length, 0, '✕ 收起后不残留阅读卡');
+});
+
 // ── 陈旧响应守卫（请求序号）：快速切换时慢响应不得覆盖新状态 ──
 
 /**
