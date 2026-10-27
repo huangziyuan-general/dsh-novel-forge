@@ -455,7 +455,11 @@ test('retrieval: chunkChapter 按段聚块、序号递增、指纹随标签变�
     const tagged = chunkChapter('同一段正文。', { chapter: 1, tags: '飞刀 雪夜' })[0];
     assert.notEqual(plain.hash, tagged.hash, '标签变了指纹要变，否则增量索引会跳过它');
     assert.match(plain.hash, /^[0-9a-f]{16}$/);
-    assert.equal(plain.hash, hashChunk(plain.text + '\u0000'), '指纹 = hash(正文\0标签)，标签空也要有分隔符');
+    // 指纹 = hash(正文\0标签\0语料)。**语料必须进指纹**：同一段文字换个语料种类
+    // 若指纹不变，增量索引会因「没变」跳过它，库里就留着旧的语料标记——隔离闸门漏了。
+    assert.equal(plain.hash, hashChunk(`${plain.text}\u0000\u0000project`), '指纹 = hash(正文\\0标签\\0语料)，标签与语料空也要有分隔符');
+    const other = chunkChapter('同一段正文。', { chapter: 1, corpus: 'reference' })[0];
+    assert.notEqual(plain.hash, other.hash, '语料变了指纹要变');
 });
 
 test('retrieval: makeSnippet 定位命中；hitRatio 反映片段命中比例；parseChapterSpec 解析范围', () => {
