@@ -237,3 +237,40 @@ test('★ 质量债字段进了 output.schema（漏声明就是 INVALID_TOOL_OUT
         cleanup();
     }
 });
+
+test('★ settle 无债路径的 worst 必须裁剪：别章还欠债时，回传 worst 只许 {chapter,level}', async () => {
+    const { validateJsonSchemaValue } = await import('@deepseek-ai/dsh-tools');
+    const p = await bootBook('裁剪书');
+    const { tool, exec, cleanup, readJson, writeJson } = p;
+    try {
+        await tool('novel_write_chapter').execute({
+            book: '裁剪书', chapter: 1, title: '雨夜来客',
+            content: chapterOf(400), summary: '来客留鞋',
+        }, exec);
+        // bookQualityView 的 worst 是整行 {chapter,level,items}——原实现在无债 settle
+        // 路径里 `worst: view0.worst ?? undefined` 原样回传，items 撞 worst 的
+        // additionalProperties:false → INVALID_TOOL_OUTPUT。复现条件恰恰是
+        // 「结清的这章没债、别的章还有债」——上面的单章用例打不中它，这里注入第 2 章的债。
+        const novel = readJson('裁剪书/novel.json');
+        novel.quality = {
+            ...(novel.quality ?? {}),
+            debts: {
+                ...(novel.quality?.debts ?? {}),
+                '2': [makeDebt({ code: 'basis-stale', message: '注入的测试债', chapter: 2, ts: '2026-10-28T00:00:00.000Z' })],
+            },
+        };
+        writeJson('裁剪书/novel.json', novel);
+
+        const quality = tool('novel_quality');
+        await quality.execute({ action: 'settle', book: '裁剪书', chapter: 1 }, exec); // 有债路径
+        const v = await quality.execute({ action: 'settle', book: '裁剪书', chapter: 1 }, exec); // 无债路径
+        assert.ok(v.total > 0, '前置：别章（第2章）还欠着债');
+        assert.deepEqual(validateJsonSchemaValue(quality.output.schema, v), [],
+            '★ 无债 settle 的输出被宿主校验器判违规（worst 带了 items）');
+        if (v.worst !== undefined) {
+            assert.deepEqual(Object.keys(v.worst).sort(), ['chapter', 'level'], 'worst 只许 {chapter,level}');
+        }
+    } finally {
+        cleanup();
+    }
+});
