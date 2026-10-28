@@ -239,6 +239,28 @@ test('★ 会话归属：init 写入创建会话；其他会话碰到也补录�
     assert.deepEqual(noSession.sessions, [], '没有会话 id 时不能凭空造归属');
 });
 
+test('init 对软删除残留（novel.json 空文件）放行重建；非空垃圾仍响亮报错', async () => {
+    assert.equal(hasSdk, true, '缺宿主 SDK symlink：先 npm run setup-dev');
+    const project = tool('novel_project');
+    // 模拟面板 DELETE 的软删（rest/delete_book：novel.json 写空串留审计），旧章留在盘上
+    fs.mkdirSync(path.join(root, '软删重建书', '正文'), { recursive: true });
+    fs.writeFileSync(path.join(root, '软删重建书', 'novel.json'), '');
+    fs.writeFileSync(path.join(root, '软删重建书', '正文', '第1章 旧稿.md'), '旧正文残留');
+
+    const r = await project.execute({ action: 'init', book: '软删重建书', title: '软删重建书' }, exec);
+    assert.equal(r.action, 'init');
+    assert.ok(r.next.includes('曾被面板删除'), `回执要点明软删重建背景，实际 next：${r.next}`);
+    const meta = JSON.parse(fs.readFileSync(path.join(root, '软删重建书', 'novel.json'), 'utf8'));
+    assert.equal(meta.title, '软删重建书', 'novel.json 已重建');
+
+    // 非空垃圾内容不算软删——仍是「不是合法 JSON」响亮报错，不静默覆盖
+    fs.writeFileSync(path.join(root, '软删重建书', 'novel.json'), '垃圾内容{{');
+    await assert.rejects(
+        () => project.execute({ action: 'init', book: '软删重建书' }, exec),
+        /不是合法 JSON/,
+    );
+});
+
 test('链路：init → 大纲 → 人物 → 世界书 → 细纲批准', async () => {
     const r1 = await tool('novel_project').execute(
         { action: 'init', book: '示例书', title: '示例书', genre: '东方玄幻', logline: '捡骨人逆改星图' }, exec,

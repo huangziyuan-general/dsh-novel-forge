@@ -63,6 +63,19 @@ test('账本比对：新增静默、改写与删除必须报出来', () => {
     assert.deepEqual(m.added, []);
 });
 
+test('账本比对：同值换状态也是改写（confirmed/unknown/pending 不能混）', () => {
+    const confirmed = computeBasis({
+        outline: OUTLINE,
+        facts: [{ entity: '甲', key: '境界', value: '筑基', status: 'confirmed', chapter: 1 }],
+    });
+    const unknown = computeBasis({
+        outline: OUTLINE,
+        facts: [{ entity: '甲', key: '境界', value: '筑基', status: 'unknown', chapter: 2, note: '作者还没定' }],
+    });
+    const drift = diffBasis(confirmed, unknown);
+    assert.deepEqual(drift.facts.modified, ['甲|境界'], '值没变、状态变了也要报警');
+});
+
 test('★ 端到端：简报生成后改了细纲 → 写章落盘时必须报「简报已过期」', async () => {
     const p = await bootPlugin({ config: { minChapterChars: 300, maxChapterChars: 5000 } });
     const { tool, exec, cleanup, root } = p;

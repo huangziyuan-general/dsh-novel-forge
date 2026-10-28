@@ -265,7 +265,7 @@ test('老库迁移：干净的章保留标签（用户付过的模型调用费�
     }
 });
 
-test('老库迁移：被广播污染的章跳过（不把污染固化进缓存）', async () => {
+test('老库迁移：被广播污染的章清空正文索引里的标签', async () => {
     const { dir, db, chunks } = await indexedChapter();
     try {
         // 模拟老实现的章级继承：整章所有块被刷成同一份标签
@@ -275,6 +275,9 @@ test('老库迁移：被广播污染的章跳过（不把污染固化进缓存�
         assert.equal(r.migrated, 0, '污染的章不补录');
         const cache = readTagCacheForTexts(db, chunks.map((c) => c.text));
         assert.equal(cache.size, 0, '缓存里不该留下这份污染');
+        assert.ok(r.clearedTags > 0, '要报告清掉了多少条旧标签');
+        const rows = db.prepare('SELECT tags FROM chunks ORDER BY seq').all();
+        assert.ok(rows.every((row) => row.tags === ''), '★ 正文索引里的污染标签也必须清空');
     } finally {
         db.close();
         fs.rmSync(dir, { recursive: true, force: true });
