@@ -10,7 +10,7 @@ description: Use when the user asks to write, create, outline, or continue a nov
 ## 首要原则（违反即返工）
 
 1. **一次只写一章**。写完立即停下，向用户汇报本章要点 + 下一章建议，等用户决定。绝不擅自连写。
-2. **写前必 briefing，写后必落账**：`novel_briefing` 拿上下文包再动笔；正文里的人物状态变化（境界/位置/持有/关系）通过 `novel_write_chapter` 的 `facts_updates` 落账，并建议带 `facts_evidence`（多行「实体|键|正文原句」）——证据会硬校验**必须逐字摘自本章正文**（忽略空白差异），找不到整章拒绝保存，所以要么照抄原句、要么别传。另外：简报 warnings 里出现「硬约束被截断/整块被预算挤掉」时，照告警里的恢复路径（read 原文件 / `novel_ledger query`）补齐来源再动笔，不要按截断版写。
+2. **写前必 briefing，写后必落账**：`novel_briefing` 拿上下文包再动笔；正文里的人物状态变化（境界/位置/持有/关系）通过 `novel_write_chapter` 的 `facts_updates` 落账，并建议带 `facts_evidence`（多行「实体|键|正文原句」）——证据会硬校验**必须逐字摘自本章正文**（忽略空白差异），找不到整章拒绝保存，所以要么照抄原句、要么别传。**认知变化同章声明**：人物初次得知某事、或读者知道了新真相，带 `cognition_updates`（多行「谁|知道|信息」/「谁|不知道|信息」/「读者|知道|信息」）——认知账本会在后续章节的简报里守住「谁知道什么」的边界（信息差、身份保密、伏笔未揭都靠它），简报「人物认知边界」段的「不知道」清单是硬边界，笔下人物绝不能未卜先知。另外：简报 warnings 里出现「硬约束被截断/整块被预算挤掉」时，照告警里的恢复路径（read 原文件 / `novel_ledger query`）补齐来源再动笔，不要按截断版写。
 3. **回溯用账本不凭记忆**：引用「第 N 章时」的状态用 `novel_ledger status_at`；查某值哪章改的用 `timeline`；找前文段落用 `novel_search query`（没索引先 build）。
 4. **门禁是硬的**：细纲未 approve 不能写章；**每章字数按「本书自定义区间 > 投放平台口径 > 插件默认（2000–4000）」判定**——一律以 `novel_briefing` 的「本章字数目标」段为准，别拿工具描述里的默认数或上一本书的数字硬套（番茄 1500–3000 建议落 2800–2990；起点 2000–4000）；同章被拒 3 次熔断——回去改细纲/场景契约，不要换措辞硬压。
 5. **改稿两条通道，按目的选**：自己动笔改稿（含机审驳回后重写同一章）→ `novel_write_chapter`，同章追加新版本、旧版永不覆盖；要把修订登记成等用户批准的提案 → `novel_propose`（只登记，不动正文）。提案的「应用/丢弃」是用户主权动作——提完就停，告诉用户到面板点，绝不说「已生效」；同一章已有 pending 提案时不要重复提。
@@ -25,7 +25,7 @@ description: Use when the user asks to write, create, outline, or continue a nov
 2. `novel_project promise` 写故事承诺书（本书承诺什么爽点、绝不做的事——每次写章自动注入）
 3. 设定固化：`novel_worldbook add`（关键词触发或 always 常驻）；人物 `novel_character save`（多角色同台务必建 voice 语言基因卡：句长/口头禅/禁忌）
 4. `novel_outline save_book` 全书大纲
-5. 逐章循环：`novel_outline save_chapter`（含 `## 本章必写场景` 与 `## 本章禁止偏离项` 契约段）→ `novel_outline approve` → `novel_scene save`（出场人物/隐藏人物/禁项；有反转要藏时 hidden 人物档案不进上下文、正文出现其名会被拦）→ `novel_write_chapter`（title/content/summary/facts_updates，可选 facts_evidence）
+5. 逐章循环：`novel_outline save_chapter`（含 `## 本章必写场景` 与 `## 本章禁止偏离项` 契约段）→ `novel_outline approve` → `novel_scene save`（出场人物/隐藏人物/禁项；有反转要藏时 hidden 人物档案不进上下文、正文出现其名会被拦）→ `novel_write_chapter`（title/content/summary/facts_updates，可选 facts_evidence、cognition_updates）
    - 「必写场景」格式照抄这个样子（拍写在场景行内括号里，或场景行下方的「拍：…」独立行，两种都认；**「：」前的摘要短语要能在正文里逐字出现，拍不要求逐字**）：
 
      ```markdown
