@@ -27,7 +27,7 @@ const { tmpdir } = os;
 import { applyCachedTags, legacyPollution, planAnnotations, tagFingerprint } from '../lib/tag-cache.js';
 import {
     openIndex, chunkChapter, upsertChunks, setChunkTags, untaggedChunks,
-    readTagCacheForTexts, writeTagCache, migrateLegacyTags,
+    readTagCacheForTexts, writeTagCache, migrateLegacyTags, bigrams,
 } from '../lib/retrieval.js';
 import { annotateChunks } from '../lib/engine-tasks.js';
 import { indexChapters, openIndexForBook } from '../lib/index-store.js';
@@ -278,6 +278,39 @@ test('老库迁移：被广播污染的章清空正文索引里的标签', async
         assert.ok(r.clearedTags > 0, '要报告清掉了多少条旧标签');
         const rows = db.prepare('SELECT tags FROM chunks ORDER BY seq').all();
         assert.ok(rows.every((row) => row.tags === ''), '★ 正文索引里的污染标签也必须清空');
+    } finally {
+        db.close();
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+/**
+ * 污染清理必须**同步重建检索列**：`seg.body` 里拼的是 `bigrams(正文) + bigrams(标签)`，
+ * 只 `UPDATE chunks SET tags=''` 而不动 seg，标签就从表面上消失了、检索里却还能命中它
+ * （误召回原样留着）。这条用例钉住的是「将来有人把逐块 setChunkTags 当成与 bulk UPDATE
+ * 重复的代码删掉」——那不是一次清理，是把污染从索引里留在检索面上。
+ */
+test('★ 污染章清标必须把标签从检索列（seg）里一起抹掉', async () => {
+    const { dir, db, chunks } = await indexedChapter();
+    try {
+        const pollutedTag = '雪夜 决斗';
+        // 走**真打标路径**污染整章（老实现的章级继承就是这个形状）：
+        // setChunkTags 同时写 chunks.tags 与 seg.body，标签因此既在表上也在检索列里。
+        for (const c of chunks) setChunkTags(db, 1, c.seq, pollutedTag);
+        // 前置：污染标签确实在检索列里（不清 = 误召回原样留着）
+        const tagBigram = bigrams(pollutedTag).filter((g) => !bigrams(chunks[0].text).includes(g))[0];
+        assert.ok(tagBigram, '夹具：要有一个只属于标签、不在正文里的大片段');
+        assert.ok(db.prepare('SELECT count(*) AS n FROM seg WHERE body LIKE ?').get(`%${tagBigram}%`).n > 0,
+            '前置：污染标签已进入检索列');
+
+        migrateLegacyTags(db);
+
+        assert.equal(db.prepare('SELECT count(*) AS n FROM seg WHERE body LIKE ?').get(`%${tagBigram}%`).n, 0,
+            '★ 迁移后检索列里不得再残留污染标签');
+        // 正文本身仍可被搜到（清污不许把索引清废）
+        const bodyGram = bigrams(chunks[0].text)[10];
+        assert.ok(db.prepare('SELECT count(*) AS n FROM seg WHERE body LIKE ?').get(`%${bodyGram}%`).n > 0,
+            '正文大片段必须还在');
     } finally {
         db.close();
         fs.rmSync(dir, { recursive: true, force: true });
