@@ -1,5 +1,21 @@
 # Changelog
 
+## 未发布
+
+### 新增（竞品借鉴第 5 轮 · 源码：QMAI / NovelForge / MirrorNovel / novel-kit）
+
+- **★ 上下文包的硬约束完整性告警（宁报错，不静默丢弃）**：借鉴 QMAI `context-engine.ts` 的「正典是硬约束：静默丢掉它会让模型凭空编造」——修前 `buildContextPack` 的 `clip(content, cap)` 会把超长硬约束块（细纲/承诺书/场景契约/追读节奏/事实账本/未回收伏笔）**无声截短**（`dropped` 只登记「整块装不下」，登记不到「装进来了但被砍了一半」），模型拿到截断版却不知道自己少看了一半设定；硬块整块进 `dropped` 也没有恢复路径。现在 `push()` 逐块登记截断（`truncated:[{name,original,kept}]`，随 `novel_briefing` 输出并同步 schema），新纯函数 `hardIntegrity` 按硬块名单分类，`buildBriefing` 把硬块的截断/整块挤掉升成 warnings 并附恢复路径（细纲→read 细纲文件、账本→`novel_ledger query`、伏笔→`novel_ledger list`、承诺书/契约→read 源文件）。口径只做「如实登记 + 当面告警」，不进门禁放行分数。回归钉在 `test/pack-integrity.test.mjs`。
+- **★ 事实账本的证据 grounding（`facts_evidence`）**：借鉴 MirrorNovel `semanticMemory.js` 的 evidence 子串校验——修前 `facts_updates` 是模型自述，账本可能记下**正文没写的事**，后续每一章都把它当硬约束遵守（一致性偏差被账本放大）。现在 `novel_write_chapter` 增加可选 `facts_evidence`（多行「实体|键|正文原句」，原句含竖线不切断）：给了就硬校验——证据忽略空白差异后必须逐字出现在本章正文里，太短（归一后 <4 字，`MIN_EVIDENCE_CHARS`）定位不到内容也拒，对不上 `facts_updates` 的实体|键同样拒；违规整章拒绝保存（`GateRejectionError`，`账本证据不符`，计入熔断口径与账本冲突同款）。不提供不校验（批量起草/面板保存无证据通道，向后兼容）。校验通过的证据随行落账（facts.json 行与 `addedFacts` 回执带 `evidence` 字段），事后可对账；`novel_ledger update` 无正文可比，不接此校验。纯函数 `validateFactEvidence` 在 `lib/ledger.js`，回归钉在 `test/fact-evidence.test.mjs`。
+
+### 竞品结论记录（本轮分析、有意不做的）
+
+- **三态认知账本 + `readerKnows` 信息差**（QMAI `character-cognition.ts`）：全项目确无此概念，是真缺口，但需要新的数据文件与工具面，留待下一轮单独设计实现。
+- **关系谓语类型白名单**（NovelForge `_coerce_kind_by_types`）：不适用——DSH 账本是 `entity.key:value` 键值模型，没有关系三元组，无处挂白名单。
+- **字数句边界硬裁剪**（NovelForge `continuation_budget_runtime`）：不适用——DSH 是驳回制（机审下限退稿 + 逐场景字数预算 + 段落分布反馈），静默裁正文与「驳回复馈改写」的哲学相反。
+- **蒸馏风格档案**（MirrorNovel）：纯 prompt 注入的软约束，只取其「抽规则→后置硬校验」思路；本轮的 evidence grounding 是同哲学的落点之一。
+- **novel-kit 全套**：纯提示词自觉反例（"宪法检查"脚本零解析、warn but allow），仅吸收其 issue 严重度分级法（已有质量债对齐）；不抄实现。
+- **MaliangAINovalWriter**：上游只发预构建包，仓库仅 README，无法源码核实，不计入。
+
 ## v1.3.3 (2026-10-28)
 
 ### 修复
