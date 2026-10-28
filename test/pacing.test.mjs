@@ -109,6 +109,18 @@ test('冷却判定辅助函数：lastUsedChapter / onCooldown 与矩阵口径一
     assert.equal(onCooldown(chapters, 'conflict', 13, 2), false);
 });
 
+test('冷却判定：补写早章时，未来章记录不能倒灌成冷却', () => {
+    const p = state({ 2: { types: ['conflict'], tier: 'normal' } });
+    const r = analyzePacing({
+        content: '两人厮杀，又是一阵激战，兵刃相接见血了。',
+        outline: '## 本章节奏\n- 节奏：冲突爽点\n',
+        chapter: 1,
+        pacing: p,
+    });
+    assert.deepEqual(r.issues, [], `第1章没有过去记录，不该被第2章拦住：${r.issues.join(' | ')}`);
+    assert.deepEqual(pacingRecommendation({ pacing: p, chapter: 1 }).cooling, []);
+});
+
 test('事件类型表：5 类、冷却章数 2/1/2/3/2（报告口径，不得漂移）', () => {
     assert.deepEqual(EVENT_TYPES.map((t) => t.id), ['conflict', 'bond', 'faction', 'locale', 'crisis']);
     assert.deepEqual(EVENT_TYPES.map((t) => t.cooldown), [2, 1, 2, 3, 2]);
