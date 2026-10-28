@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.3.1 (2026-10-28)
+
+### 修复
+
+- **novel_quality 结清无债章节不再报 INVALID_TOOL_OUTPUT**：settle 打到「本章无债」的书上时，若书里其他章仍有债，回执的 worst 字段原样带出了整行对象（含 items 数组），撞上 worst 声明的 additionalProperties:false 被宿主校验器判违规。现在与其他两条路径一致，先经 worstOf 裁剪成 {chapter, level} 再回传；补回归测试钉住该路径（注入别章债务 → 结清本章两次 → 宿主校验器零违规）。
+
 ## v1.3.0 (2026-10-27)
 
 ### 修复
