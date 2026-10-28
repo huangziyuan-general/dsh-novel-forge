@@ -65,9 +65,17 @@ test('债表：按章号覆盖（不可变条目，不是计数器）', () => {
     assert.equal(debts['3'][0].code, 'noai');
 });
 
-test('债表：空债目不写键（不留空壳）', () => {
-    const debts = accumulateDebt({}, 5, []);
-    assert.deepEqual(Object.keys(debts), []);
+/**
+ * 1.3.2 把两处生产写法改成「空债也覆盖」（重写干净了旧账必须清零），但这个自称
+ * 「债目入库（增量合入用的纯函数版本）」的实现仍留着 `if (list.length === 0) return base`
+ * ——一旦被接上，刚修的清零立刻回归。这里把契约改成「无条件覆盖」，并让生产两处都走它。
+ */
+test('债表：空债目必须覆盖旧账（清零），不留上一版的陈旧欠账', () => {
+    const owed = accumulateDebt({}, 5, [makeDebt({ code: 'noai', message: 'a', chapter: 5 })]);
+    assert.equal(owed['5'].length, 1, '前置：先有一笔债');
+    const cleared = accumulateDebt(owed, 5, []);
+    assert.deepEqual(cleared['5'], [], '★ 空债目要写成 []（覆盖），不是留着旧账');
+    assert.deepEqual(Object.keys(cleared), ['5'], '只动这一章，别章的账原样保留');
 });
 
 // ── 书级视图 ────────────────────────────────────────────────────────────────

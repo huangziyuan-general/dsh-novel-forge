@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.3.3 (2026-10-28)
+
+### 修复
+
+- **★ 简报依据指纹的跨版本误报真的拦住了**：1.3.2 的第 8 条声称「confirmed 保持裸值口径，老书升级不会误报一批设定过期」——那只对**全部事实都是 confirmed** 的书成立。带 unknown/pending 的书实测会误报：旧记录无后缀、新算的有后缀，一比对就是 `modified:[实体|键]`，写章当场报「账本在简报之后被改写」并落一条 major 质量债。现在 `BASIS_VERSION` 1→2 标出口径变更，并在 `diffBasis` 里做真护栏：版本不同就**跳过账本比对**（`factsSkipped` 显式回传，不让人以为真的没变）。⚠️ 只跳账本、不跳 digest——细纲/契约/世界书三项的 sha 语义从没改过，跨版本比仍然有效，别顺手一起关掉。回归钉在 `test/basis-stale.test.mjs`。
+- **★ 账本「截至第 n 章的当前值」五份实现收口成一份**：此前 `ledger.queryFacts`（简报摘要的底座）、`ledger.factsAt`（status_at）、`ledger.statusTimeline`（演化线）、`book-console.currentFacts`（面板）、`content-gate.factStatesAt`（内容门禁）、`basis.factsEntries`（依据指纹）各写一遍同一规则，且对**畸形行**的处理互不相同：缺章号/章号非整数的行在简报与面板里能当「当前值」，在内容门禁与指纹里却被跳过——同一份 facts.json 两处不同答案，正是 0.13.6 修过的「供给与检测不对称」换个入口重演。1.3.2 修补录回退时也只改了其中一份。现在唯一实现是 `ledger.factTimeline`（行守卫 + 按章号、同章按写入序排序），其余全部薄壳化委托。新回归 `test/fact-latest-source.test.mjs` 钉死各出口同答案，并明确「畸形行不参与当前值竞逐」。
+- **质量债合入也收口成一份实现**：1.3.2 把「空债也覆盖（清零）」改进了两处生产写法，但自称「增量合入用的纯函数版本」的 `accumulateDebt` 仍留着「空列表就不写键」，并被一条单测当契约钉住——一旦被接上，刚修的清零立刻回归。现在它改为无条件覆盖（空账清旧账），写章链、驳回合入路径、面板保存三处全部走它。
+- **污染标签清理只留一条正确路径**：迁移的污染分支里 `UPDATE chunks SET tags=''` 与逐块 `setChunkTags` 是同一次改动的两条路，而**只有 `setChunkTags` 会重建 `seg`**（检索列里拼着 `bigrams(正文)+bigrams(标签)`）。两条都跑结果是对的，但留着就有「谁把逐块循环当重复代码删掉」的陷阱——那时标签从表上消失、污染仍留在检索面（误召回原样还在）。删掉 bulk UPDATE，注释写死原因，并加回归：污染章的标签必须从检索列里一起抹掉，同时正文仍可搜到。
+- **迁移不再静默**：`migrateLegacyTagsOnce` 此前丢弃全部统计、失败还 `catch {}`。从 v2 起它会破坏性改写派生数据（清正文索引标签），悄悄做掉又不留痕，出问题时连「到底动过没有」都查不到。现在成功打一条工作量日志（补录/污染章数/清掉条数）、失败 `console.warn` 并说明下次开库重试。
+- `factStatesAt` 的值归一与指纹对齐（`String(f.value ?? '')`，不再产出 `'undefined'` 这种看着像值的字符串）。
+- **`novel_project` 的 `chars` / `platform` 动作回执不再渲染崩溃**：两个 action 没补 render 分支，回执在宿主侧整包判无效（`Cannot read properties of undefined (reading 'length')`，模型拿不到任何数据）。补上分支，status 行兜底改为可缺省；回归钉在 `test/char-limits-scope.test.mjs`（宿主 render 不许抛）。
+- `migrateLegacyTags` 空库早退的返回形状与尾部对齐（`clearedTags` 恒在三键里），统计消费方不再可能读到 undefined。
+
 ## v1.3.2 (2026-10-28)
 
 ### 修复

@@ -76,6 +76,40 @@ test('账本比对：同值换状态也是改写（confirmed/unknown/pending 不
     assert.deepEqual(drift.facts.modified, ['甲|境界'], '值没变、状态变了也要报警');
 });
 
+/**
+ * 1.3.2 把状态后缀加进了 factsSig，但**没升 BASIS_VERSION**，而 diffBasis 又不读 version：
+ * 升级前生成的简报记录（无后缀）与升级后重算的 sig（有后缀）口径不同，一比就必然
+ * 报「账本在简报之后被改写」，并落一条 major 质量债（basis-stale）。
+ * 同一批的 TAG_CACHE_VERSION 1→2 是正确处置，这里补上 basis 那一半。
+ * ⚠️ 只跳 facts 比对：digest 覆盖的三项（细纲/契约/世界书）sha 语义没变，跨版本仍有效。
+ */
+test('★ 跨版本指纹记录不参与账本比对（老记录不许在新版本上报假漂移）', () => {
+    const oldRecord = { version: 1, digest: 'd', sources: [{ type: 'outline', hash: 'h' }], factsSig: ['甲|境界=筑基'] };
+    const now = computeBasis({
+        outline: 'o',
+        facts: [{ entity: '甲', key: '境界', value: '筑基', status: 'unknown', chapter: 2, note: '还没定' }],
+    });
+    assert.notEqual(now.version, 1, '口径变了就必须升版本（否则跨版本护栏无处可挂）');
+    const d = diffBasis(oldRecord, { ...now, sources: [{ type: 'outline', hash: 'h' }] });
+    assert.deepEqual(d.facts.modified, [], '★ 旧版本记录的 sig 口径不同，不许据此报「账本被改写」');
+    assert.equal(d.factsSkipped, true, '跳过要说得出口，别让人以为真的没变');
+    assert.deepEqual(d.stale, [], '来源没变仍然不报 stale');
+
+    // 同版本之间：状态变化照报（1.3.2 的能力不许退化）
+    const same = diffBasis(now, computeBasis({
+        outline: 'o',
+        facts: [{ entity: '甲', key: '境界', value: '筑基', status: 'pending', chapter: 3 }],
+    }));
+    assert.deepEqual(same.facts.modified, ['甲|境界'], '同版本比对必须仍报状态改写');
+
+    // 跨版本的 digest 比对仍有效（那三项的 sha 语义没动）
+    const cross = diffBasis(
+        { version: 1, sources: [{ type: 'outline', hash: 'A' }], factsSig: [] },
+        { version: 2, sources: [{ type: 'outline', hash: 'B' }], factsSig: [] },
+    );
+    assert.deepEqual(cross.stale, ['outline'], '细纲真变了，跨版本也要报——护栏只管账本那一半');
+});
+
 test('★ 端到端：简报生成后改了细纲 → 写章落盘时必须报「简报已过期」', async () => {
     const p = await bootPlugin({ config: { minChapterChars: 300, maxChapterChars: 5000 } });
     const { tool, exec, cleanup, root } = p;
