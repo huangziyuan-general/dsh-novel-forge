@@ -1,21 +1,16 @@
 # Changelog
 
-## 未发布
+## v1.3.4 (2026-10-28)
 
-### 新增（竞品借鉴第 5 轮 · 源码：QMAI / NovelForge / MirrorNovel / novel-kit）
+### 新增
 
-- **★ 上下文包的硬约束完整性告警（宁报错，不静默丢弃）**：借鉴 QMAI `context-engine.ts` 的「正典是硬约束：静默丢掉它会让模型凭空编造」——修前 `buildContextPack` 的 `clip(content, cap)` 会把超长硬约束块（细纲/承诺书/场景契约/追读节奏/事实账本/未回收伏笔）**无声截短**（`dropped` 只登记「整块装不下」，登记不到「装进来了但被砍了一半」），模型拿到截断版却不知道自己少看了一半设定；硬块整块进 `dropped` 也没有恢复路径。现在 `push()` 逐块登记截断（`truncated:[{name,original,kept}]`，随 `novel_briefing` 输出并同步 schema），新纯函数 `hardIntegrity` 按硬块名单分类，`buildBriefing` 把硬块的截断/整块挤掉升成 warnings 并附恢复路径（细纲→read 细纲文件、账本→`novel_ledger query`、伏笔→`novel_ledger list`、承诺书/契约→read 源文件）。口径只做「如实登记 + 当面告警」，不进门禁放行分数。回归钉在 `test/pack-integrity.test.mjs`。
-- **★ 事实账本的证据 grounding（`facts_evidence`）**：借鉴 MirrorNovel `semanticMemory.js` 的 evidence 子串校验——修前 `facts_updates` 是模型自述，账本可能记下**正文没写的事**，后续每一章都把它当硬约束遵守（一致性偏差被账本放大）。现在 `novel_write_chapter` 增加可选 `facts_evidence`（多行「实体|键|正文原句」，原句含竖线不切断）：给了就硬校验——证据忽略空白差异后必须逐字出现在本章正文里，太短（归一后 <4 字，`MIN_EVIDENCE_CHARS`）定位不到内容也拒，对不上 `facts_updates` 的实体|键同样拒；违规整章拒绝保存（`GateRejectionError`，`账本证据不符`，计入熔断口径与账本冲突同款）。不提供不校验（批量起草/面板保存无证据通道，向后兼容）。校验通过的证据随行落账（facts.json 行与 `addedFacts` 回执带 `evidence` 字段），事后可对账；`novel_ledger update` 无正文可比，不接此校验。纯函数 `validateFactEvidence` 在 `lib/ledger.js`，回归钉在 `test/fact-evidence.test.mjs`。
-- **★ 认知账本（谁知道什么 / 不知道什么 / 读者已知什么）**：兑现上轮记录的「三态认知账本 + `readerKnows` 信息差」缺口（借鉴 QMAI `character-cognition.ts` + `cognition-context.ts`）。事实账本记「世界是什么样」，管不了「**人物以为**世界是什么样」——身份保密、伏笔未揭这类桥段的崩法是「不该知道的人知道了」，此前 DSH 没有任何一层守这个边界。落地：新数据文件 `账本/cognition.json`（**append-only 行日志**，当前状态是视图派生物，「谁在哪章得知了什么」可重放可对账）；`novel_write_chapter` 新可选 `cognition_updates`（多行「谁|知道|信息」/「谁|不知道|信息」/「读者|知道|信息」），随章落账并在 `addedCognition` 回执显形；`novel_briefing` 按本章出场人物注入「人物认知边界（信息差）」段（负向条款排前、整条呈现、按条数封顶绝不按字符截断——截断否定句会反转语义），出场人物带「不知道」清单时逐人警戒走 warnings；认知行涉隐藏人物时与场景契约同一口径洗白。与 QMAI 的差异（口径收紧）：输入走**严格词表**「知道/不知道」，不做「得知/察觉/意识到」的自然语言解析（猜错会静默记反）；「读者|不知道」拒收（悬念是默认态，记账只记事件）；认知倒退（对已知重申不知道）不拦——失忆/装傻是合法桥段，但 `cognitionRegressions` 显形进 warnings，不许静默。`novel_ledger` 新 `cognition` 动作（不带 updates = 视图，带 = 补录/订正，行带 chapter 供对账）。不声明不校验——批量起草/面板保存零影响。纯函数在 `lib/cognition.js`（入 AGENTS.md 纯函数名单），回归钉在 `test/cognition.test.mjs`。
+- **上下文包硬约束完整性告警**：硬约束块（细纲/承诺书/场景契约/追读节奏/事实账本/未回收伏笔）被预算截断时逐块登记（`truncated:[{name,original,kept}]`，随 `novel_briefing` 输出并同步 schema），`buildBriefing` 把硬块的截断/整块挤掉升成 warnings 并附恢复路径（read 源文件 / `novel_ledger query` 等）——不再静默丢弃。回归钉在 `test/pack-integrity.test.mjs`。
+- **事实账本证据 grounding（`facts_evidence`）**：`novel_write_chapter` 新可选 `facts_evidence`（多行「实体|键|正文原句」，原句含竖线不切断）：给了就硬校验——证据忽略空白差异后必须逐字出现在本章正文里，太短（归一后 <4 字）或对不上 `facts_updates` 的实体|键即整章拒绝（计熔断口径）；通过的证据随行落账（facts.json 行与 `addedFacts` 回执带 `evidence`）。不提供不校验（批量起草/面板保存无证据通道，向后兼容）。纯函数 `validateFactEvidence` 在 `lib/ledger.js`，回归钉在 `test/fact-evidence.test.mjs`。
+- **认知账本（谁知道什么 / 不知道什么 / 读者已知什么）**：新数据文件 `账本/cognition.json`（append-only 行日志，当前状态是视图派生物）；`novel_write_chapter` 新可选 `cognition_updates`（多行「谁|知道|信息」/「谁|不知道|信息」/「读者|知道|信息」；严格词表，「读者|不知道」拒收）；随章落账并在 `addedCognition` 回执显形；`novel_briefing` 按本章出场人物注入「人物认知边界（信息差）」段（负向条款排前、整条呈现、按条数封顶绝不按字符截断），出场人物带「不知道」清单时逐人警戒走 warnings；认知行涉隐藏人物按场景契约同口径洗白；`novel_ledger` 新 `cognition` 动作（不带 updates = 视图，带 = 补录/订正）。纯函数在 `lib/cognition.js`，回归钉在 `test/cognition.test.mjs`。
 
-### 竞品结论记录（本轮分析、有意不做的）
+### 修复
 
-- **三态认知账本 + `readerKnows` 信息差**（QMAI `character-cognition.ts`）：全项目确无此概念，是真缺口，需要新的数据文件与工具面——已于本轮实现（见上方「认知账本」条目）。
-- **关系谓语类型白名单**（NovelForge `_coerce_kind_by_types`）：不适用——DSH 账本是 `entity.key:value` 键值模型，没有关系三元组，无处挂白名单。
-- **字数句边界硬裁剪**（NovelForge `continuation_budget_runtime`）：不适用——DSH 是驳回制（机审下限退稿 + 逐场景字数预算 + 段落分布反馈），静默裁正文与「驳回复馈改写」的哲学相反。
-- **蒸馏风格档案**（MirrorNovel）：纯 prompt 注入的软约束，只取其「抽规则→后置硬校验」思路；本轮的 evidence grounding 是同哲学的落点之一。
-- **novel-kit 全套**：纯提示词自觉反例（"宪法检查"脚本零解析、warn but allow），仅吸收其 issue 严重度分级法（已有质量债对齐）；不抄实现。
-- **MaliangAINovalWriter**：上游只发预构建包，仓库仅 README，无法源码核实，不计入。
+- **认知倒退判据的时点基线**：基线定为「截至本章（含本章更早的行）、只排除 chapter 更大的行」——补录早章不被后来认知倒灌；同章更早调用落的认知行仍参与前情检查（版本化重写/面板存章会再次落行）；批内重复「不知道」作为叠加信号保留。判据改走不封顶的 `cognitionFlatRows`（此前建在按 8 条封顶的展示视图上，「已知第 9 条之后被撤销」永远报不出来——展示截断不是事实截断）。四条时点关系补回归钉（跨章仍报 / 补录晚章不报 / 同章重写要报 / 批内重申不豁免）。
 
 ## v1.3.3 (2026-10-28)
 
