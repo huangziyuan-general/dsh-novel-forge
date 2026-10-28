@@ -37,9 +37,10 @@ const FENCE = 'x-dsh-novel-forge';
 // ── R1 路由清单（护栏本体）──────────────────────────────────────────────
 //
 // **同步方式**：每条路由的入口条件都是 `req.method === '...' && segments[...] === '...'`，
-// 且 trusted 检查是该分支第一行（`if (!trusted(req))`）。'R1-00' 用例从源码扫出
-// `req.method ===` 条数与 `!trusted(req)` 条数，双双对齐本清单长度——将来加端点
-// 漏写 fence（条数差一）或漏进清单，都会被这条断言当场抓住，清单不会烂掉。
+// fence 检查已**中央收口**到 server-api.js 派发层（2026-10-28，此前 30+ 处路由内手抄——
+// 漏写一行就是静默开放）。'R1-00' 用例扫出 `req.method ===` 条数对齐本清单长度，
+// 并断言路由文件里 `!trusted(req)` 恒为 0（有人再抄一份即为回归）——将来加端点
+// 漏进清单会被当场抓住，清单不会烂掉。
 const ROUTES = [
     { name: 'GET /projects（列表）', method: 'GET', url: `${PREFIX}/projects` },
     { name: 'POST /projects/claim', method: 'POST', url: `${PREFIX}/projects/claim` },
@@ -739,14 +740,18 @@ test('R1-00 路由清单与源码计数同步（清单烂掉即红）', () => {
     const libDir = path.join(import.meta.dirname, '..', 'lib');
     const routeDir = path.join(libDir, 'server-routes');
     const routeFiles = fs.readdirSync(routeDir).filter((f) => f.endsWith('.js')).map((f) => path.join(routeDir, f));
+    const routeSrc = routeFiles.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
     const src = [path.join(libDir, 'server-api.js'), ...routeFiles]
         .map((f) => fs.readFileSync(f, 'utf8')).join('\n');
     const methodChecks = src.match(/req\.method === '/g) ?? [];
     const trustedChecks = src.match(/!trusted\(req\)/g) ?? [];
     assert.equal(methodChecks.length, ROUTES.length,
         `源码里 req.method 路由条数（${methodChecks.length}）≠ 清单条数（${ROUTES.length}）——加了端点没进清单，R1 覆盖不了它`);
-    assert.equal(trustedChecks.length, ROUTES.length,
-        `源码 fence 检查条数（${trustedChecks.length}）≠ 路由条数（${ROUTES.length}）——有端点漏写 trusted(req)！`);
+    // fence 检查已中央收口到 server-api.js 派发层（2026-10-28）：全源码必须恰好一份，
+    // 路由文件里出现手抄即为回归——两处语义迟早漂移，那正是「靠自觉」的复发。
+    assert.equal((routeSrc.match(/!trusted\(req\)/g) ?? []).length, 0,
+        '路由文件里不得再手抄 trusted(req)——fence 检查统一在 server-api.js 派发层拦截');
+    assert.equal(trustedChecks.length, 1, 'fence 检查必须恰好一份（server-api.js 派发层）');
 });
 
 test('R1 fence 全覆盖：清单内路由逐个不带 fence 头 → 403 FORBIDDEN', async () => {
@@ -1011,6 +1016,46 @@ test('★ R4c 内容门禁对面板同样生效：占位符 409，显式 force �
     const save = rows.filter((r) => r.action === 'rest/chapter_save').at(-1);
     assert.equal(save.forced, true);
     assert.deepEqual(save.blocked, ['placeholder']);
+});
+
+test('★ R4d 面板保存落质量债：欠债照记，重写干净后旧账清零（与写章链同源）', async () => {
+    await createBook('面板记账书');
+    const { chapterOf } = await import('./helpers/plugin.mjs');
+    // ① 欠债稿：面板保存与工具共用 runChapterGates，debts 必须同样落进 novel.json
+    const first = await drive({
+        method: 'POST', url: `${PREFIX}/projects/面板记账书/chapters/1`,
+        body: { title: '雨夜来客', text: chapterOf(400) },
+    });
+    assert.equal(first.statusCode, 200, first.body);
+    const meta1 = JSON.parse(fs.readFileSync(path.join(root, '面板记账书', 'novel.json'), 'utf8'));
+    assert.ok((meta1.quality?.debts?.['1'] ?? []).length > 0, '★ 面板保存欠债内容必须落账（旧版这里不记，账面永远干净是假象）');
+
+    // ② 干净重写：这段在工具路径已证零债（同一套门禁），面板保存后旧账必须被空债覆盖
+    const clean = [
+        '雨夜停尸房里，油灯压低。雨点敲着窗纸，水汽贴着门框散开。',
+        '无名尸体停在长案上。布鞋摆在门槛内侧，鞋底还沾着一点红泥。',
+        '他先看伤口，再翻袖口。指腹停在布料裂口，没有急着下结论。',
+        '来客坐在矮凳上，声音压得很低。他说自己只见过那人一次。',
+        '她把铜盆推过去，清水晃了一下。屋里只剩布料和铁器相碰的轻响。',
+        '灯花爆开时，他抬手挡了挡。灰烬落在账册边角，又被他慢慢拂开。',
+        '雨声忽然大了。来客的影子投在墙上，随着火光晃了两下。',
+        '他记下时辰，又记下鞋印。收殓的单子还空着，案上的名字也空着。',
+        '门外传来一声咳。她起身去添灯油，火光把两道影子又拉长了些。',
+        '等到第三遍叩门声停下，他把布鞋收进木匣，将门闩轻轻落下。',
+        '雨还没停。水槽里的血水顺着木缝流走，他换了一盆清水，又把布巾叠成方块。',
+        '来客问到死者来历，他只摇头。案卷里没有名字，掌柜也没有留下口信。',
+        '她把灯芯挑高了一点。铁钩、麻绳、粗盐和松木粉依次摆开，像一场无言的仪式。',
+        '他掀开白布一角，只看指节和鞋底。脸上的伤痕留着，等天亮再请仵作过目。',
+        '红泥里混着细砂。他从鞋缝挑出一点，包进纸角，准备明天去城南查渡口的土。',
+        '单子终于填了半页。时辰、伤口、遗物、来客口供，每一栏都留着追问的余地。',
+    ].join('\n\n');
+    const second = await drive({
+        method: 'POST', url: `${PREFIX}/projects/面板记账书/chapters/1`,
+        body: { title: '雨夜来客', text: clean },
+    });
+    assert.equal(second.statusCode, 200, second.body);
+    const meta2 = JSON.parse(fs.readFileSync(path.join(root, '面板记账书', 'novel.json'), 'utf8'));
+    assert.deepEqual(meta2.quality?.debts?.['1'], [], '★ 重写干净后面板保存必须清掉旧账，否则 novel_quality 永远显示上一版的债');
 });
 
 // ── R5：createServerFsio 的 mode 语义（H1 修复，REST 永不静默覆盖）──────
@@ -2000,4 +2045,23 @@ test('★ POST /projects/:id/chars：缺字段/null → 400 响亮报错（不�
     assert.equal(cleared.statusCode, 200, cleared.body);
     assert.equal(cleared.json.value.charLimits, undefined, '空串＝清除自定义（键省略，不是留空壳）');
     assert.equal(cleared.json.value.charSource, 'config');
+});
+
+// ── readJsonBody：UTF-8 多字节字符跨 chunk 边界不损坏（2026-10-28 修）─────
+//
+// 旧实现 `data += String(chunk)` 按 chunk 逐段解码——生僻字/emoji（UTF-8 最长 4 字节）
+// 恰好跨 chunk 边界时被解成 U+FFFD，且若 JSON 仍能解析，损坏的字就**静默进了书稿**。
+// 现实现收 Buffer、末尾一次性解码；真流（宿主）恒给 Buffer，这里逐字节切块模拟。
+test('readJsonBody：多字节 UTF-8 字符跨 chunk 边界逐字复原', async () => {
+    const { readJsonBody } = await import('../lib/server-http.js');
+    const { EventEmitter } = await import('node:events');
+    const buf = Buffer.from(JSON.stringify({ t: '龙者𠮷怪雪夜' }), 'utf8');   // 𠮷 = 4 字节字符
+    assert.ok(buf.length > 20, '夹具确认含多字节字符');
+
+    const req = new EventEmitter();
+    const p = readJsonBody(req);
+    for (let i = 0; i < buf.length; i += 6) req.emit('data', buf.subarray(i, Math.min(i + 6, buf.length)));
+    req.emit('end');
+    const body = await p;
+    assert.equal(body.t, '龙者𠮷怪雪夜', '6 字节切块（必有字符跨边界）后仍逐字复原');
 });

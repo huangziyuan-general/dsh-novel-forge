@@ -1062,6 +1062,20 @@ test('content-gate: 关键词提取过滤虚词，账本状态推演带历史值
     assert.equal(factStatesAt([{ entity: 'x', key: 'y', value: 'z', chapter: 9 }], 3).size, 0, '未来章不算当前值');
 });
 
+test('content-gate: 补录早章不回退当前值，同值改 unknown 会生效', () => {
+    const backfilled = factStatesAt([
+        { entity: '测试角色', key: '境界', value: '金丹一层', chapter: 3 },
+        { entity: '测试角色', key: '境界', value: '筑基三层', chapter: 1, note: '补录' },
+    ], 3);
+    assert.equal(backfilled.get('测试角色\u0000境界').value, '金丹一层', '第3章才是截至当前章的最新值');
+
+    const unknown = factStatesAt([
+        { entity: '测试角色', key: '身世', value: '未定', status: 'confirmed', chapter: 1 },
+        { entity: '测试角色', key: '身世', value: '未定', status: 'unknown', chapter: 2, note: '作者还没定' },
+    ], 2);
+    assert.equal(unknown.get('测试角色\u0000身世').status, 'unknown', '同值换状态也算账本终态变化');
+});
+
 // ── 第二批融合 C1：润色保守编辑守卫（来源：dsh-tool-writing autoproof）──────
 
 test('polish 守卫：改标题/引入易混字 → 阻断；正常润色 → 通过', () => {

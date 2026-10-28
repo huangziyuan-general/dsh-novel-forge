@@ -183,6 +183,47 @@ test('★ 端到端：写章的警告落成质量债，进 novel.json.quality.de
     }
 });
 
+test('★ 端到端：重写干净后，本章旧质量债必须清零', async () => {
+    const p = await bootBook('清账书');
+    const { tool, exec, cleanup, readJson } = p;
+    try {
+        await tool('novel_write_chapter').execute({
+            book: '清账书', chapter: 1, title: '雨夜来客',
+            content: chapterOf(400),
+            summary: '来客留鞋',
+        }, exec);
+        assert.ok(readJson('清账书/novel.json').quality?.debts?.['1']?.length > 0, '前置：第一版确实欠债');
+
+        const clean = [
+            '雨夜停尸房里，油灯压低。雨点敲着窗纸，水汽贴着门框散开。',
+            '无名尸体停在长案上。布鞋摆在门槛内侧，鞋底还沾着一点红泥。',
+            '他先看伤口，再翻袖口。指腹停在布料裂口，没有急着下结论。',
+            '来客坐在矮凳上，声音压得很低。他说自己只见过那人一次。',
+            '她把铜盆推过去，清水晃了一下。屋里只剩布料和铁器相碰的轻响。',
+            '灯花爆开时，他抬手挡了挡。灰烬落在账册边角，又被他慢慢拂开。',
+            '雨声忽然大了。来客的影子投在墙上，随着火光晃了两下。',
+            '他记下时辰，又记下鞋印。收殓的单子还空着，案上的名字也空着。',
+            '门外传来一声咳。她起身去添灯油，火光把两道影子又拉长了些。',
+            '等到第三遍叩门声停下，他把布鞋收进木匣，将门闩轻轻落下。',
+            '雨还没停。水槽里的血水顺着木缝流走，他换了一盆清水，又把布巾叠成方块。',
+            '来客问到死者来历，他只摇头。案卷里没有名字，掌柜也没有留下口信。',
+            '她把灯芯挑高了一点。铁钩、麻绳、粗盐和松木粉依次摆开，像一场无言的仪式。',
+            '他掀开白布一角，只看指节和鞋底。脸上的伤痕留着，等天亮再请仵作过目。',
+            '红泥里混着细砂。他从鞋缝挑出一点，包进纸角，准备明天去城南查渡口的土。',
+            '单子终于填了半页。时辰、伤口、遗物、来客口供，每一栏都留着追问的余地。',
+        ].join('\n\n');
+        const r = await tool('novel_write_chapter').execute({
+            book: '清账书', chapter: 1, title: '雨夜来客',
+            content: clean,
+            summary: '雨夜收殓无名尸体',
+        }, exec);
+        assert.deepEqual(r.qualityDebt.items, [], `干净重写不该再欠账：${JSON.stringify(r.qualityDebt)}`);
+        assert.deepEqual(readJson('清账书/novel.json').quality?.debts?.['1'], [], '旧账必须被空债覆盖');
+    } finally {
+        cleanup();
+    }
+});
+
 test('★ 端到端：novel_quality 能查账、能结清（局部瑕疵结清后不算还欠）', async () => {
     const p = await bootBook('查账书');
     const { tool, exec, cleanup, readJson } = p;
