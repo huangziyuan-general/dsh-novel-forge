@@ -244,3 +244,36 @@ test('★ 审计按本书区间给结论（自定义压过平台档），并按�
         `★ 审稿的字数条目必须跟着本书自定义 2500–3500 走（实际 target=${lenCheck?.target} value=${lenCheck?.value}）`);
     assert.equal(lenCheck?.target, '2500–3500');
 });
+
+test('★ 宿主 render 不许抛：chars / platform 回执走真渲染路径（面板事故回归）', async () => {
+    // 真机事故：render 的分支链没有 chars/platform 两个 action，回执漏进 status 兜底行
+    // 读 v.chapters.length → 「output.render failed: Cannot read properties of undefined
+    // (reading 'length')」——execute 明明成功，宿主却把**整次输出判无效**，模型拿不到数据。
+    // 这里用宿主同款路径（output.render(_args, value)）逐个回执真渲染。
+    const t = h.tool('novel_project');
+    // textBlock 返回内容块数组（[{type:'text',text}]）——拼回纯文本再断言
+    const render = (args, v) => t.output.render(args, v).map((b) => b.text).join('\n');
+
+    await h.tool('novel_project').execute({ action: 'init', book: '渲染书' }, h.exec);
+    const read = await h.tool('novel_project').execute({ action: 'chars', book: '渲染书' }, h.exec);
+    const readText = render({ action: 'chars', book: '渲染书' }, read);
+    assert.match(readText, /每章字数口径：\d+–\d+ 字/);
+    assert.doesNotMatch(readText, /undefined/);
+
+    const wrote = await h.tool('novel_project').execute({ action: 'chars', book: '渲染书', chars: '1800-2600' }, h.exec);
+    const wroteText = render({ action: 'chars', book: '渲染书' }, wrote);
+    assert.match(wroteText, /自定义 1800-2600/);
+
+    const plat = await h.tool('novel_project').execute({ action: 'platform', book: '渲染书' }, h.exec);
+    const platText = render({ action: 'platform', book: '渲染书' }, plat);
+    assert.match(platText, /本书平台：未设置/);
+
+    const platSet = await h.tool('novel_project').execute({ action: 'platform', book: '渲染书', platform: 'qidian' }, h.exec);
+    const platSetText = render({ action: 'platform', book: '渲染书' }, platSet);
+    assert.match(platSetText, /本书平台：qidian/);
+    assert.match(platSetText, /2000–4000/);
+
+    // status 兜底行本身也要渲染得动（防御 ?.length —— 将来再漏 action 也不许毒死回执）
+    const st = await h.tool('novel_project').execute({ action: 'status', book: '渲染书' }, h.exec);
+    assert.match(render({ action: 'status', book: '渲染书' }, st), /章节 \d+/);
+});
