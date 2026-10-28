@@ -86,6 +86,68 @@ test('applyCognitionUpdates：同一批里先知后忘不算倒退（基线取�
     assert.deepEqual(view.characters[0].doesNotKnow, ['X'], '后声明胜');
 });
 
+test('applyCognitionUpdates：同一批里连续两条「不知道」要显形', () => {
+    const r = applyCognitionUpdates([], [
+        { subject: '张三', verb: 'doesNotKnow', info: '宝藏位置' },
+        { subject: '张三', verb: 'doesNotKnow', info: '宝藏位置' },
+    ], { chapter: 3, now: NOW });
+    assert.equal(r.regressions.length, 1, '★ 同一条信息在同批重复声明「不知道」要显形');
+    assert.match(r.regressions[0], /张三.*宝藏位置/);
+    assert.equal(r.added.length, 2, '两条都照常落账（账号不丢）');
+});
+
+test('applyCognitionUpdates：同批「知道→不知道→知道」是合法反复横跳，不点名', () => {
+    const r = applyCognitionUpdates([], [
+        { subject: '张三', verb: 'knows', info: '身世' },
+        { subject: '张三', verb: 'doesNotKnow', info: '身世' },
+        { subject: '张三', verb: 'knows', info: '身世' },
+    ], { chapter: 7, now: NOW });
+    assert.deepEqual(r.regressions, [], '后声明顶先声明；没有同批重复 doesNotKnow，就没有倒退');
+    const view = cognitionView(r.rows);
+    assert.deepEqual(view.characters[0].knows, ['身世'], '最终态：知道');
+});
+
+// ── 倒退判据的「时点基线」四条边界 ──────────────────────────────────────────
+// 基线取哪一段，是这个判据唯一容易漂移的地方（1.3.2/1.3.3 两次断账都出在这类问题上）。
+// 规则：**截至本章（含本章更早调用落的行），且不含 chapter > 本章的行**；
+// 并且必须用**不封顶**的解析结果——展示视图按 COGNITION_VIEW_CAP 截断，拿它当判据会漏报。
+
+test('★ 补录早章时，后面章节的认知不算「之前已知」（时点不倒灌）', () => {
+    const prior = [{ subject: '张三', verb: 'knows', info: '密道', chapter: 30, ts: NOW }];
+    const r = applyCognitionUpdates(prior, [{ subject: '张三', verb: 'doesNotKnow', info: '密道' }], { chapter: 12, now: NOW });
+    assert.deepEqual(r.regressions, [], '第 12 章补录时，第 30 章才知道的事不该拦住它——那正是「他还不知道」的正确状态');
+});
+
+test('★ 同一章更早一次调用的倒退必须显形（重写同章是常态路径）', () => {
+    // 版本化重写与面板存章都会再次落认知行（append-only 不清算），所以「本章已经记过他知道」
+    // 是真实前情；把它从基线里剔掉就等于把倒退信号整条关掉。
+    const prior = [{ subject: '张三', verb: 'knows', info: '密道', chapter: 12, ts: NOW }];
+    const r = applyCognitionUpdates(prior, [{ subject: '张三', verb: 'doesNotKnow', info: '密道' }], { chapter: 12, now: NOW });
+    assert.equal(r.regressions.length, 1, `同章内「先记知道、又记不知道」要点名：${JSON.stringify(r.regressions)}`);
+    assert.match(r.regressions[0], /张三.*密道/);
+});
+
+test('★ 批内多写一行「知道」不许洗掉前情倒退（判据不得有旁路）', () => {
+    const prior = [{ subject: '张三', verb: 'knows', info: '密道', chapter: 5, ts: NOW }];
+    const r = applyCognitionUpdates(prior, [
+        { subject: '张三', verb: 'knows', info: '密道' },        // 只是重申了一遍
+        { subject: '张三', verb: 'doesNotKnow', info: '密道' },
+    ], { chapter: 9, now: NOW });
+    assert.equal(r.regressions.length, 1,
+        `前情已知 X 时，本批先重申 knows 再声明 doesNotKnow 仍要点名：${JSON.stringify(r.regressions)}`);
+    assert.match(r.regressions[0], /已经知道/);
+});
+
+test('★ 倒退判据不受展示封顶影响（已知超过 COGNITION_VIEW_CAP 条时照样报）', () => {
+    const many = Array.from({ length: COGNITION_VIEW_CAP + 2 }, (_, i) => ({
+        subject: '张三', verb: 'knows', info: `线索${i}`, chapter: 2, ts: NOW,
+    }));
+    const last = `线索${COGNITION_VIEW_CAP + 1}`;
+    const r = applyCognitionUpdates(many, [{ subject: '张三', verb: 'doesNotKnow', info: last }], { chapter: 6, now: NOW });
+    assert.equal(r.regressions.length, 1, `第 ${COGNITION_VIEW_CAP + 2} 条已知被声明「不知道」也要点名（视图截断不是事实截断）`);
+    assert.match(r.regressions[0], new RegExp(last));
+});
+
 test('applyCognitionUpdates：空 subject/info 与非法 verb 拒收', () => {
     assert.throws(() => applyCognitionUpdates([], [{ subject: ' ', verb: 'knows', info: 'X' }], { chapter: 1, now: NOW }), /不能为空/);
     assert.throws(() => applyCognitionUpdates([], [{ subject: '张三', verb: 'maybe', info: 'X' }], { chapter: 1, now: NOW }), /动词非法/);
