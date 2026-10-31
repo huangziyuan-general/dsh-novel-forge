@@ -4,23 +4,27 @@
 
 ![release](https://img.shields.io/github/v/release/huangziyuan-general/dsh-novel-forge) ![license](https://img.shields.io/github/license/huangziyuan-general/dsh-novel-forge) [![tests](https://img.shields.io/github/actions/workflow/status/huangziyuan-general/dsh-novel-forge/ci.yml?branch=main&label=tests)](https://github.com/huangziyuan-general/dsh-novel-forge/actions/workflows/ci.yml)
 
-**如果这个项目帮你把长篇写稳了，顺手点个 ⭐ 支持一下 —— 你的 star 是继续维护的动力：**
-[github.com/huangziyuan-general/dsh-novel-forge](https://github.com/huangziyuan-general/dsh-novel-forge)
+DeepSeek Harness（DSH）的中文长篇写作插件。它不是「提示词合集」，而是把**一致性、门禁、审计**做进工具层与数据层：模型负责动笔，插件负责把写坏、写歪、写穿的地方拦在落盘之前。
 
-[![Star History Chart](https://api.star-history.com/svg?repos=huangziyuan-general/dsh-novel-forge&type=Date)](https://star-history.com/#huangziyuan-general/dsh-novel-forge&Date)
+**适合谁：** 多角色 / 多卷 / 连载几十上百章、会被「设定崩了」「前文失忆」「悬念泄底」「AI 味太重」卡住的长篇作者。
 
-DeepSeek Harness（DSH）的小说创作插件。设计主线只有一条：
+**一句话卖点：** 关键约束全部代码化——同章改值=冲突拒绝、隐藏人物不进上下文、细纲漏写场景=拒稿、旧版永不覆盖、长篇检索零依赖本地跑。
 
-> **代码强制 > 提示词自觉。** 凡是"靠模型自觉"的约束都会失效——
-> 一致性、门禁、审计必须是工具层/数据层的硬约束。
+[快速开始](#快速开始约-5-分钟) ｜ [界面一览](#界面一览) ｜ [功能硬约束表](#ai-写作通病与硬约束) ｜ [20 个工具](#20-个工具)
 
 ## 为什么不是又一个「提示词合集」
 
-多数写作插件的约束写在系统提示里——模型心情好就守，赶进度就绕。本插件把约束放进代码，三条可验证的事实（每条都能在仓库里对着源码核）：
+多数写作插件的约束写在系统提示里——模型心情好就守，赶进度就绕。本插件的设计主线只有一条：
+
+> **代码强制 > 提示词自觉。** 凡是「靠模型自觉」的约束都会失效；一致性、门禁、审计必须是工具层/数据层的硬约束。
+
+三条可在仓库里对着源码核的事实：
 
 1. **三条入口共用一份判定链**：面板「💾 保存」、`novel_write_chapter`、REST 写入走同一套门禁代码（机审/账本冲突/内容门禁/细纲契约）——没有旁路；唯一的放行开关显式记审计。
 2. **模型无法自批提案**：修订提案模型只能登记、不能应用——「应用」是面板里用户的主权动作（模型侧没有 apply 工具）；细纲批准记录批准通道，看板统计「工具自批占比」（真机实证某连载本曾 168/168 全自批，正是大纲漂移的第一缺口）。
 3. **审计零 token**：机审、去 AI 味扫描、平台审稿、一致性校验、账本时点推演全部是纯本地计算——逐章审计成本为 0，数字不经过模型之手。
+
+[![Star History Chart](https://api.star-history.com/svg?repos=huangziyuan-general/dsh-novel-forge&type=Date)](https://star-history.com/#huangziyuan-general/dsh-novel-forge&Date)
 
 ## 界面一览
 
@@ -37,7 +41,9 @@ DeepSeek Harness（DSH）的小说创作插件。设计主线只有一条：
 > 看完了演示觉得有用？这就是它每天在你写长篇时替你挡下的事。顺手点个 ⭐ 让更多人看见：
 > [github.com/huangziyuan-general/dsh-novel-forge](https://github.com/huangziyuan-general/dsh-novel-forge)
 
-AI 长篇写作的通病不是玄学，每一个都有对应的工程解法。本插件把其中"有明确对错"的部分做进代码：
+## AI 写作通病与硬约束
+
+AI 长篇写作的通病不是玄学，每一个都有对应的工程解法。本插件把其中「有明确对错」的部分做进代码：
 
 | AI 写作通病 | 本插件的硬约束 | 落点 |
 | --- | --- | --- |
@@ -249,6 +255,7 @@ containment 与版本守卫语义（含 `readBytes` 字节原语——`.docx` �
 | 「一键写章」按钮 501 | 设计如此：写章要走 briefing + 多道落盘门禁，只能在会话里做 |
 | 「继续上次批量」报 409 `BATCH_RUNNING` | 上次批量可能还在跑：等它结束，或启动已超过 10 分钟再续（防双跑守卫；web 重启残留的检查点超时后自动放行） |
 | 面板报 403 `FORBIDDEN_HOST` | 访问地址不是本机（用了局域网 IP 或域名）——面板 API 只限 localhost/127.0.0.1/[::1]，用本机地址打开 DSH web（安全模型见「已知边界」） |
+| 列表里少了一本书，console 有「扫描根不可读」warn | 某个工作区根被 `readdir` 拒了（SELinux/chmod 000/挂载点抖动），本进程已把它剔除——检查该目录的读权限，而不是排查插件。权限类（EACCES/EPERM）会被持续剔除到进程重启；存储抖动类（EIO/EBUSY）下一请求自动重验恢复；目录被删（ENOENT）要等宿主重建该工作区 |
 | 写到几十章后整轮报 400 `CONTEXT_WINDOW_EXCEEDED` / 模型 token 超限 | 会话历史只增不减：每章草稿全文（tool call + 回执两份）+ 每章简报包 + 各类回执全留在历史里（真机实证 42 章 ≈ 49 万 input tokens）。**书没坏**——面板点「创建新会话并交接」（或复制交接摘要开新会话）直接续写下一章；原会话不要重试。疲劳横幅与写章回执会按体量估算提前硬警告（默认按 256k 预算的 60% 判死；估算偏保守，实际历史只会更大） |
 | 面板上没出现疲劳横幅 /「创建新会话并交接」按钮 | 旧版判据按「面板会话 id = 审计记账 id」聚合，两者不同源或面板拿不到 id 时全部空转（0.13.2 起的老病）。含兜底版本（1.0.5 起）已修：单会话书自动按唯一会话估算（横幅带 ℹ 口径说明）；**多会话书仍无横幅**（无法归因，宁缺不假）——先升级插件、重启 DSH web 并硬刷新 |
 
