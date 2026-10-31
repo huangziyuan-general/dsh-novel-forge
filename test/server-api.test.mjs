@@ -708,6 +708,239 @@ test('W4b live 分支（代码路径）：live 不参与任何缓存——服务
     }
 });
 
+// ── W-坏根：一根不可读/扫描中途抛错的扫描根只降级跳过，绝不拖垮整个 /projects（issue #6）──
+// 真机触发链（Android 12 + `dsh web` cwd=/）：/ 能过 statSync 但 readdir EACCES（SELinux），
+// 旧代码 listDirs 的 FsError 从 scanBooks 一路上抛 → projects 路由 500「cannot list /」，
+// 排在坏根前面的所有好书一张都回不去。两层防线各锁一枚钉。
+
+test('W-坏根-1 stat 合法但不可列举的根就地剔除，告警按根去重（issue #6）', { skip: process.platform === 'win32' ? 'chmod 000 语义 POSIX 专有' : false }, async () => {
+    const { registerServerApi } = await import('../lib/server-api.js');
+    const goodRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-goodroot-'));
+    fs.mkdirSync(path.join(goodRoot, '好根书'));
+    fs.writeFileSync(path.join(goodRoot, '好根书', 'novel.json'), JSON.stringify({ title: '好根书', stage: 'writing', sessions: [], chapters: {} }));
+    const badRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-badroot-'));
+    fs.mkdirSync(path.join(badRoot, '暗房书'));
+    fs.writeFileSync(path.join(badRoot, '暗房书', 'novel.json'), JSON.stringify({ title: '暗房书', stage: 'writing', sessions: [], chapters: {} }));
+    const registrations = [];
+    const bctx = {
+        fs: makeFakeBackend({ allowWriteRoots: [root], allowReadRoots: [root, goodRoot, badRoot] }),
+        emit() {},
+        logger: { info() {} },
+        sessions: { list: () => [{ header: { cwd: goodRoot, id: 'sess-good' } }, { header: { cwd: badRoot, id: 'sess-bad' } }] },
+        inject: (_deps, fn) => { fn(bctx); },
+        effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
+        webServer: { register: (def) => { registrations.push(def); return () => {}; } },
+    };
+    registerServerApi(bctx, { workspaceRoot: root, scanTopK: 8 }, { homedir: fakeHome });
+    const origHandler = handler;
+    const origWarn = console.warn;
+    const warns = [];
+    handler = registrations[0].handler;
+    console.warn = (...a) => warns.push(a.join(' '));
+    try {
+        fs.chmodSync(badRoot, 0o000);   // stat 合法、readdir EACCES——Android cwd=/ 的同构替身
+        const res = await drive({ method: 'GET', url: `${PREFIX}/projects` });
+        assert.equal(res.statusCode, 200, res.body);
+        const names = res.json.value.map((x) => x.name);
+        assert.ok(!names.includes('暗房书'), '不可列举的根必须被 collectRoots 剔除');
+        assert.ok(names.includes('好根书'), '★ 坏根不得拖垮列表：好根的书必须照常可见（issue #6 主诉）');
+        assert.equal(warns.filter((w) => w.includes('扫描根不可读') && w.includes(badRoot)).length, 1,
+            '不可列举根必须留下一次告警（坏根静默消失 = 用户永远不知道为什么书不见了）');
+        const again = await drive({ method: 'GET', url: `${PREFIX}/projects` });
+        assert.equal(again.statusCode, 200);
+        assert.equal(warns.filter((w) => w.includes('扫描根不可读') && w.includes(badRoot)).length, 1,
+            '同一根的告警必须按根去重——每个请求都刷一遍会淹掉真日志');
+    } finally {
+        handler = origHandler;
+        console.warn = origWarn;
+        fs.chmodSync(badRoot, 0o700);
+        fs.rmSync(badRoot, { recursive: true, force: true });
+        fs.rmSync(goodRoot, { recursive: true, force: true });
+        fs.rmSync(path.join(fakeHome, '.dsh'), { recursive: true, force: true });
+    }
+});
+
+test('W-坏根-2 listable 校验过了但扫描中途抛错的根降级跳过（TOCTOU/后端差异兜底，issue #6）', async () => {
+    const { registerServerApi } = await import('../lib/server-api.js');
+    const goodRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-goodroot2-'));
+    fs.mkdirSync(path.join(goodRoot, '好根书B'));
+    fs.writeFileSync(path.join(goodRoot, '好根书B', 'novel.json'), JSON.stringify({ title: '好根书B', stage: 'writing', sessions: [], chapters: {} }));
+    const badRoot2 = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-badroot2-'));
+    fs.mkdirSync(path.join(badRoot2, '坏账书'));
+    fs.writeFileSync(path.join(badRoot2, '坏账书', 'novel.json'), JSON.stringify({ title: '坏账书', stage: 'writing', sessions: [], chapters: {} }));
+    const base = makeFakeBackend({ allowWriteRoots: [root], allowReadRoots: [root, goodRoot, badRoot2] });
+    const flakyFs = {
+        ...base,
+        async listDir(target) {   // stat 全通、唯独 listDir 对该根抛错——镜像宿主 FsError（readdir 时机失败）
+            if (String(target?.targetKey ?? '').endsWith(badRoot2)) {
+                const e = new Error(`FsError: cannot list ${badRoot2}: permission denied`);
+                e.code = 'EACCES';   // 权限类：宿主 FsError 带 errno——这是进隔离集合的类别
+                throw e;
+            }
+            return base.listDir(target);
+        },
+    };
+    const registrations = [];
+    const cctx = {
+        fs: flakyFs,
+        emit() {},
+        logger: { info() {} },
+        sessions: { list: () => [{ header: { cwd: goodRoot, id: 'sess-good2' } }, { header: { cwd: badRoot2, id: 'sess-bad2' } }] },
+        inject: (_deps, fn) => { fn(cctx); },
+        effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
+        webServer: { register: (def) => { registrations.push(def); return () => {}; } },
+    };
+    registerServerApi(cctx, { workspaceRoot: root, scanTopK: 8 }, { homedir: fakeHome });
+    const origHandler = handler;
+    const origWarn = console.warn;
+    const warns = [];
+    handler = registrations[0].handler;
+    console.warn = (...a) => warns.push(a.join(' '));
+    try {
+        const res = await drive({ method: 'GET', url: `${PREFIX}/projects` });
+        assert.equal(res.statusCode, 200, res.body);
+        const names = res.json.value.map((x) => x.name);
+        assert.ok(!names.includes('坏账书'), '扫描中途抛错的根降级跳过');
+        assert.ok(names.includes('好根书B'), '★ listable 校验与真实扫描之间没有事务（TOCTOU）：中途抛错也只跳过该根，其余照常（issue #6）');
+        assert.ok(warns.some((w) => w.includes('扫描根不可读') && w.includes(badRoot2)), '降级必须带告警');
+        // 权限类已进隔离集合：三面同口径——定位拿不到坏根的书（404 而非 500/200），
+        // 显式带坏根建书 403（allowlist 剔除），全部触发只告警一次。
+        const loc = await drive({ method: 'GET', url: `${PREFIX}/projects/${encodeURIComponent('坏账书')}` });
+        assert.equal(loc.statusCode, 404, loc.body);
+        assert.equal(loc.json?.error?.code, 'NOT_FOUND');
+        const create = await drive({
+            method: 'POST', url: `${PREFIX}/projects`,
+            body: { title: '落账书', workspace: badRoot2, session: 'sess-good2' },
+        });
+        assert.equal(create.statusCode, 403, create.body);
+        assert.equal(create.json?.error?.code, 'WORKSPACE_FORBIDDEN');
+        assert.equal(warns.filter((w) => w.includes('扫描根不可读') && w.includes(badRoot2)).length, 1,
+            '列表/定位/建书三面共用同一隔离结果，告警按根只一次');
+    } finally {
+        handler = origHandler;
+        console.warn = origWarn;
+        fs.rmSync(badRoot2, { recursive: true, force: true });
+        fs.rmSync(goodRoot, { recursive: true, force: true });
+        fs.rmSync(path.join(fakeHome, '.dsh'), { recursive: true, force: true });
+    }
+});
+
+test('W-坏根-3 定位与建书 allowlist 共用同一套坏根剔除（issue #6 写路径收口）', { skip: process.platform === 'win32' ? 'chmod 000 语义 POSIX 专有' : false }, async () => {
+    const { registerServerApi } = await import('../lib/server-api.js');
+    const goodRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-goodroot3-'));
+    fs.mkdirSync(path.join(goodRoot, '定位书'));
+    fs.writeFileSync(path.join(goodRoot, '定位书', 'novel.json'), JSON.stringify({ title: '定位书', stage: 'writing', sessions: ['sess-good3'], chapters: {} }));
+    const badRoot3 = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-badroot3-'));
+    fs.mkdirSync(path.join(badRoot3, '定位坏书'));
+    fs.writeFileSync(path.join(badRoot3, '定位坏书', 'novel.json'), JSON.stringify({ title: '定位坏书', stage: 'writing', sessions: [], chapters: {} }));
+    const registrations = [];
+    const wctx = {
+        fs: makeFakeBackend({ allowWriteRoots: [root, goodRoot, badRoot3], allowReadRoots: [root, goodRoot, badRoot3] }),
+        emit() {},
+        logger: { info() {} },
+        sessions: { list: () => [{ header: { cwd: goodRoot, id: 'sess-good3' } }, { header: { cwd: badRoot3, id: 'sess-bad3' } }] },
+        inject: (_deps, fn) => { fn(wctx); },
+        effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
+        webServer: { register: (def) => { registrations.push(def); return () => {}; } },
+    };
+    registerServerApi(wctx, { workspaceRoot: root, scanTopK: 8 }, { homedir: fakeHome });
+    const origHandler = handler;
+    const origWarn = console.warn;
+    const warns = [];
+    handler = registrations[0].handler;
+    console.warn = (...a) => warns.push(a.join(' '));
+    try {
+        fs.chmodSync(badRoot3, 0o000);
+        const get = await drive({ method: 'GET', url: `${PREFIX}/projects` });
+        assert.equal(get.statusCode, 200, get.body);
+
+        // 坏根不能拖垮定位：好根下的书仍要能被 GET 读到
+        const found = await drive({ method: 'GET', url: `${PREFIX}/projects/%E5%AE%9A%E4%BD%8D%E4%B9%A6` });
+        assert.equal(found.statusCode, 200, found.body);
+
+        // 坏根也不能留在 allowlist 里：显式带坏根建书必须 403，不是 500
+        const create = await drive({
+            method: 'POST',
+            url: `${PREFIX}/projects`,
+            body: { title: '新建书', workspace: badRoot3, session: 'sess-good3' },
+        });
+        assert.equal(create.statusCode, 403, create.body);
+        assert.equal(create.json?.error?.code, 'WORKSPACE_FORBIDDEN');
+
+        // 同一坏根告警仍然去重（列表 + 定位 + 建书 allowlist 共用）
+        assert.equal(warns.filter((w) => w.includes('扫描根不可读') && w.includes(badRoot3)).length, 1,
+            '坏根在列表/定位/建书三处触发只许告警一次');
+    } finally {
+        handler = origHandler;
+        console.warn = origWarn;
+        fs.chmodSync(badRoot3, 0o700);
+        fs.rmSync(badRoot3, { recursive: true, force: true });
+        fs.rmSync(goodRoot, { recursive: true, force: true });
+        fs.rmSync(path.join(fakeHome, '.dsh'), { recursive: true, force: true });
+    }
+});
+
+test('W-坏根-4 瞬时类扫描故障只降级不隔离——存储恢复后下一请求即找回（反「无恢复 sticky」钉）', async () => {
+    // EIO/EBUSY 这类瞬时错误不进隔离集合：warn 一次、当次跳过，下一请求重验。
+    // 若做成无差别持久隔离（任何错误都永久剔除），「U 盘抖一下/外置存储重挂载」会变成
+    // 书静默消失直到进程重启——warn 只刷一次，用户根本看不见，比修复前的响亮 500 更糟。
+    const { registerServerApi } = await import('../lib/server-api.js');
+    const goodRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-goodroot4-'));
+    fs.mkdirSync(path.join(goodRoot, '好根书D'));
+    fs.writeFileSync(path.join(goodRoot, '好根书D', 'novel.json'), JSON.stringify({ title: '好根书D', stage: 'writing', sessions: [], chapters: {} }));
+    const flakyRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-flakyroot-'));
+    fs.mkdirSync(path.join(flakyRoot, '痊愈书'));
+    fs.writeFileSync(path.join(flakyRoot, '痊愈书', 'novel.json'), JSON.stringify({ title: '痊愈书', stage: 'writing', sessions: [], chapters: {} }));
+    const base = makeFakeBackend({ allowWriteRoots: [root], allowReadRoots: [root, goodRoot, flakyRoot] });
+    let flaky = true;   // true = 根在「抖」；false = 存储恢复
+    const flakyFs = {
+        ...base,
+        async listDir(target) {
+            if (flaky && String(target?.targetKey ?? '').endsWith(flakyRoot)) {
+                const e = new Error(`FsError: cannot list ${flakyRoot}: input/output error`);
+                e.code = 'EIO';   // 瞬时类：不进隔离集合
+                throw e;
+            }
+            return base.listDir(target);
+        },
+    };
+    const registrations = [];
+    const dctx = {
+        fs: flakyFs,
+        emit() {},
+        logger: { info() {} },
+        sessions: { list: () => [{ header: { cwd: goodRoot, id: 'sess-good4' } }, { header: { cwd: flakyRoot, id: 'sess-flaky' } }] },
+        inject: (_deps, fn) => { fn(dctx); },
+        effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
+        webServer: { register: (def) => { registrations.push(def); return () => {}; } },
+    };
+    registerServerApi(dctx, { workspaceRoot: root, scanTopK: 8 }, { homedir: fakeHome });
+    const origHandler = handler;
+    const origWarn = console.warn;
+    const warns = [];
+    handler = registrations[0].handler;
+    console.warn = (...a) => warns.push(a.join(' '));
+    try {
+        const sick = await drive({ method: 'GET', url: `${PREFIX}/projects` });
+        assert.equal(sick.statusCode, 200, sick.body);
+        const sickNames = sick.json.value.map((x) => x.name);
+        assert.ok(!sickNames.includes('痊愈书'), '瞬时故障当次照常跳过');
+        assert.ok(sickNames.includes('好根书D'), '其余根不受牵连');
+        assert.equal(warns.filter((w) => w.includes('扫描根不可读') && w.includes(flakyRoot)).length, 1, '瞬时故障也必须告警一次');
+        flaky = false;   // 存储恢复（重挂载/抖动结束）
+        const healed = await drive({ method: 'GET', url: `${PREFIX}/projects` });
+        assert.equal(healed.statusCode, 200);
+        assert.ok(healed.json.value.map((x) => x.name).includes('痊愈书'),
+            '★ 瞬时类错误不得隔离：下一请求必须自动找回，而不是静默消失到进程重启');
+    } finally {
+        handler = origHandler;
+        console.warn = origWarn;
+        fs.rmSync(flakyRoot, { recursive: true, force: true });
+        fs.rmSync(goodRoot, { recursive: true, force: true });
+        fs.rmSync(path.join(fakeHome, '.dsh'), { recursive: true, force: true });
+    }
+});
+
 // ── H0：载体与替身自检（先证明替身会「真的拒绝」，后面所有断言才不作数于空转）──
 
 test('H0 载体自检：假 fs 按宿主语义拒绝；列表端点可跑通', async () => {
