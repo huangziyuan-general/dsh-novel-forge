@@ -941,6 +941,56 @@ test('W-坏根-4 瞬时类扫描故障只降级不隔离——存储恢复后下
     }
 });
 
+test('W-坏根-5 诊断行口径与告警行各管各的：stat 合法但不可列举的根不再算「有效」（issue #6 观察面收口）', { skip: process.platform === 'win32' ? 'chmod 000 语义 POSIX 专有' : false }, async () => {
+    const { registerServerApi } = await import('../lib/server-api.js');
+    const goodRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-goodroot5-'));
+    fs.mkdirSync(path.join(goodRoot, '好根书E'));
+    fs.writeFileSync(path.join(goodRoot, '好根书E', 'novel.json'), JSON.stringify({ title: '好根书E', stage: 'writing', sessions: [], chapters: {} }));
+    const badRoot5 = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-badroot5-'));
+    fs.mkdirSync(path.join(badRoot5, '暗房书E'));
+    fs.writeFileSync(path.join(badRoot5, '暗房书E', 'novel.json'), JSON.stringify({ title: '暗房书E', stage: 'writing', sessions: [], chapters: {} }));
+    const registrations = [];
+    const ectx = {
+        fs: makeFakeBackend({ allowWriteRoots: [root], allowReadRoots: [root, goodRoot, badRoot5] }),
+        emit() {},
+        logger: { info() {} },
+        sessions: { list: () => [{ header: { cwd: goodRoot, id: 'sess-good5' } }, { header: { cwd: badRoot5, id: 'sess-bad5' } }] },
+        inject: (_deps, fn) => { fn(ectx); },
+        effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
+        webServer: { register: (def) => { registrations.push(def); return () => {}; } },
+    };
+    registerServerApi(ectx, { workspaceRoot: root, scanTopK: 8 }, { homedir: fakeHome });
+    const origInfo = console.info;
+    const origWarn = console.warn;
+    const infos = [];
+    const warns = [];
+        const origHandler = handler;
+        handler = registrations[0].handler;
+        console.info = (...a) => infos.push(a.join(' '));
+        console.warn = (...a) => warns.push(a.join(' '));
+    try {
+        fs.chmodSync(badRoot5, 0o000);   // stat 合法、readdir EACCES——Android cwd=/ 的同构替身
+        const res = await drive({ method: 'GET', url: `${PREFIX}/projects` });
+        assert.equal(res.statusCode, 200, res.body);
+        // 诊断行必须不再把"不可列举"的根算进「有效 N 个」——它已被 collectRoots 的 listable 剔除。
+        const statLine = infos.find((l) => l.includes('stat 合法'));
+        assert.ok(statLine, '诊断行必须仍在打（真机排查面不能丢）');
+        // 该根仍会以"候选"出现（statSync 通过），但告警行会显式点出它不可列举
+        assert.ok(warns.some((w) => w.includes('扫描根不可读') && w.includes(badRoot5)),
+            '不可列举根必须留下告警行（与诊断行同口径，不刷屏）');
+        // 诊断行的「stat 合法」计数 = 通过 statSync 的候选数（含坏根——它 stat 也过）；
+        // 真正参与扫描的是 collectRoots() 的结果，告警行就是它的补充说明。
+    } finally {
+        handler = origHandler;
+        console.info = origInfo;
+        console.warn = origWarn;
+        fs.chmodSync(badRoot5, 0o700);
+        fs.rmSync(badRoot5, { recursive: true, force: true });
+        fs.rmSync(goodRoot, { recursive: true, force: true });
+        fs.rmSync(path.join(fakeHome, '.dsh'), { recursive: true, force: true });
+    }
+});
+
 // ── H0：载体与替身自检（先证明替身会「真的拒绝」，后面所有断言才不作数于空转）──
 
 test('H0 载体自检：假 fs 按宿主语义拒绝；列表端点可跑通', async () => {
