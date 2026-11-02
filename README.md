@@ -141,18 +141,20 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 | 会话疲劳与交接 | 详情页横幅 | 会话内首稿趋势退化 / 首稿均值低于其它会话 70% / 连写 ≥8 章即警示（写章进度卡带会话状态行，文案标清「首稿＝门禁驳回前的初稿」）；「创建新会话并交接」一键建新会话+归档旧会话，交接摘要自动进剪贴板，粘到新会话即可无缝续写 |
 | 提案审批 | 详情页 | 查看提案全文 → 应用（生成新版本）/ 丢弃；旧版永不覆盖 |
 
-## 21 个工具
+## 23 个工具
 
 | 工具 | 职责 | 硬约束 |
 | --- | --- | --- |
-| `novel_project` | init / status / **phase（九阶段看板与入场判定）** / set_stage / repair / check / promise | 防重复创建；阶段入场由代码判定；越级记 skipped；repair 索引-磁盘对账 |
+| `novel_project` | init / status / **phase（九阶段看板与入场判定）** / set_stage / repair / check（`fullscan:true` 额外跑全书深扫）/ promise / platform / chars | 防重复创建；阶段入场由代码判定；越级记 skipped；repair 索引-磁盘对账；fullscan 扫关系线/弧线停走/hard 质量债未结（零 token） |
 | `novel_outline` | 全书大纲 / 第N章细纲 / **批准** | 写章门禁的钥匙 |
 | `novel_character` | 人物卡 + **语言基因卡**（voice：句长/逻辑/口头禅/绝不说/小动作/语域，结构化存储） | 写章单独注入成区块；audit voice:true 核对禁忌词 |
 | `novel_worldbook` | 世界书条目（add/update/list/remove + import/export） | 设定只认这里；update 保 id；缺触发词不再报错——先抽本书已知实体名，抽不到转常驻并给可见警告 |
 | `novel_scene` | 场景契约（save/get/list/delete）：本章场景/出场人物/**隐藏人物**/世界书白名单/禁项 | 隐藏人物档案不进上下文且正文不许出现其名；契约外人物不注入（省 token） |
 | `novel_briefing` | 写前上下文包（细纲→承诺书→**场景契约**→人物卡→**语言基因卡**→账本→伏笔→世界书→上章结尾→锚段） | 一致性供给侧；按契约裁剪 cast 与世界书 |
 | `novel_write_chapter` | 写章落盘 | 门禁→机审→账本→**内容门禁（六维）**→**细纲契约指标**→版本化；契约指标落盘到章节索引 |
-| `novel_ledger` | 事实账本（含 note）+ **时点推演**（`status_at` 第 n 章快照 / `timeline` 演化线）+ 伏笔埋/收/改期 | 同章改值拒绝；章号超前拒绝；超期伏笔告警；补录不改历史 |
+| `novel_ledger` | 事实账本（含 note）+ **时点推演**（`status_at` 第 n 章快照 / `timeline` 演化线）+ 伏笔埋/收/改期 + 认知账本 | 同章改值拒绝；章号超前拒绝；超期伏笔告警；补录不改历史；认知倒退显形 |
+| `novel_relation` | 关系账本：人物/组织**之间**的关系状态线（盟友/仇敌/师徒/信任度…）：`update` 登记推进 / `query` 当前值 / `status_at` 时点推演 / `timeline` 演化线 | (A,B) 与 (B,A) 自动归一同一对；同章同对同维度改值=冲突拒绝；正文仍按旧值写 → 内容门禁每章 warning |
+| `novel_arc` | 弧线账本：单人物**维度**随章推进（成长/无畏/信任度/嫌疑度…）：`update` 登记推进 / `query` 当前读数 / `status_at` 时点 / `diagnose` 全书停走诊断 | `stalled`（≥15 章未推进）命中时写章链自动落 major 质量债；`no-move`（全书≥20章只推进过一次）warning；零 token 纯函数 |
 | `novel_quality` | 书级质量债：`view` 看欠了多少账 / 最重是哪章 / 现在该不该继续写；`settle` 结清某章的债 | 三级口径（minor 质量债 / major 需重规划 / hard 硬门禁放行）；局部瑕疵不阻塞全书，硬门禁放行必须回头核对 |
 | `novel_noai_scan` | 八维去 AI 味扫描 | 纯本地零费用 |
 | `novel_audit` | 确定性章节审计 + 契约指标 + `continuity` 全书一致性 + `voice` 语言基因核对 + `platform` **起点/番茄/晋江/七猫/飞卢五平台审稿** + `censor` **敏感自查七类** | 机审证据；平台体检表给出可执行改法 |
@@ -161,7 +163,7 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 | `novel_import` | 本地书籍导入（preview/import/**backfill 门禁回补**；file 支持 `.md`/`.txt`/`.docx`——docx 按 Word 标题样式与「第N章」规则切分） | 纯函数切分章节；建书+版本化落盘；docx 走 `readBytes` 字节通道（文本通道会解坏二进制），拒 zip64、48MB 解压上限 |
 | `novel_export` | 导出整本（md/txt + stats） | 按版本顺序拼装，写 `导出/` |
 | `novel_diagnose` | 黄金三章四维诊断（钩子/开场/冲突/灌输） | 确定性数字，机审与模型审分离 |
-| `novel_polish` | 段落级病灶定位 + 润色提案提交 | 润色也走提案制，永不覆盖旧稿 |
+| `novel_polish` | 段落级病灶定位 + 润色提案提交 + 审稿引文 grounding（`review_quotes`） | 润色也走提案制，永不覆盖旧稿；引文必须逐字（忽略空白）在原文里找到，太短/找不到即整章拒收 |
 | `novel_search` | 长篇检索（build / query / annotate / status）：返回章号+摘录+命中比例；query 弱结果时**自动查询扩写**（改写多路候选重查合并），写章落盘后**新块自动补语义标签** | 索引是**派生物**（`书/.novel/index.db`），删了重跑即得；无 sqlite 自动退化 |
 | `novel_library` | **书库饲料**（import/list/read/analyze/delete）：拆对标作品的结构画像——章长曲线/对话密度/段落节奏/章末钩子率/高频意象；`compare_book` 与自己的书并排给数 | 零 token 全本地；只读饲料，不参与本书一致性判定；`delete` 只移索引 |
 | `novel_glossary` | 术语表（add/remove/list） | 随上下文包注入，防专有名词乱译 |

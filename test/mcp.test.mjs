@@ -26,12 +26,14 @@ after(() => {
     if (root !== undefined) fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('standalone: 21 个工具全部装配', () => {
+test('standalone: 23 个工具全部装配', () => {
     if (!hasSdk) return;
-    assert.equal(standalone.tools.length, 21);
+    assert.equal(standalone.tools.length, 23);
     assert.ok(standalone.tools.some((t) => t.name === 'novel_style'));
     assert.ok(standalone.tools.some((t) => t.name === 'novel_search'));
     assert.ok(standalone.tools.some((t) => t.name === 'novel_library'));
+    assert.ok(standalone.tools.some((t) => t.name === 'novel_relation'), 'MCP: novel_relation 缺席（主线1 工具未随 apply 注册）');
+    assert.ok(standalone.tools.some((t) => t.name === 'novel_arc'), 'MCP: novel_arc 缺席（主线1 工具未随 apply 注册）');
     assert.ok(standalone.tools.some((t) => t.name === 'novel_quality'));
 });
 
@@ -213,7 +215,7 @@ test('stdio server: initialize → tools/list → tools/call 全链', async () =
         assert.equal(init.result.serverInfo.name, 'dsh-novel-forge');
 
         const listed = await rpc('tools/list', {});
-        assert.equal(listed.result.tools.length, 21);
+        assert.equal(listed.result.tools.length, 23);
         assert.ok(listed.result.tools.every((t) => t.inputSchema.type === 'object'));
         // inputSchema 必须暴露真实参数（二次包裹回归：全部工具的 properties 都曾是空壳）。
         const outlineTool = listed.result.tools.find((t) => t.name === 'novel_outline');
