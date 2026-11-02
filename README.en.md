@@ -128,7 +128,7 @@ novel_project init → novel_project phase (see the nine-stage board, fill entry
 | Session fatigue & handoff | detail-page banner | within-session first-draft decline / session average under 70% of other sessions' first drafts / ≥8 consecutive chapters triggers a warning (the write-progress card carries a session-status line, labelled "first draft = pre-gate draft"); "create new session and hand off" builds + archives a new session in one click, handoff summary auto-copies to clipboard, paste into the new session to continue seamlessly |
 | Proposal approval | detail page | view full proposal → apply (generate new version) / discard; old version never overwritten |
 
-## 20 tools
+## 23 tools
 
 | Tool | Responsibility | Hard constraint |
 | --- | --- | --- |
@@ -139,7 +139,10 @@ novel_project init → novel_project phase (see the nine-stage board, fill entry
 | `novel_scene` | scene contract (save/get/list/delete): this-chapter scenes / cast / **hidden characters** / worldbook whitelist / forbidden items | hidden-character dossiers never enter context and their names are forbidden in the body; off-contract characters aren't injected (saves tokens) |
 | `novel_briefing` | pre-write context pack (outline → pledge → **scene contract** → character cards → **voice-gene cards** → ledger → foreshadowing → worldbook → previous chapter ending → anchor segments) | consistency supply side; trims cast and worldbook by contract |
 | `novel_write_chapter` | write & commit chapter | gate → mechanical check → ledger → **content gate (six dims)** → **outline-contract metrics** → versioning; contract metrics persisted to chapter index |
-| `novel_ledger` | fact ledger (with notes) + **point-in-time simulation** (`status_at` snapshot of chapter n / `timeline` evolution) + foreshadowing plant / payoff / reschedule | same-chapter value change rejected; chapter-number-ahead rejected; overdue foreshadowing warned; backfill doesn't alter history |
+| `novel_ledger` | fact ledger (with notes) + **point-in-time simulation** (`status_at` snapshot of chapter n / `timeline` evolution) + foreshadowing plant / payoff / reschedule + cognition ledger | same-chapter value change rejected; chapter-number-ahead rejected; overdue foreshadowing warned; backfill doesn't alter history; cognition regressions surfaced |
+| `novel_relation` | relation ledger: **between-entity** state lines (ally/enemy/mentor/trust…): `update` / `query` / `status_at` / `timeline` | (A,B) and (B,A) auto-normalised to same pair; same-chapter same-pair same-dimension change rejected; body still using old value → content gate warning every chapter |
+| `novel_arc` | arc ledger: per-character **dimension** progression (growth/confidence/suspicion…): `update` / `query` / `status_at` / `diagnose` | `stalled` (≥15 chapters without progress) auto-logs a **major** quality debt; `no-move` (single entry, ≥20 chapters) warning; zero-token |
+| `novel_quality` | book-level quality debt: `view` / `settle` | three-tier (minor / major / hard); local defects don't block the book; force-passed hard gates must be re-checked |
 | `novel_noai_scan` | eight-dimension anti-AI-smell scan | fully local, zero cost |
 | `novel_audit` | deterministic chapter audit + contract metrics + `continuity` whole-book consistency + `voice` voice-gene check + `platform` **Qidian / Fanqie / Jinjiang / Qimao / Feilu five-platform review** + `censor` **seven-category sensitivity self-check** | mechanical evidence; platform health table gives actionable fixes |
 | `novel_style` | prose six-axis baseline (μ±σ band) + **mood spectrum 12 axes**: build baseline / check against (incl. dominant-mood drift) | fully local, zero cost; reports numbers only, no labels |
