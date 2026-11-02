@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.4.1 (2026-11-02)
+
+### 重构
+
+- **账本家族纪律收敛单实现（新增 `lib/ledger-core.js`）**：行守卫、时间线排序（章号升序+原始下标升序）、时点快照三条纪律从 facts/relations/arcs/cognition 四份实现收敛为一个纯函数模块；四账本改为薄壳委托，输出形状逐字段保留（`{f,i}` 映射壳），全部消费方零改动。冲突拒绝不进 core——四账本语义不同（facts/relations 同章改值=拒绝、arcs 允许改值、cognition 认知转变合法），各账本自留冲突闸。
+
+- **arcs 补独立 timeline**：`arcTimeline` / `latestArcRows` 独立导出（此前唯一没有独立 timeline 函数的账本，`arcsAt` 自写 inline 快照）；`arcsAt` 改走共享快照口径。
+
+- **cognition 畸形行口径**：章号非整数的行从「直接丢弃」改「降级为 0 参与时间线」（只影响手改账本产生的畸形行；降级行排序最前、必被合法行覆盖，方向保守）。
+
+- **测试 +21（共 892）**：`test/ledger-core.test.mjs` 钉住 core 三纪律与四账本输出逐字段等价、补录早章乱序修正、cognition 降级覆盖——防各账本将来回退成自己抄一份排序逻辑。
+
+- AGENTS.md 不变量2 纯逻辑名单补 `ledger-core` / `relations` / `arcs`（后两者 v1.4.0 起漏列）。
+
 ## v1.4.0 (2026-11-01)
 
 ### 新增
