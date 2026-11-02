@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.4.0 (2026-11-01)
+
+### 新增
+
+- **关系账本（`novel_relation`，新数据文件 `账本/relations.json`）**：事实账本记「实体的状态」（境界/位置/持有），关系账本记「两个实体之间的关系」（盟友/仇敌/师徒/信任度…）。append-only 行日志，与 facts 同构（补录早章、同章同对同维度改值=冲突拒绝、(A,B) 与 (B,A) 自动归一同一对）。纯逻辑在 `lib/relations.js`（纯函数名单成员）：时点推演（`relationsAt`）、演化线（`relationTimelineOf`）、矛盾闸（`detectStaleRelations`——正文仍按旧值写时 warning 点名，与 ①b 过期状态词同档）。写章链每章读关系账本，命中矛盾进内容门禁 warnings；不拦（关系是软设定，误拦比漏报更糟），但每章都可见。
+
+- **弧线账本（`novel_arc`，新数据文件 `账本/arcs.json`）**：人物弧光维度（成长/无畏/信任度/嫌疑度…）随章推进的独立账。append-only 行日志；`diagnoseArcStall`（纯函数）零 token 诊断停走：`stalled`（count≥2 且末次推进距当前 ≥15 章）/ `no-move`（count=1 且距当前 ≥20 章）。写章链命中 `stalled` 自动落 **major 质量债**（「需重规划」档，`novel_quality` view 可见）；`novel_arc diagnose` 给人看的全书诊断。弧线与事实账本、关系账本三者分工明确：境界/位置/持有 → `novel_ledger`；人物**间关系** → `novel_relation`；单人物**弧光维度** → `novel_arc`。
+
+- **全书深扫（`novel_project check fullscan:true`，v1.4.0 主线2）**：`validateContinuity` 新增 `fullscan` 档（纯函数，零 token，不读正文）——跨全部台账（关系线/弧线/伏笔/质量债）的「线程」自洽：关系线停走（≥20 章未推进，warning）/ 弧线停走（复用 `diagnoseArcStall` 唯一判据）/ hard 级质量债未结清（error）/ 无 plan 伏笔（warning）。REST `/continuity` 与面板体检自动带上 `checkRelations`（关系账本畸形行/同章双值）；`fullscanThreads` 单独导出供 `novel_project check fullscan:true` 调用。深扫是**结构层**（扫台账不自洽），与既有 `validateContinuity` 的**事实层**（死人复活/伏笔倒挂/索引缺失）互补，不重叠。
+
+- **审稿引文 grounding（`novel_polish submit review_quotes`，v1.4.0 主线3）**：`validateReviewQuotes`（纯函数，`lib/polish.js`）——审稿/润色回执如果带「引用了正文某句」，引文必须逐字（忽略空白差异）在**原文**里找到，太短（归一后 <4 字）或找不到即整章拒收（计熔断口径）。与 `facts_evidence` 同一道闸：不提供不校验（向后兼容：没有引文诉求的普通润色不受影响），提供了就必须是真的。凭印象补全/改写转述的引文在审校环节被拦——审稿幻觉的高频形态。
+
+### 修复
+
+- **一致性输入损坏必须响亮**：`loadContinuityInputs` 读关系/弧线账本遇到坏 JSON 不再静默当空——静默等于内容门禁的关系矛盾检测与全书深扫的关系/弧线检测悄悄失效；缺文件仍按「无数据」处理不受影响。另随发行收编两处工具接线护栏：`novel_relation` query/status_at 的 a/b 必须成对给出（此前单边给参报「实体名不能为空」，费解）；`novel_arc` query/status_at 回执带 `snapshotChapter` / `forwardRows` 并在文案标注「快照：第 N 章；另有 M 条已登记未生效」（时点快照语义不变，前瞻登记可见不再像凭空消失）。
+
+- **MCP 通道同步（主线4）**：`novel_relation` / `novel_arc` 经 `ctx.tools.register` 自动流入 `buildStandaloneTools`（`mcp/server.mjs` 的 `tools/list` 现报 23 工具）；`novel_polish` 的 `review_quotes` 参数与 `quoteViolations` 输出字段在独立 MCP 通道与宿主通道**同一份实现**（`lib/index.js` 的 `apply()` 是唯一注册面），双通道零漂移。
+
 ## v1.3.5 (2026-10-31)
 
 ### 修复
