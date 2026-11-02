@@ -2137,7 +2137,7 @@ test('S-4 rotate 的 session id 形状校验：结构性怪值 400', async () =>
     assert.equal(res.json.error.code, 'INVALID_FIELD');
 });
 
-test('R-建会话-8 建 → 命名「书名-YYMMDD」（用户钦定 2026-10-09；没名字的空会话在分组列表里找不到）', async () => {
+test('R-建会话-8 建 → 命名「书名-YYMMDDHHmm」（时分精度；没名字的空会话在分组列表里找不到）', async () => {
     const renames = [];
     rotateProbeResult = {
         sessions: {
@@ -2152,8 +2152,8 @@ test('R-建会话-8 建 → 命名「书名-YYMMDD」（用户钦定 2026-10-09�
     assert.equal(res.statusCode, 200, res.body);
     assert.equal(res.json.value.renamed, true);
     const now = new Date();   // 与服务端同进程同时区，日期串同源计算
-    const expected = `某连载本-${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
-    assert.deepEqual(renames, [{ sessionId: 's-name-1', title: expected }], '命名=书名-YYMMDD（本地时区）');
+    const expected = `某连载本-${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+    assert.deepEqual(renames, [{ sessionId: 's-name-1', title: expected }], '命名=书名-YYMMDDHHmm（本地时区）');
     rotateProbeResult = undefined;
 });
 

@@ -189,7 +189,7 @@ async function layerWeb() {
         const sc = await req('POST', q('session/create'), { body: { session: 'realboot-1', book: '真机冒烟书', bookTitle: '真机冒烟书', handoff: handoffText, deferArchive: true } });
         const v = sc.json?.value ?? {};
         check('S10a /session/create 200（prompt 直发不拖垮创建）', sc.status === 200 && v.created === true, `status=${sc.status} body=${sc.text.slice(0, 200)}`);
-        check('S10b 新会话命名 书名-YYMMDD', /^真机冒烟书-\d{6}$/.test(v.title ?? ''), JSON.stringify({ title: v.title, id: v.createdSessionId }));
+        check('S10b 新会话命名 书名-YYMMDDHHmm', /^真机冒烟书-\d{10}$/.test(v.title ?? ''), JSON.stringify({ title: v.title, id: v.createdSessionId }));
         check('S10c 交接摘要直发被真宿主接受（prompted:true；queue 形状真机成立）', v.prompted === true, v.promptError ?? '（无错误）');
         check('S10d 自动认领 claimed:true（locateBook→updateJson→addBookSession 真机链）', v.claimed === true, v.claimError ?? '（无错误）');
         check('S10e deferArchive 生效：内联归档被跳过（archived:false 且无 archiveError）', v.archived === false && v.archiveError === undefined, JSON.stringify({ archived: v.archived, archiveError: v.archiveError }));
