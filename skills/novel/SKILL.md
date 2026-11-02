@@ -37,6 +37,7 @@ description: Use when the user asks to write, create, outline, or continue a nov
        拍：追到死巷才发现追错人，真目标已出城
      ```
 6. 伏笔：`novel_ledger foreshadow_setup` 必带 plan（预计回收章）；回收时 `foreshadow_payoff`。超期未回收优先安排，别开新钩盖旧账。
+7. **关系与弧线落账**（v1.4.0）：人物/组织**之间**的关系变化（盟友→仇敌、信任度升降…）随 `novel_relation update` 落账（多行「A|B|维度|值[|备注]」，(A,B) 与 (B,A) 自动归一）；单人物**弧光维度**（成长/无畏/嫌疑度…）随 `novel_arc update` 落账（多行「人物|维度|值[|趋势][|备注]」）。**三者别混**：境界/位置/持有 → 事实账本（`novel_ledger`）；人物间关系 → `novel_relation`；单人物弧光 → `novel_arc`。正文仍按旧关系写会被内容门禁每章 warning 点名（不拦）；弧线停走（≥15 章未推进）命中时写章链自动落 major 质量债（`novel_quality view` 可见）。收尾体检加跑 `novel_project check fullscan:true`（关系线/弧线/hard 质量债/无 plan 伏笔，零 token）。
 
 ## 续写已有书
 
@@ -55,7 +56,7 @@ description: Use when the user asks to write, create, outline, or continue a nov
 ## 质检与发布
 
 - `novel_audit`：platform 按（起点吃长线结构与章末钩子 / 番茄吃前千字爽点）；`censor:true` 发书前必跑（启发式预筛，命中仍须人工复核）
-- 机审数字（novel_audit / novel_noai_scan / novel_diagnose）是证据，审稿结论必须引用
+- 机审数字（novel_audit / novel_noai_scan / novel_diagnose）是证据，审稿结论必须引用；`novel_polish submit` 的 `review_quotes`（多行「位置|原文原句」）给了就硬校验——引文必须逐字（忽略空白）在**原文**里找到，太短/找不到即整章拒收；凭印象补全/改写转述的引文在这里被拦，不提供不校验（普通润色不受影响）
 - 导出 `novel_export`（md/txt，只允许落到 书/导出/ 内）
 
 ## 面板联动
