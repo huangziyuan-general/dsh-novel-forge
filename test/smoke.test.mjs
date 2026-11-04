@@ -1219,7 +1219,7 @@ test('★ 细纲门禁前移（真机配置）：声明量撑不到下限 → sa
     assert.ok(auditText.includes('outline/no_contract_section'), 'warn 档留痕：无段保存必须进审计');
 });
 
-test('★ E3 语言基因卡：建卡单独注入；角色说了自己的禁忌词被抓出', async () => {
+test('★ E3 语言基因卡：建卡单独注入；角色说出口的禁忌词被抓出、叙述提及不算', async () => {
     const character = tool('novel_character');
     const briefing = tool('novel_briefing');
     const audit = tool('novel_audit');
@@ -1227,7 +1227,7 @@ test('★ E3 语言基因卡：建卡单独注入；角色说了自己的禁忌�
     const saved = await character.execute({
         action: 'save', book: '示例书', name: '测试角色',
         card: '外在：拾骨人，寡言。隐性欲望：查清师父死因。',
-        voice: '句长|短句为主，很少超过12字\n逻辑|先做后说\n口头禅|别急\n禁忌|香炉\n动作|敲刀柄',
+        voice: '句长|短句为主，很少超过12字\n逻辑|先做后说\n口头禅|别急\n禁忌|香炉,风口\n动作|敲刀柄',
     }, exec);
     assert.ok(saved.voiceFields.length >= 4, `语言基因卡字段要落盘，实际 ${saved.voiceFields.length}`);
 
@@ -1236,7 +1236,10 @@ test('★ E3 语言基因卡：建卡单独注入；角色说了自己的禁忌�
     assert.equal(bf.voiceCount, 1, '契约里的出场人物有卡就注入');
 
     const a = await audit.execute({ book: '示例书', chapter: 1, voice: true }, exec);
-    assert.ok(a.voiceResult.errors >= 1, '★ 第1章正文写了「香炉」，而测试角色的禁忌词就是香炉——必须抓出');
+    // 边界口径（0.20.x）：台词内「别站在风口上」= 角色真说出口 → 抓；
+    // 叙述里的「按进香炉」只是物件被提及（短语前紧贴汉字），不算说错话。
+    assert.equal(a.voiceResult.errors, 1, '台词内的禁忌词要被抓，且叙述提及不得误报');
+    assert.ok(a.voiceResult.issues[0].message.includes('风口'), '抓到的必须是台词里的那个词');
     assert.equal(a.voiceResult.issues.some((i) => i.code === 'voice-taboo'), true);
 
     const listed = await character.execute({ action: 'list', book: '示例书' }, exec);
