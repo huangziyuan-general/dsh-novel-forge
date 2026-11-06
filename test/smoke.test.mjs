@@ -380,6 +380,40 @@ test('写章：机审通过 → 版本化落盘 → 账本落账 → 门禁放�
     assert.equal(meta.gateFailures['1'], undefined, '成功落盘 → 熔断计数清零');
 });
 
+test('★ 体检类提示不记债：文风跳过只进回执，语言基因透传原码', async () => {
+    await tool('novel_project').execute({ action: 'init', book: '债目书', title: '债目书' }, exec);
+    await setOutlineContract('债目书', 'warn');
+    await tool('novel_outline').execute(
+        { action: 'save_chapter', book: '债目书', chapter: 1, outline: '第1章：雨夜问棺。出场：测试角色。' }, exec,
+    );
+    await tool('novel_outline').execute({ action: 'approve', book: '债目书', chapter: 1 }, exec);
+    // 种两份体检输入：样本不足的薄基线（→ reason 说明行）+ 会命中禁忌词的语言基因卡
+    fs.mkdirSync(path.join(root, '债目书', '.novel'), { recursive: true });
+    fs.writeFileSync(
+        path.join(root, '债目书', '.novel', 'style-baseline.json'),
+        JSON.stringify({ baseline: { chapters: 2, dims: {} } }),
+    );
+    fs.mkdirSync(path.join(root, '债目书', '设定'), { recursive: true });
+    fs.writeFileSync(
+        path.join(root, '债目书', '设定', '语言基因.json'),
+        JSON.stringify({ '测试角色': { tics: ['呵'], taboo: ['风口'] } }),
+    );
+    const r = await tool('novel_write_chapter').execute({
+        book: '债目书', chapter: 1, title: '雨夜问棺',
+        content: GOOD_CHAPTER, summary: '测试角色雨夜验尸。',
+        cast: '测试角色',
+    }, exec);
+    assert.ok(
+        r.warnings.some((w) => w.includes('文风体检：')),
+        '薄基线跳过说明仍进写章回执（不静默）',
+    );
+    const meta = JSON.parse(fs.readFileSync(path.join(root, '债目书', 'novel.json'), 'utf8'));
+    const debts1 = meta.quality?.debts?.['1'] ?? [];
+    assert.equal(debts1.some((d) => d.code === 'style-check'), false, '体检没跑成的说明不记债');
+    assert.equal(debts1.some((d) => d.code === 'voice-taboo'), true, '禁忌命中透传原码');
+    assert.equal(debts1.some((d) => d.code === 'voice-check'), false, '不再落历史统一码');
+});
+
 const CH2_CONTENT = [
     '天亮前最黑的那阵，测试角色到了城西。乱葬岗的土被雨水泡松了，一脚下去能听见水从草根里挤出来的声音。',
     '',

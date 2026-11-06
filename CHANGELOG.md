@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.6.1 (2026-11-06)
+
+### 修复
+
+- **质量债语义收紧（文风体检）**：基线未建/样本不足的跳过说明只进写章回执，不再记成债——`novel_quality` 不再出现「结清了一条其实没欠的债」，也不再挤占体检告警 ≤3 的合并预算。`style-check` 码从 DEBT_CODES 移除（存量旧账自带级别字段，解析不受影响），文风侧唯一债码是 `style-drift`。
+
+- **质量债语义收紧（语言基因体检）**：债务代码透传原码——`voice-taboo` / `voice-tics-missing` / `voice-card-unusable` / `voice-no-card` 分别入表（均 minor），`novel_quality` 可区分「缺卡」与「说错话」；`voice-check` 转为遗留码，仅用于解析 1.6.x 旧账。
+
+- **弧线停走注释钉**：`ARC_STALL_CHAPTERS` 注释写明「只推进过一次的弧线在 gap 15–19 时不报」是刻意保守盲区（stalled 要求 ≥2 次推进、no-move 要求 ≥20 章），防止被当 bug 误修。纯注释，无行为变化。
+
 ## v1.6.0 (2026-11-06)
 
 ### 新增
