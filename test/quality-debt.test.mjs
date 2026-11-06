@@ -35,6 +35,13 @@ test('债目代码 → 级别：映射表不得漂移', () => {
     assert.equal(debtLevelOf('basis-stale'), 'major');
     assert.equal(debtLevelOf('pacing-brake-forced'), 'hard');
     assert.equal(debtLevelOf('content-gate-forced'), 'hard');
+    // 1.7 语言基因透传原码：四码全部入表（否则靠 minor 兜底过活，表就失去单一真相）
+    assert.equal(debtLevelOf('voice-taboo'), 'minor');
+    assert.equal(debtLevelOf('voice-tics-missing'), 'minor');
+    assert.equal(debtLevelOf('voice-card-unusable'), 'minor');
+    assert.equal(debtLevelOf('voice-no-card'), 'minor');
+    assert.equal(debtLevelOf('voice-check'), 'minor', '遗留统一码仍要能解析旧账');
+    assert.equal('style-check' in DEBT_CODES, false, '基线未建/样本不足是说明不是债，不得回表');
 });
 
 test('未知代码按 minor（别把没登记的东西算成大事）', () => {
