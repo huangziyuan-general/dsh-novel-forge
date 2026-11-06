@@ -27,3 +27,4 @@ docs/
 tmp/
 
 tmp-scratch/
+.browse-probe/

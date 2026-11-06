@@ -43,6 +43,7 @@ const FENCE = 'x-dsh-novel-forge';
 // 漏进清单会被当场抓住，清单不会烂掉。
 const ROUTES = [
     { name: 'GET /projects（列表）', method: 'GET', url: `${PREFIX}/projects` },
+    { name: 'GET /panel-config（面板引导配置，issue #8）', method: 'GET', url: `${PREFIX}/panel-config` },
     { name: 'POST /projects/claim', method: 'POST', url: `${PREFIX}/projects/claim` },
     { name: 'POST /projects（创建）', method: 'POST', url: `${PREFIX}/projects` },
     { name: 'GET /projects/:id', method: 'GET', url: `${PREFIX}/projects/护栏本` },
@@ -2119,6 +2120,66 @@ test('S-2 Origin 存在时必须本机；畸形 Origin 拒绝', async () => {
     assert.equal(weird.statusCode, 403);
     const good = await drive({ method: 'GET', url: `${PREFIX}/projects`, headers: { origin: 'http://127.0.0.1:3080' } });
     assert.notEqual(good.statusCode, 403, '本机 Origin 放行');
+});
+
+test('S-5 (#7) allowedHosts 配置域名：Host/Origin 放行；未配置域名照旧 403', async () => {
+    const registrations = [];
+    const ctx7 = {
+        fs: makeFakeBackend({ allowWriteRoots: [root], allowReadRoots: [root] }),
+        emit() {},
+        logger: { info() {} },
+        inject: (_deps, fn) => { fn(ctx7); },
+        effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
+        webServer: { register: (def) => { registrations.push(def); return () => {}; } },
+    };
+    // 大小写混合 + IPv6 方括号：入库前归一小写，比较时裸主机名
+    registerServerApi(ctx7, { workspaceRoot: root, scanTopK: 8, allowedHosts: ['Forge.Example.CN', '[fe80::1]'] }, { homedir: fakeHome });
+    const h7 = registrations[0].handler;
+    const origHandler = handler;   // drive() 用闭包里的 handler——临时换装
+    handler = h7;
+    try {
+        const okHost = await drive({ method: 'GET', url: `${PREFIX}/panel-config`, headers: { host: 'forge.example.cn:443' } });
+        assert.equal(okHost.statusCode, 200, `配置域名的 Host（含端口变体）应放行：${okHost.body}`);
+        const okV6 = await drive({ method: 'GET', url: `${PREFIX}/panel-config`, headers: { host: '[fe80::1]:3080' } });
+        assert.equal(okV6.statusCode, 200, '方括号 IPv6 Host 应放行');
+        const okOrigin = await drive({ method: 'GET', url: `${PREFIX}/panel-config`, headers: { origin: 'https://forge.example.cn' } });
+        assert.equal(okOrigin.statusCode, 200, 'Origin 与 Host 共用同一集合');
+        const bad = await drive({ method: 'GET', url: `${PREFIX}/panel-config`, headers: { host: 'other.example.cn' } });
+        assert.equal(bad.statusCode, 403);
+        assert.equal(bad.json.error.code, 'FORBIDDEN_HOST');
+        assert.ok(bad.json.error.message.includes('allowedHosts'), '已配置白名单时 403 消息应带 allowedHosts 指引');
+    } finally {
+        handler = origHandler;
+    }
+});
+
+test('S-5 (#7) 默认未配置 allowedHosts：域名 Host 仍 403，消息不带指引（回环行为逐字不变）', async () => {
+    const bad = await drive({ method: 'GET', url: `${PREFIX}/panel-config`, headers: { host: 'forge.example.cn' } });
+    assert.equal(bad.statusCode, 403);
+    assert.equal(bad.json.error.code, 'FORBIDDEN_HOST');
+    assert.ok(!bad.json.error.message.includes('allowedHosts'), '默认路径消息逐字不变——没配白名单就不提示');
+});
+
+test('S-6 (#8) GET /panel-config：主 harness 未配置 → autoOpenPanel:true；fence 之外仍 403', async () => {
+    const ok = await drive({ method: 'GET', url: `${PREFIX}/panel-config` });
+    assert.equal(ok.statusCode, 200);
+    assert.deepEqual(ok.json.value, { autoOpenPanel: true }, '缺省（未配置键）= true');
+    const fenced = await drive({ method: 'GET', url: `${PREFIX}/panel-config`, headers: { host: 'localhost:3080' }, fence: false });
+    assert.equal(fenced.statusCode, 403, 'panel-config 走同一 fence，不带 fence 头拒绝');
+});
+
+test('S-7 (#7) validatePanelSecurityConfig：合法形状放行，坏形状 fail-fast', async () => {
+    const { validatePanelSecurityConfig } = await import('../lib/index.js');
+    assert.deepEqual(validatePanelSecurityConfig({ allowedHosts: ['forge.example.cn', 'localhost', '192.168.1.2', '[fe80::1]'] }),
+        { allowedHosts: ['forge.example.cn', 'localhost', '192.168.1.2', '[fe80::1]'] }, '合法白名单原样放行');
+    assert.deepEqual(validatePanelSecurityConfig({}), {}, '空 config 合法');
+    assert.equal(validatePanelSecurityConfig({ autoOpenPanel: false }).autoOpenPanel, false);
+    for (const bad of ['forge.example.cn', ['a', ''], ['dsh.example.cn:8443'], ['dsh example.cn'], ['a/b'], [42], [null],
+        ['.'], ['-'], ['_'], ['..'], ['...'], ['[....]'], ['[::]']]) {
+        assert.throws(() => validatePanelSecurityConfig({ allowedHosts: bad }),
+            /必须是字符串数组|裸主机名/, `应拒绝 ${JSON.stringify(bad)}`);
+    }
+    assert.throws(() => validatePanelSecurityConfig({ autoOpenPanel: 'no' }), /autoOpenPanel/);
 });
 
 test('S-3 session/rotate 节流：窗口内超限 → 429（rateReset:false 不清窗口）', async () => {
