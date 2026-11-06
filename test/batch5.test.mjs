@@ -489,6 +489,7 @@ test('batch-draft: draftSystem 字数与段落规格由 config 现算（不再�
     const a = draftSystem({ minChapterChars: 2000, maxChapterChars: 4000 });
     assert.ok(a.includes('2000–4000 字、目标 3000 字左右'), '下限/上限/目标都要现算出来');
     assert.ok(a.includes('不要一句一段'), '要带段落规格（模型对「3000 字」无感，对「单段 70–150 字」才有操作性）');
+    assert.ok(a.includes('具体物件起头') && a.includes('他看见'), '批量路径没有 preset，句首/感知动词链必须写进 draftSystem');
     assert.ok(a.includes('单段写足 70–150 字'), '单段规格由下限换算（2000/30 → 70）');
 
     const b = draftSystem({ minChapterChars: 1500, maxChapterChars: 3000 });
