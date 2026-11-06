@@ -2064,11 +2064,19 @@ test('★ 会话纪律段只给会话，不给批量起草（受众门控）', a
     for (const name of DISCIPLINE) {
         assert.ok(namesOf(session).includes(name), `会话简报必须带「${name}」段`);
     }
+    // 叙述规范（句首与主语）只在会话简报里：批量路径没有 preset persona，但由
+    // draftSystem 自己注入，所以简报侧必须缺席——两条路径各付一次，不能同一次调用付两遍。
+    const narrative = session.sections.find((s) => s.name === '叙述规范（句首与感知）');
+    assert.ok(narrative, '会话简报必须带叙述规范段');
+    assert.ok(narrative.content.includes('他看见') && narrative.content.includes('具体物件'),
+        '切断感知动词链与句首习惯，不能退化成「要有画面感」这类形容词');
 
     const batch = await buildBriefing({ config: base, io, book: '测试书', novel, n: 60, audience: 'batch' });
     for (const name of DISCIPLINE) {
         assert.ok(!namesOf(batch).includes(name), `「${name}」是给会话执笔人的，不该进旁路起草引擎的提示词`);
     }
+    assert.ok(!namesOf(batch).includes('叙述规范（句首与感知）'),
+        '批量路径的叙述规范在 draftSystem 里，简报不重复注入');
     // 但写作规格与上下文实质内容一条不许少：门控只关「怎么开会话/怎么收尾」，不关写什么
     assert.ok(namesOf(batch).includes('本章字数目标'), '字数与段落规格对批量起草同样有效（draftSystem 之外还要在简报里）');
     assert.deepEqual(batch.warnings, session.warnings, '门控不得改变上下文包的实质判定（告警一致）');

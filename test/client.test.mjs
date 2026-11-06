@@ -27,11 +27,17 @@ function boot(ctxOpts = {}, clientOpts = {}) {
     return { dom, mod, ...harness };
 }
 
-/** 造一个 fetch：按调用序号返回不同 value，并记录请求。 */
-function scriptedFetch(sequence) {
+/** 造一个 fetch：按调用序号返回不同 value，并记录请求。opts.panelConfig 定制 /panel-config 回包，opts.panelConfigReject=true 拒绝它。 */
+function scriptedFetch(sequence, opts = {}) {
     const requests = [];
     let i = 0;
     const fetch = (url, init) => {
+        // /panel-config（issue #8 自动打开闸）在记录前直给——它不属于任何测试
+        // 的「业务请求序列」，记录进去会把按序号排的槽位顶掉一格。
+        if (/\/panel-config(\?|$)/.test(String(url))) {
+            if (opts.panelConfigReject) return Promise.reject(new Error('panel-config down'));
+            return Promise.resolve({ json: () => Promise.resolve({ ok: true, value: opts.panelConfig ?? { autoOpenPanel: true } }) });
+        }
         requests.push({ url: String(url), init });
         // openProject 现在并行拉驾驶舱。这些序列原本只按保存/提案等目标请求排列，
         // 让 dashboard 消耗槽位会把错误响应挪给别的端点，所以这里按 URL 直给最小回包。
@@ -122,19 +128,67 @@ test('② 注册内容 seat：key 用 definition.id，且 inject 工厂能拿到
 
 // ── ③ 打开时机：有项目才显示 ──
 
-// ── ③ 打开：锻炉是右侧栏常驻的独立 tab ──
+// ── ③ 打开：锻炉是右侧栏常驻的独立 tab（autoOpenPanel 闸，issue #8）──
+
+// 打开闸现在是 async（fetch /panel-config → microtask 链 → openForgeTab 排定时器），
+// 而 flush 的 round 在首轮 splice 时队列还空就 return——先 setImmediate 让链跑完再 flush。
+async function drainGate(mod) {
+    await new Promise((resolve) => setImmediate(resolve));
+    await mod.timers.flush(3);
+}
 
 test('★ ③ 独立 tab：锻炉常驻右侧栏——本会话没有项目也照常打开', async () => {
     const { mod, opened } = boot({ sessionId: 's1' }, { fetch: scriptedFetch([{ value: [] }]).fetch });
-    await mod.timers.flush(1);
+    await drainGate(mod);
     assert.ok(opened.includes(TAB_KIND),
         '★ 独立右侧栏 tag：无任何项目也打开（不再被「会话有项目才开」门控压掉）');
 });
 
 test('独立打开只发生一次：装配时开一次，开成即停不重复', async () => {
     const { mod, opened } = boot({ sessionId: 's1' }, { fetch: scriptedFetch([{ value: [] }]).fetch });
-    await mod.timers.flush(8);
+    await drainGate(mod);
     assert.equal(opened.length, 1, '★ 独立 tag 开成即停（关掉是用户的自由，不跟用户抢）');
+});
+
+test('★ ③ autoOpenPanel:false —— 配置关掉自动打开，tab 注册仍无条件常驻（issue #8）', async () => {
+    const { mod, opened, registered } = boot({ sessionId: 's1' },
+        { fetch: scriptedFetch([], { panelConfig: { autoOpenPanel: false } }).fetch });
+    await drainGate(mod);
+    assert.ok(!opened.includes(TAB_KIND), 'autoOpenPanel:false → 不自动打开');
+    assert.equal(registered.tabs.length, 1, 'tab 注册不受配置影响——关的只是「自动打开」，不是常驻入口');
+    assert.equal(mod.timers.pending(), 0, '不开就不该残留 30s 重试链（链根本不创建）');
+});
+
+test('★ ③ /panel-config 不可达 —— 按 true 兜底照常自动打开（fail-open = 旧行为）', async () => {
+    const { mod, opened } = boot({ sessionId: 's1' },
+        { fetch: scriptedFetch([], { panelConfigReject: true }).fetch });
+    await drainGate(mod);
+    assert.ok(opened.includes(TAB_KIND), 'fetch 拒绝/超时 → 兜底 true → 照常打开');
+});
+
+test('★ ③ /panel-config 响应缺 autoOpenPanel —— 视为 true 照常打开', async () => {
+    const { mod, opened } = boot({ sessionId: 's1' },
+        { fetch: scriptedFetch([], { panelConfig: {} }).fetch });
+    await drainGate(mod);
+    assert.ok(opened.includes(TAB_KIND), '缺字段 ≠ false → 打开');
+});
+
+test('★ ③ 卸载早于 /panel-config 返回 —— 不打开、不残留重试链', async () => {
+    let resolvePanel;
+    const fetch = (url) => {
+        if (/\/panel-config(\?|$)/.test(String(url))) {
+            return new Promise((resolve) => { resolvePanel = resolve; });
+        }
+        return Promise.resolve({ json: () => Promise.resolve({ ok: true, value: [] }) });
+    };
+    const { mod, opened, dispose } = boot({ sessionId: 's1' }, { fetch });
+    assert.equal(typeof resolvePanel, 'function', '前置：apply 已发出 /panel-config');
+    dispose();                                  // 模拟插件卸载（effect cleanup）
+    resolvePanel({ json: () => Promise.resolve({ ok: true, value: { autoOpenPanel: true } }) });
+    await new Promise((resolve) => setImmediate(resolve));
+    await mod.timers.flush(3);
+    assert.equal(opened.length, 0, '卸载后 fetch 才返回 → 不得再拉起 tab');
+    assert.equal(mod.timers.pending(), 0, '不得残留 30s 重试链');
 });
 
 // ── session-watch 调度层自身语义（apply 不再用它做门控，但能力仍经 __internals 直测）──
@@ -183,6 +237,7 @@ test('★ startForgeAutoOpen：切到有项目的会话重新判断，单会话�
 test('③ openTab 抛错（seat 未挂载）不炸：重试链由 openForgeTab 自己兜', async () => {
     const seq = scriptedFetch([{ value: [{ name: '书' }] }]);
     const { mod, opened, ctx } = boot({ sessionId: 's1', openTabThrows: true }, { fetch: seq.fetch });
+    await drainGate(mod);                     // 打开闸是 async：先把链跑完，400ms 首次定时器入队
     await mod.timers.flush(4);
     assert.equal(opened.length, 0, '前置：seat 未挂载时 openTab 抛错');
 

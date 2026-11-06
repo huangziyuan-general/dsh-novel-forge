@@ -31,7 +31,7 @@ import { SettingsView } from './views/settings.js';
 
 // 版本号：必须与 package.json 的 version 一致。
 // build-client.mjs 会把它与 package.json 对账，不一致直接构建失败（防发行漂移）。
-const PLUGIN_VERSION = '1.5.0';
+const PLUGIN_VERSION = '1.6.0';
 
 // 供视图头部徽标读取 —— 让视图层不必反向 import 入口（避免循环依赖）。
 window.__NOVEL_FORGE_VERSION__ = PLUGIN_VERSION;
@@ -75,12 +75,41 @@ function apply(ctx) {
 	//    时右侧栏就没了那个独立「锻炉」，用户要的是"右侧栏 · 单独的"。
 	//    面板内部仍按会话语义过滤项目列表，空会话给引导空态（见 project-list.js），
 	//    所以无条件打开不会露丑。延迟重试由 openForgeTab 自己兜（seat 未挂载会抛）。
+	//
+	//    issue #8 的诉求是「别在我关掉后每次加载都自动弹开」→ autoOpenPanel 配置
+	//    （缺省 true，行为不变）。配置经只读 /panel-config 取：fetch 失败 / 超时 /
+	//    服务不可达 / 响应缺字段一律按 true 兜底——自动打开是锦上添花，不该被
+	//    服务可用性绑架。tab 注册（①②）永远无条件，「关掉只是关掉这一次」。
+	//    localStorage 记「用户关过」的方案否决：插件重载时 tab seat 卸载与手动
+	//    关闭无法区分，每次升级后自动打开会静默失效。
 	try {
-		// openForgeTab 返回 disposer（内部最多重试 120×250ms ≈ 30s）。原先返回值被丢弃
-		// ⇒ 插件卸载后重试链还在跑。ctx.effect 的回调立即执行、**返回值登记为清理函数**，
-		// 正好用来在卸载时把 disposer 叫上。
-		const dispose = openForgeTab(ctx);
-		if (typeof ctx.effect === 'function') ctx.effect(() => dispose);
+		let openedByAuto = null;
+		let disposed = false;
+		if (typeof ctx.effect === 'function') {
+			// disposer 现在注册、fetch 完成后异步补位。unload 早于 fetch 完成时，
+			// cleanup 置 disposed 让 gate 回调直接退出——否则 2 秒窗口内卸载仍会在
+			// fetch 返回后拉起 tab 和那条最长 30s 的重试链。
+			ctx.effect(() => () => {
+				disposed = true;
+				if (typeof openedByAuto === 'function') openedByAuto();
+			},
+				'dsh-novel-forge: 自动打开锻炉 tab');
+		}
+		const gate = (typeof fetch === 'function')
+			? apiFetch('/panel-config', { timeoutMs: 2000 }).then(
+				(cfg) => cfg?.autoOpenPanel !== false,
+				() => true)
+			: Promise.resolve(true);
+		gate.then((shouldOpen) => {
+			if (disposed || !shouldOpen || openedByAuto) return;
+			try {
+				// openForgeTab 返回 disposer（内部最多重试 120×250ms ≈ 30s），
+				// 由上方 effect 登记的清理函数在卸载时调用。
+				openedByAuto = openForgeTab(ctx);
+			} catch (error) {
+				console.warn('[novel-forge] 独立打开右侧栏 tab 失败，可从右侧栏 guide 页手动进入（"小说锻炉"）', error);
+			}
+		}, () => {});
 	} catch (error) {
 		console.warn('[novel-forge] 独立打开右侧栏 tab 失败，可从右侧栏 guide 页手动进入（"小说锻炉"）', error);
 	}

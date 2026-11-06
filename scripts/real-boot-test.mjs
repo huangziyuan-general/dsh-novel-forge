@@ -18,6 +18,7 @@
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -68,8 +69,9 @@ function makeWebProfile() {
     let patch = fs.existsSync(patchFile) ? fs.readFileSync(patchFile, 'utf8') : '';
     if (!patch.includes('sandbox-policy')) throw new Error('web profile 补丁里没有 sandbox-policy 行，拒绝在不可控沙箱形态下跑');
     patch = patch.replace(/(id:\s*sandbox-policy[\s\S]*?)workspaceRoot:.*/m, `$1workspaceRoot: ${decoy}`);
-    // ② 插件 config：workspaceRoot 指到 ws（spawn cwd=decoy ⇒ 写 ws 只有绑定根覆写才救得回来）
-    patch += `\n- id: dsh-novel-forge\n  config:\n    workspaceRoot: ${ws}\n`;
+    // ② 插件 config：workspaceRoot 指到 ws（spawn cwd=decoy ⇒ 写 ws 只有绑定根覆写才救得回来）；
+    //    allowedHosts 带一个探测域名（issue #7 真接线：Host 白名单放行/拒绝走真 apply() 管道）
+    patch += `\n- id: dsh-novel-forge\n  config:\n    workspaceRoot: ${ws}\n    allowedHosts: ['forge.probe.example']\n`;
     fs.writeFileSync(patchFile, patch);
 }
 
@@ -121,6 +123,31 @@ async function layerWeb() {
         const withFence = await req('GET', q('projects'));
         check('S1b 真容器里插件已 mount（fence 头 → 200 + ok:true）', withFence.status === 200 && withFence.json?.ok === true, `status=${withFence.status} body=${withFence.text.slice(0, 120)}`);
 
+        // S1c–S1e 面板引导配置 + Host 白名单（issue #7/#8 真机接线）：fetch 改不了 Host 头，
+        // 用 node:http 真发——这正是 DNS rebinding 防线的攻击面口径（Host 是浏览器不可伪造面）。
+        const panelCfg = await req('GET', q('panel-config'));
+        check('S1c GET /panel-config：默认配置 → ok:true + autoOpenPanel:true',
+            panelCfg.status === 200 && panelCfg.json?.ok === true && panelCfg.json?.value?.autoOpenPanel === true,
+            `status=${panelCfg.status} body=${panelCfg.text.slice(0, 120)}`);
+        const { port: probePort } = new URL(baseUrl);
+        const reqHost = (host, p) => new Promise((resolve) => {
+            const r = http.request({
+                hostname: '127.0.0.1', port: Number(probePort), path: p, method: 'GET',
+                headers: { Host: host, 'x-dsh-novel-forge': '1' },
+            }, (res) => {
+                let body = ''; res.on('data', (c) => { body += c; });
+                res.on('end', () => { let json = null; try { json = JSON.parse(body); } catch { /* 原文 */ } resolve({ status: res.statusCode, json, body }); });
+            });
+            r.on('error', (e) => resolve({ status: 0, body: String(e) }));
+            r.end();
+        });
+        const allowHit = await reqHost('forge.probe.example', q('projects'));
+        check('S1d allowedHosts 真接线：Host=forge.probe.example（带端口）→ 放行 200', allowHit.status === 200, `status=${allowHit.status} body=${allowHit.body.slice(0, 120)}`);
+        const denyHit = await reqHost('evil.probe.example', q('projects'));
+        check('S1e 白名单外 Host → 403 FORBIDDEN_HOST 且消息带 allowedHosts 指引（已配置白名单 ⇒ 提示在场）',
+            denyHit.status === 403 && denyHit.json?.error?.code === 'FORBIDDEN_HOST' && denyHit.body.includes('allowedHosts'),
+            `status=${denyHit.status} body=${denyHit.body.slice(0, 160)}`);
+
         // S2 REST 建书（创建会话 realboot-1；落点 = config.workspaceRoot=ws ≠ 沙箱根 ≠ 进程 cwd 的诱饵）
         const created = await req('POST', q('projects'), { body: { title: '真机冒烟书', session: 'realboot-1' } });
         check('S2a POST /projects 建书 200（写在非沙箱根工作区 = 绑定根覆写端到端成立）', created.status === 200, `status=${created.status} body=${created.text.slice(0, 200)}`);
@@ -134,16 +161,23 @@ async function layerWeb() {
         check('S2e 面板按会话过滤：本会话可见、他会话不可见',
             (mine.json?.value ?? []).some((b) => b.name === '真机冒烟书') && !(theirs.json?.value ?? []).some((b) => b.name === '真机冒烟书'));
 
-        // S3 存章（REST 直存通道）+ 读回
-        const text = '夜色像墨，长街尽头亮着一盏灯。'.repeat(40);
+        // S3 存章（REST 直存通道）+ 读回——正文必须 ≥2100 字且按空行分段（≥15 段）：
+        // REST 存章与 write_chapter 同链过机审（600 字/单段都会被 GATE_REJECTED 拦下——门禁工作是设计行为）
+        const text = Array.from({ length: 20 }, () => '夜色像墨，长街尽头亮着一盏灯。'.repeat(9)).join('\n\n');
         const saved = await req('POST', q('projects/真机冒烟书/chapters/1'), { body: { title: '真机首章', text } });
         check('S3a 存章 200', saved.status === 200, `status=${saved.status} body=${saved.text.slice(0, 200)}`);
         const chapDir = path.join(ws, '真机冒烟书', '正文');
         const chapFile = fs.existsSync(chapDir) ? fs.readdirSync(chapDir).find((f) => f.includes('真机首章')) : null;
         check('S3b 章节文件落盘（正文/第1章-真机首章-v1.md 形态）', Boolean(chapFile), chapDir);
         const back = await req('GET', q('projects/真机冒烟书/chapters/1'));
-        check('S3c 读回正文与存储一致（GET 单元件返回裸文本 value）', back.status === 200 && back.json?.value === text,
-            `status=${back.status} head=${String(back.json?.value ?? back.text).slice(0, 60)}`);
+        const got = String(back.json?.value ?? '');
+        // 存盘规范形：content.trimEnd() + '\n'（lib/server-routes/chapters.js 存段与冲突比较同源），
+        // GET 读回按磁盘字节原样返回——round-trip 契约是「归一后逐字一致」，不是原文逐字。
+        const stored = `${text.trimEnd()}\n`;
+        let diverge = -1;
+        if (got !== stored) for (let i = 0; i < Math.min(stored.length, got.length); i += 1) if (stored[i] !== got[i]) { diverge = i; break; }
+        check('S3c 读回正文与存储一致（GET 单元件返回裸文本 value，存盘规范形 trimEnd+\\n）', back.status === 200 && got === stored,
+            `status=${back.status} len ${got.length}≠${stored.length} 首异点=${diverge} got=${JSON.stringify(got.slice(Math.max(0, diverge - 20), diverge + 20))} want=${JSON.stringify(stored.slice(Math.max(0, diverge - 20), diverge + 20))}`);
 
         // S4 世界书 CRUD：REST 面 id 设计契约 = max+1 数字（工具面是 'W1' 字符串，混合形态共存，
         // PUT/DELETE 靠 String(e.id) 匹配——3611bfc 修的正是 Number 强转把这层打穿）
