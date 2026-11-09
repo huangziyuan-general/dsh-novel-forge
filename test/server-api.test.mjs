@@ -2409,3 +2409,38 @@ test('readJsonBody：多字节 UTF-8 字符跨 chunk 边界逐字复原', async 
     const body = await p;
     assert.equal(body.t, '龙者𠮷怪雪夜', '6 字节切块（必有字符跨边界）后仍逐字复原');
 });
+
+test('readJsonBody：超过 4MB 返回 typed 413，继续排空请求且不销毁连接', async () => {
+    const { readJsonBody } = await import('../lib/server-http.js');
+    const req = new EventEmitter();
+    let destroyed = false;
+    req.destroy = () => { destroyed = true; };
+    const reading = readJsonBody(req);
+    const rejected = assert.rejects(reading, (error) => {
+        assert.equal(error.httpStatus, 413);
+        assert.equal(error.errorCode, 'BODY_TOO_LARGE');
+        return true;
+    });
+    req.emit('data', Buffer.alloc(4 * 1024 * 1024, 97));
+    req.emit('data', Buffer.from('{"ignored":true}'));
+    req.emit('end');
+    await rejected;
+    assert.equal(destroyed, false, '不能先 destroy 再写 413，否则真机客户端可能只收到连接重置');
+});
+
+test('REST 请求错误分类：非法 JSON=400，超大请求体=413，均先于引擎 503', async () => {
+    await createBook('错误分类本');
+    for (const suffix of ['draft-batch', 'chapters/1/polish']) {
+        const malformed = await drive({
+            method: 'POST', url: `${PREFIX}/projects/错误分类本/${suffix}`, body: '{"from":',
+        });
+        assert.equal(malformed.statusCode, 400, `${suffix}：${malformed.body}`);
+        assert.equal(malformed.json.error?.code, 'BAD_BODY');
+    }
+    const oversized = await drive({
+        method: 'POST', url: `${PREFIX}/projects/错误分类本/draft-batch`,
+        body: 'x'.repeat(4 * 1024 * 1024 + 1),
+    });
+    assert.equal(oversized.statusCode, 413, oversized.body);
+    assert.equal(oversized.json.error?.code, 'BODY_TOO_LARGE');
+});
