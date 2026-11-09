@@ -128,20 +128,22 @@ test('阈值可覆盖（调用方说了算，不是写死）', () => {
 
 test('★ 词表并入（D 的 7 类）：词条在库里，且八维权重/维度数一字未动', async () => {
     const lexicon = (await import('../lib/data/noai-lexicon.json', { with: { type: 'json' } })).default;
+    const { ruleText } = await import('../lib/noai.js');
+    const has = (list, t) => list.some((e) => ruleText(e) === t);
     // ① AI 高频词 / ② 弱化副词 / ⑥ 正式语体 → stock（按密度计）
     for (const t of ['映入眼帘', '此时此刻', '心中暗道', '与此同时', '徐徐', '诚然']) {
-        assert.ok(lexicon.stock.includes(t), `stock 缺词条：${t}`);
+        assert.ok(has(lexicon.stock, t), `stock 缺词条：${t}`);
     }
     // ③ 意义膨胀 / ④ 通用结论套话 → cliche（出现即计）
     for (const t of ['叹为观止', '前所未有', '未来可期', '前程似锦', '不得不说']) {
-        assert.ok(lexicon.cliche.includes(t), `cliche 缺词条：${t}`);
+        assert.ok(has(lexicon.cliche, t), `cliche 缺词条：${t}`);
     }
     // ⑤ 段首总结句 → templates.summaryPatterns
     assert.ok(lexicon.templates.summaryPatterns.some((p) => p.name === '段首总结句'), '缺段首总结句判据');
     // ⑦ 排比三连 → templates.paired
     assert.ok(lexicon.templates.paired.some((p) => p.name === '排比三连'), '缺排比三连判据');
     // 跨章判据要的「标志小动作」词表
-    assert.ok(Array.isArray(lexicon.gesture) && lexicon.gesture.includes('摩挲'), '缺 gesture 词表');
+    assert.ok(Array.isArray(lexicon.gesture) && has(lexicon.gesture, '摩挲'), '缺 gesture 词表');
 
     // 八维权重合计仍为 1、仍是八维（不变量：并词表不许动权重与维度数）
     const src = await (await import('node:fs/promises')).readFile(new URL('../lib/noai.js', import.meta.url), 'utf8');

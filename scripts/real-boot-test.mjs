@@ -70,8 +70,10 @@ function makeWebProfile() {
     if (!patch.includes('sandbox-policy')) throw new Error('web profile 补丁里没有 sandbox-policy 行，拒绝在不可控沙箱形态下跑');
     patch = patch.replace(/(id:\s*sandbox-policy[\s\S]*?)workspaceRoot:.*/m, `$1workspaceRoot: ${decoy}`);
     // ② 插件 config：workspaceRoot 指到 ws（spawn cwd=decoy ⇒ 写 ws 只有绑定根覆写才救得回来）；
-    //    allowedHosts 带一个探测域名（issue #7 真接线：Host 白名单放行/拒绝走真 apply() 管道）
-    patch += `\n- id: dsh-novel-forge\n  config:\n    workspaceRoot: ${ws}\n    allowedHosts: ['forge.probe.example']\n`;
+    //    allowedHosts 带一个探测域名（issue #7 真接线：Host 白名单放行/拒绝走真 apply() 管道）；
+    //    draft 通道钉到不存在的 provider——批量起草测试要的是「引擎快速失败」，
+    //    绝不能继承真 profile 的默认路由去烧真模型（S8e 靠它拿到确定性的 generate 失败留痕）。
+    patch += `\n- id: dsh-novel-forge\n  config:\n    workspaceRoot: ${ws}\n    allowedHosts: ['forge.probe.example']\n    engine:\n      channels:\n        draft:\n          provider: nonexistent-probe\n          model: probe-model\n          maxTokens: 4096\n          timeoutMs: 20000\n          retries: 0\n`;
     fs.writeFileSync(patchFile, patch);
 }
 
@@ -115,6 +117,17 @@ async function layerWeb() {
         return { status: res.status, json, text };
     };
     const q = (s) => `/api/novel-forge/${s}`;
+    // 裸体请求：错误分类测试要发**非法 JSON / 超大请求体**，req() 的 JSON.stringify 包不了这个形状
+    const reqRaw = async (method, p, rawBody) => {
+        const res = await fetch(baseUrl + p, {
+            method,
+            headers: { ...FENCE, ...(rawBody ? { 'content-type': 'application/json' } : {}) },
+            body: rawBody,
+        });
+        const text = await res.text();
+        let json = null; try { json = JSON.parse(text); } catch { /* 保留原文 */ }
+        return { status: res.status, json, text };
+    };
 
     try {
         // S1 mount + 自家 fence（不带头的 403 必须来自插件，不是宿主的 401）
@@ -194,8 +207,59 @@ async function layerWeb() {
         // S5/S6 提案列表（lossless JSON 形状）与导出（含真章内容）
         const props = await req('GET', q('projects/真机冒烟书/proposals'));
         check('S5 提案列表 200 且 JSON 合法', props.status === 200 && props.json?.ok === true, `status=${props.status}`);
+        // S6 导出含正文（真磁盘章节被读通）
         const exp = await req('POST', q('projects/真机冒烟书/export'), { body: { format: 'markdown' } });
         check('S6 导出含正文（真磁盘章节被读通）', exp.status === 200 && (exp.json?.value?.content ?? '').includes('长街尽头'), `status=${exp.status}`);
+
+        // ── S8 本轮特性真机接线：REST 错误分类 / 单换行段路口径 / 批量逐章留痕 ──
+        // S8a/S8b 错误分类先于引擎：非法 JSON 必须是 typed 400 BAD_BODY，
+        // 修订端点不再 .catch(()=>({})) 吞解析错（吞掉后会拿空体去跑引擎/500）。
+        const badBatch = await reqRaw('POST', q('projects/真机冒烟书/draft-batch'), '{"from":');
+        check('S8a draft-batch 非法 JSON → 400 BAD_BODY（先于引擎 503）',
+            badBatch.status === 400 && badBatch.json?.error?.code === 'BAD_BODY', `status=${badBatch.status} body=${badBatch.text.slice(0, 160)}`);
+        const badPolish = await reqRaw('POST', q('projects/真机冒烟书/chapters/1/polish'), '{"issues":');
+        check('S8b polish 非法 JSON → 400 BAD_BODY（修订端点不再吞解析错）',
+            badPolish.status === 400 && badPolish.json?.error?.code === 'BAD_BODY', `status=${badPolish.status} body=${badPolish.text.slice(0, 160)}`);
+        // S8c 超 4MiB → 413 BODY_TOO_LARGE；连接未被销毁的真机证据 = 客户端完整收到了
+        // typed 响应（旧版先 destroy 连接，客户端只会看到连接重置，错误码根本送不到）。
+        const oversized = await reqRaw('POST', q('projects/真机冒烟书/draft-batch'), 'x'.repeat(4 * 1024 * 1024 + 1));
+        check('S8c 超 4MiB → 413 BODY_TOO_LARGE 且连接可读（不 destroy）',
+            oversized.status === 413 && oversized.json?.error?.code === 'BODY_TOO_LARGE', `status=${oversized.status} body=${oversized.text.slice(0, 160)}`);
+        // S8d 段路口径统一（lib/paragraphs.js）：单换行正文旧版整章算 1 段必被机审
+        // 拦成 GATE_REJECTED（段数门禁），新版按换行分段放行——docx 导入稿的真机形状。
+        const mkSingle = await req('POST', q('projects'), { body: { title: '真机单换行书', session: 'realboot-1' } });
+        check('S8d-0 建单换行测试书', mkSingle.status === 200, `status=${mkSingle.status}`);
+        const singleText = Array.from({ length: 20 }, () => '夜色像墨，长街尽头亮着一盏灯。'.repeat(9)).join('\n');
+        const single = await req('POST', q('projects/真机单换行书/chapters/1'), { body: { title: '单换行首章', text: singleText } });
+        check('S8d-1 单换行正文（2700 字 20 行零空行）过机审存章（旧版整章 1 段必驳回）',
+            single.status === 200, `status=${single.status} body=${single.text.slice(0, 200)}`);
+        const singleDir = path.join(ws, '真机单换行书', '正文');
+        check('S8d-2 单换行章真磁盘落盘', single.status === 200
+            && fs.existsSync(singleDir) && fs.readdirSync(singleDir).some((f) => f.includes('单换行首章')), singleDir);
+        // S8e 批量逐章留痕：种子细纲+批准 → draft-batch（draft 通道已钉到坏 provider，
+        // 引擎快速失败、零真模型调用）→ 失败章的 stage/code/原因/指标进 records 并落盘。
+        fs.mkdirSync(path.join(ws, '真机冒烟书', '大纲', '细纲'), { recursive: true });
+        fs.writeFileSync(path.join(ws, '真机冒烟书', '大纲', '细纲', '第2章.md'),
+            '# 第2章 灯下\n\n- 灯下人影：长街尽头的灯下站着没打伞的人\n- 问路：他向柜上问起白日那桩事\n- 收账：柜上交出一枚铜牌\n- 门外：敲门声在数到第七下时响起\n- 决定：明早去城东查册\n');
+        const novelNow = JSON.parse(fs.readFileSync(novelPath, 'utf8'));
+        novelNow.approvals = { ...(novelNow.approvals ?? {}), outline: { ...(novelNow.approvals?.outline ?? {}), 2: true } };
+        fs.writeFileSync(novelPath, JSON.stringify(novelNow, null, 2));
+        const batch = await req('POST', q('projects/真机冒烟书/draft-batch'), { body: { from: 2, count: 1 } });
+        check('S8e-0 draft-batch 200（引擎快速失败路径，不等真模型）', batch.status === 200, `status=${batch.status} body=${batch.text.slice(0, 200)}`);
+        const cp = batch.json?.value?.checkpoint ?? {};
+        const rec2 = (cp.records ?? []).find((r) => Number(r.chapter) === 2);
+        check('S8e-1 失败章留痕：stage=generate + failed + 错误码/原因在场',
+            rec2?.status === 'failed' && rec2?.stage === 'generate' && typeof rec2?.code === 'string' && rec2.code !== '' && typeof rec2?.reason === 'string' && rec2.reason !== '',
+            JSON.stringify(rec2)?.slice(0, 240));
+        check('S8e-2 调用指标落库：attempts 为非负整数 + durationMs 数值（boot 宿主无模型服务 → 路由解析前即败 attempts:0 也算如实留痕）',
+            Number.isInteger(rec2?.attempts) && rec2.attempts >= 0 && typeof rec2?.durationMs === 'number' && rec2.durationMs >= 0
+            && (rec2?.route === null || rec2?.route === undefined || rec2?.route?.provider === 'nonexistent-probe'),
+            JSON.stringify({ attempts: rec2?.attempts, durationMs: rec2?.durationMs, route: rec2?.route })?.slice(0, 200));
+        const cpDiskPath = path.join(ws, '真机冒烟书', '.novel', 'batch-checkpoint.json');
+        const cpDisk = fs.existsSync(cpDiskPath) ? JSON.parse(fs.readFileSync(cpDiskPath, 'utf8')) : null;
+        check('S8e-3 断点真磁盘落盘：.novel/batch-checkpoint.json records 与响应一致（重开面板仍可看）',
+            Array.isArray(cpDisk?.records) && cpDisk.records.some((r) => Number(r.chapter) === 2 && r.stage === 'generate' && r.status === 'failed'),
+            JSON.stringify(cpDisk?.records)?.slice(0, 240));
 
         // S7 扫描根内容签名即时性：新工作区在 store 空置期（无 live 会话）下靠 projcache 目录态进场
         fs.mkdirSync(path.join(ws2, '二号书'), { recursive: true });
@@ -364,6 +428,21 @@ async function layerMcp() {
         m7r.f = await m7('novel_outline', { action: 'save_chapter', book: BK, chapter: 2, outline: '## 本章必写场景\n- 天亮再查：陈鹤年带册去当铺\n- 铜钱对账：垫付数目对不上\n- 后门线索：钥匙证人留下湿布鞋\n- 字条：门缝里多出一张字条\n- 决定：两人分工查册与访人\n' });
         check('M7i save_chapter 带上一章契约提醒（P2-2）', typeof m7r.f.out?.note === 'string' && m7r.f.out.note.includes('第1章') && m7r.f.out.note.includes('现代词汇') && m7r.f.out.note.includes('写账人'),
             JSON.stringify(m7r.f.out?.note ?? m7r.f.text.slice(0, 200))?.slice(0, 200));
+
+        // ── M8 semantic 语义拆书（本轮新特性）真机接线 ─────────────────────────
+        // MCP 独立通道没有模型服务——semantic 必须**响亮报错**（engine 壳在运行时
+        // 返回 ENGINE_UNAVAILABLE，或 engine=null 时直接抛「需要模型引擎」），
+        // 不能静默落一份空报告；M8c 同时是「失败不写盘」的真机证明。
+        m7r.lib = await m7('novel_library', { action: 'import', title: '拆书素材本', text: `第一章 灯\n\n${paras.join('\n\n')}` });
+        check('M8a 书库 import（MCP 通道真磁盘入库）', !m7r.lib.isError, m7r.lib.text.slice(0, 160));
+        m7r.sem = await m7('novel_library', { action: 'semantic', title: '拆书素材本' });
+        check('M8b semantic 无模型服务 → 响亮报错带指引（不是静默空报告）',
+            m7r.sem.isError && /ENGINE_UNAVAILABLE|语义拆书需要模型引擎/.test(m7r.sem.text), m7r.sem.text.slice(0, 160));
+        const libDir = path.join(mcprs, '书库', '拆书素材本');
+        const leaked = fs.existsSync(libDir) ? fs.readdirSync(libDir).filter((f) => f.startsWith('语义拆书')) : [];
+        check('M8c 校验失败零报告落盘（失败不写 Markdown）', leaked.length === 0, `目录内容：${fs.existsSync(libDir) ? fs.readdirSync(libDir).join('、') : '（目录未建）'}`);
+        // （维度白名单/体量上限的「调模型前硬校验」在无引擎的 MCP 通道打不到——
+        //   engine 检查在前；该口径由 test/library-semantic.test.mjs 单测钉住。）
     } finally {
         child.kill();
     }
