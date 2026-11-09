@@ -1448,6 +1448,62 @@ function collect(el, pred, out = []) {
     return out;
 }
 
+test('★ 批量逐章留痕：真实渲染失败原因、阶段、路由、次数、耗时与 tokens', () => {
+    const { BatchRecordsView } = boot().mod.exports.__internals;
+    const tree = BatchRecordsView({ checkpoint: {
+        status: 'partial',
+        records: [
+            { chapter: 2, status: 'failed', stage: 'generate', code: 'ENGINE_TIMEOUT', reason: '模型调用超时',
+                attempts: 2, durationMs: 1250, route: { provider: 'fixture-provider', model: 'fixture-model' },
+                usage: { inputTokens: 300, outputTokens: 50 } },
+            { chapter: 1, status: 'completed', stage: 'commit', title: '第一章', chars: 2345, version: 3,
+                attempts: 1, durationMs: 500, usage: { inputTokens: 100, outputTokens: 40 } },
+        ],
+    } });
+    const textOf = (node) => {
+        if (node === null || node === undefined || typeof node === 'boolean') return '';
+        if (typeof node === 'string' || typeof node === 'number') return String(node);
+        if (Array.isArray(node)) return node.map(textOf).join('');
+        return textOf(node.props?.children);
+    };
+    const text = textOf(tree);
+    assert.ok(text.indexOf('第 1 章') < text.indexOf('第 2 章'), '记录按章号排序，不按异步完成顺序');
+    assert.match(text, /第一章 2345 字 v3/);
+    assert.match(text, /模型调用超时/);
+    assert.match(text, /生成阶段/);
+    assert.match(text, /fixture-provider\/fixture-model/);
+    assert.match(text, /调用 2 次/);
+    assert.match(text, /模型 1\.3s/);
+    assert.match(text, /350 tokens/);
+    assert.match(text, /已写入断点，重开面板仍可看/);
+});
+
+test('★ 批量控制器采用服务端最新 checkpoint，旧断点记录被替换而不是滞留', async () => {
+    const checkpoint = {
+        status: 'partial', from: 2, count: 1, completed: [], failed: [2],
+        records: [{ chapter: 2, status: 'failed', stage: 'generate', reason: '新失败原因', attempts: 2 }],
+    };
+    const seq = scriptedFetch([
+        { value: { resumed: false, stats: { committed: 0, failed: 1 }, checkpoint, results: [] } },
+        { value: [] },
+        { value: { proposals: [] } },
+    ]);
+    const mod = loadClient(createDom(), BUNDLE, { fetch: seq.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+    controller.state.selected = '书A';
+    controller.state.detail = {
+        title: '书A',
+        batchCheckpoint: { status: 'running', records: [{ chapter: 2, reason: '旧失败原因' }] },
+    };
+    controller.state.batchFrom = 2;
+    controller.state.batchCount = 1;
+    await controller.handleAction('draft-batch', { dataset: {} });
+    assert.equal(controller.state.error, '');
+    assert.deepEqual(controller.state.batchResult.checkpoint, checkpoint);
+    assert.deepEqual(controller.state.detail.batchCheckpoint, checkpoint);
+    assert.notEqual(controller.state.detail.batchCheckpoint.records[0].reason, '旧失败原因');
+});
+
 test('★ Feedback：错误是 alert、通知是 status——异步反馈读屏必须能听到', () => {
     const { mod } = boot();
     const { Feedback } = mod.exports.__internals;

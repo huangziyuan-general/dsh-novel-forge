@@ -627,6 +627,7 @@ test('batch-draft: runDraftBatch 并发生成、串行提交；失败不整批�
             return {
                 ok: true, finishKind: 'stop', attempts: 1,
                 route: { provider: 'p', model: 'm', source: 'default' },
+                usage: { inputTokens: 100 + n, outputTokens: 200 + n },
                 text: CHAPTER_TEXTS[n],
             };
         },
@@ -666,6 +667,67 @@ test('batch-draft: runDraftBatch 并发生成、串行提交；失败不整批�
     // ⑤ 每一章都留了审计
     const auditText = io.files.get(`${book}/.novel/audit.jsonl`) ?? '';
     assert.match(auditText, /write_chapter\/saved/);
+
+    // ⑥ 逐章留痕与模型指标进入同一检查点；重开面板不依赖本次内存结果
+    assert.equal(result.checkpoint.records.length, 3);
+    const successRecord = result.checkpoint.records.find((record) => record.chapter === 1);
+    assert.equal(successRecord.status, 'completed');
+    assert.equal(successRecord.stage, 'commit');
+    assert.equal(successRecord.attempts, 1);
+    assert.deepEqual(successRecord.route, { provider: 'p', model: 'm', source: 'default' });
+    assert.deepEqual(successRecord.usage, { inputTokens: 101, outputTokens: 201 });
+    assert.ok(Number.isFinite(successRecord.durationMs) && successRecord.durationMs >= 0);
+    const rejectedRecord = result.checkpoint.records.find((record) => record.chapter === 3);
+    assert.equal(rejectedRecord.status, 'failed');
+    assert.equal(rejectedRecord.stage, 'commit');
+    assert.match(rejectedRecord.reason, /内容门禁|占位/);
+    assert.deepEqual(rejectedRecord.usage, { inputTokens: 103, outputTokens: 203 });
+    const persisted = JSON.parse(io.files.get(p.batchCheckpoint));
+    assert.deepEqual(persisted.records, result.checkpoint.records);
+    assert.deepEqual(persisted.completed, [1, 2]);
+    assert.deepEqual(persisted.failed, [3]);
+});
+
+test('batch-draft: 生成失败也持久化错误码、阶段与调用指标', async () => {
+    const book = '生成失败留痕书';
+    const meta = `${book}/novel.json`;
+    const io = memIo({
+        [meta]: JSON.stringify({
+            title: book, stage: 'chapter', phases: {},
+            approvals: { outline: { 1: true } },
+            chapters: {}, cast: [], proposals: [], gateFailures: {},
+        }),
+        [`${book}/大纲/细纲/第1章.md`]: '# 第1章 雨夜\n\n- 雨声遮住了门外的脚步。',
+    });
+    const engine = {
+        async run() {
+            return {
+                ok: false, attempts: 2,
+                route: { provider: 'p', model: 'm', source: 'default' },
+                usage: { inputTokens: 30, outputTokens: 0 },
+                error: { code: 'ENGINE_TIMEOUT', message: '模型调用超时', advice: '稍后重试' },
+            };
+        },
+    };
+    const p = pathsFor(book);
+    const result = await runDraftBatch({
+        engine, config: TEST_CFG, io, p, book,
+        novel: JSON.parse(io.files.get(meta)), from: 1, count: 1, concurrency: 1,
+    });
+    assert.equal(result.stats.failed, 1);
+    assert.equal(result.checkpoint.status, 'partial');
+    assert.equal(result.checkpoint.records.length, 1);
+    const [record] = result.checkpoint.records;
+    assert.equal(record.status, 'failed');
+    assert.equal(record.stage, 'generate');
+    assert.equal(record.code, 'ENGINE_TIMEOUT');
+    assert.match(record.reason, /模型调用超时/);
+    assert.equal(record.attempts, 2);
+    assert.deepEqual(record.usage, { inputTokens: 30, outputTokens: 0 });
+    assert.ok(Number.isFinite(record.durationMs) && record.durationMs >= 0);
+    assert.deepEqual(JSON.parse(io.files.get(p.batchCheckpoint)).records, [record]);
+    assert.deepEqual(result.checkpoint.completed, []);
+    assert.deepEqual(result.checkpoint.failed, [1]);
 });
 
 test('★ batch-draft: 会话纪律段不进起草提示词（旁路引擎没有 novel_* 工具可调，也不会向用户汇报）', async () => {

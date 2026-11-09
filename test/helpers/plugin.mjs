@@ -78,7 +78,7 @@ function makeBackend(root) {
 
 /**
  * 装一次插件：返回工具取用器、exec（会话工作区）、根目录与清理。
- * @param {{ config?: object, sessionId?: string }} opts
+ * @param {{ config?: object, sessionId?: string, llm?: object, agentDefaultModel?: object }} opts
  */
 export async function bootPlugin(opts = {}) {
     const { apply } = await import('../../lib/index.js');
@@ -94,6 +94,8 @@ export async function bootPlugin(opts = {}) {
         inject: (deps, fn) => fn(ctx),
         effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
         webServer: { register: () => () => {} },
+        ...(opts.llm !== undefined ? { llm: opts.llm } : {}),
+        ...(opts.agentDefaultModel !== undefined ? { agentDefaultModel: opts.agentDefaultModel } : {}),
     };
     apply(ctx, testConfig(opts.config));
     const exec = {

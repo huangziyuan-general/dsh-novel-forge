@@ -419,7 +419,10 @@ export function createProjectsController(ctx) {
 			state.notice = `${state.batchResult?.resumed === true ? '断点续跑：' : ''}批量起草完成：落盘 ${st.committed ?? 0} 章，被拦 ${st.failed ?? 0} 章`;
 			// 检查点状态同步：全落盘 → done（「继续上次批量」按钮退场），有被拦 → partial
 			if (state.detail?.batchCheckpoint) {
-				state.detail = { ...state.detail, batchCheckpoint: { ...state.detail.batchCheckpoint, status: (st.failed ?? 0) === 0 ? 'done' : 'partial' } };
+				const batchCheckpoint = state.batchResult?.checkpoint ?? {
+					...state.detail.batchCheckpoint, status: (st.failed ?? 0) === 0 ? 'done' : 'partial',
+				};
+				state.detail = { ...state.detail, batchCheckpoint };
 			}
 			// 新章会改变账本与提案队列；同时体检结果作废（它按章算的）
 			await Promise.all([loadChapterList(bookId), ctx.loadProposals(bookId)]);

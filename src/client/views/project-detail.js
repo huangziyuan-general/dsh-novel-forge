@@ -127,16 +127,44 @@ function issueRow(issue, i, total) {
 /** 批量起草的每条结果。 */
 function batchRow(r, i) {
 	const ok = r.ok === true;
+	const usage = r.usage ?? {};
+	const inputTokens = Number(usage.inputTokens ?? usage.inputTokenCount ?? 0);
+	const outputTokens = Number(usage.outputTokens ?? usage.outputTokenCount ?? 0);
+	const totalTokens = Number(usage.totalTokens ?? usage.totalTokenCount ?? (inputTokens + outputTokens));
+	const metrics = [
+		r.stage ? (r.stage === 'commit' ? '提交阶段' : '生成阶段') : '',
+		r.route?.provider && r.route?.model ? `${r.route.provider}/${r.route.model}` : '',
+		Number.isInteger(r.attempts) && r.attempts > 0 ? `调用 ${r.attempts} 次` : '',
+		Number.isFinite(r.durationMs) ? `模型 ${(r.durationMs / 1000).toFixed(1)}s` : '',
+		Number.isFinite(totalTokens) && totalTokens > 0 ? `${totalTokens} tokens` : '',
+	].filter(Boolean).join(' · ');
 	return h('div', {
 		key: i,
 		style: { display: 'flex', alignItems: 'flex-start', gap: space.sm, fontSize: font.small, padding: '2px 0' },
 	},
 		h('span', { style: { flex: 'none', color: ok ? color.ok : color.danger } }, ok ? '✓' : '✗'),
 		h('span', { style: { flex: 'none', color: color.text3, minWidth: '52px' } }, `第 ${r.chapter} 章`),
-		h('span', { style: { flex: '1 1 auto', minWidth: 0, wordBreak: 'break-word', color: ok ? color.text2 : color.danger } },
-			ok
+		h('div', { style: { flex: '1 1 auto', minWidth: 0, wordBreak: 'break-word', color: ok ? color.text2 : color.danger } },
+			h('div', null, ok
 				? `${r.title ?? ''} ${r.chars ? `${r.chars} 字` : ''} v${r.version ?? 1}${r.noai?.level ? ` · 去AI味 ${r.noai.level}` : ''}`
 				: (r.reason ?? r.contentGate?.reason ?? '未通过门禁')),
+			metrics ? h('div', { style: { ...hintStyle, fontSize: font.caption, marginTop: '1px' } }, metrics) : null,
+		),
+	);
+}
+
+/** 持久化批量记录：不依赖本次请求还在内存里的 batchResult，重开面板也能排障。 */
+export function BatchRecordsView({ checkpoint }) {
+	const records = Array.isArray(checkpoint?.records)
+		? [...checkpoint.records].filter((r) => Number.isInteger(r?.chapter)).sort((a, b) => a.chapter - b.chapter)
+		: [];
+	if (records.length === 0) return null;
+	return h('div', { style: { marginTop: space.md } },
+		h('div', { style: { ...hintStyle, fontSize: font.caption, marginBottom: space.xs } },
+			`逐章任务记录（已写入断点，重开面板仍可看） · 批次 ${checkpoint.status ?? 'unknown'}`),
+		...records.map((record) => batchRow({
+			...record, ok: record.status === 'completed',
+		}, record.chapter)),
 	);
 }
 
@@ -530,6 +558,7 @@ h('span', { style: { flex: '1 1 auto' } }),
 
 	// ── 批量起草（D2：并发生成、串行提交，每章仍过同一套门禁）──
 	const batch = s.batchResult;
+	const batchCheckpoint = s.batchResult?.checkpoint ?? s.detail?.batchCheckpoint;
 	const batchBlock = Fold({
 		title: `⚡ 批量起草（从第 ${s.batchFrom ?? nextNo} 章起 ${s.batchCount ?? 3} 章）`,
 	},
@@ -584,9 +613,12 @@ h('span', { style: { flex: '1 1 auto' } }),
 					StatTile({ value: batch.concurrency ?? 1, label: '并发' }),
 				),
 				...(batch.warnings ?? []).map((w, i) => h('div', { key: i, style: { ...hintStyle, fontSize: font.caption } }, `· ${w}`)),
-				h('div', { style: { marginTop: space.sm } }, ...(batch.results ?? []).map(batchRow)),
+				batchCheckpoint?.records?.length > 0
+					? null
+					: h('div', { style: { marginTop: space.sm } }, ...(batch.results ?? []).map(batchRow)),
 			)
 			: null,
+		h(BatchRecordsView, { checkpoint: batchCheckpoint }),
 	);
 
 	// ── 每章字数（用户 2026-10-20 要求面板能设）──

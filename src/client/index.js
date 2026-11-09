@@ -25,7 +25,7 @@ import { Feedback, Btn } from './ui.js';
 import { ProjectListView, projectMatches } from './views/project-list.js';
 import { ChapterListView } from './views/chapters.js';
 import { LorebookView } from './views/lorebook.js';
-import { ProjectDetailView } from './views/project-detail.js';
+import { ProjectDetailView, BatchRecordsView } from './views/project-detail.js';
 import { ProjectOverviewView } from './views/overview.js';
 import { SettingsView } from './views/settings.js';
 
@@ -149,4 +149,5 @@ export const __internals = {
 	LorebookView,
 	// 其余视图导出：动作契约对账用例要渲染它们、收集真实 data-action（视图↔控制器一致性）
 	ProjectDetailView, ProjectOverviewView, SettingsView,
+	BatchRecordsView,
 };

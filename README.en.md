@@ -152,7 +152,7 @@ novel_project init → novel_project phase (see the nine-stage board, fill entry
 | `novel_diagnose` | golden-three-chapter four-axis diagnosis (hook / opening / conflict / infodump) | deterministic numbers, mechanical and model review separated |
 | `novel_polish` | paragraph-level lesion localization + polish proposal submission | polish also uses proposals, never overwrites old text |
 | `novel_search` | long-work search (build / query / annotate / status): returns chapter number + excerpt + hit ratio | index is a **derivative** (`book/.novel/index.db`), re-runnable after deletion; degrades without sqlite |
-| `novel_library` | **book-library feed** (import/list/read/analyze/delete): decompose structural profiles of benchmark works — chapter-length curve / dialogue density / paragraph rhythm / chapter-end hook rate / high-frequency imagery; `compare_book` puts your book side by side with numbers | zero-token fully local; read-only feed, not part of this book's consistency judgment; `delete` only moves the index |
+| `novel_library` | **book-library feed** (import/list/read/analyze/semantic/delete): `analyze` profiles chapter length / dialogue / paragraph rhythm / hooks / imagery; `semantic` extracts transferable techniques across seven dimensions, each backed by chapter evidence | `analyze` is zero-token; `semantic` reuses the existing `annotate` model route (no extra key), defaults to 3 chapters and caps each run at 5 chapters / 30,000 chars; code verifies every quote before writing `书库/<id>/语义拆书-第N-M章.md`; never joins book consistency judgments |
 | `novel_glossary` | glossary (add/remove/list) | injected with context pack, prevents proper-noun mistranslation |
 | `novel_clone_project` | clone whole book as template | stage reset, proposal and circuit-breaker counters cleared; character cards / worldbook / ledger / foreshadowing / glossary / scene contracts / voice genes all carried along |
 
@@ -176,13 +176,13 @@ novel_project init → novel_project phase (see the nine-stage board, fill entry
 ├─ 账本/伏笔.json          # [{id, setup, chapter, plan, payoffChapter}]
 └─ .novel/
    ├─ audit.jsonl         # full action audit (who did what in which chapter, when rejected)
-   ├─ batch-checkpoint.json # batch-draft checkpoint (updated after each chapter commits / is blocked, status: running→done|partial)
+   ├─ batch-checkpoint.json # batch checkpoint + per-chapter records for status/errors/model metrics (running→done|partial)
    ├─ index.db            # search index (derivative: re-run novel_search build after deletion)
    └─ proposals/P3-xxx.json
 ```
 
 A `书库/` directory **sibling** to the books may also exist at the workspace root — external novel feed, shared across books
-(`library.json` + raw txt; not injected into the context pack, not part of this book's consistency judgment).
+(`library.json` + raw txt + optional semantic-analysis Markdown reports; not injected into the book context pack, not part of this book's consistency judgment).
 
 All files live inside the session workspace and go through the host's `ctx.fs` (subject to sandbox and approval policy), so they drop straight into Git / Obsidian.
 Uninstalling the plugin does not affect any book data.
@@ -263,6 +263,7 @@ the three-step panel-entry contract, etc.) are in [AGENTS.md](./AGENTS.md).
 ## Known boundaries
 
 - **Panel REST is localhost-only** (security model, since 2026-10-09): the API relies on two browser-unforgeable defenses — the `x-dsh-novel-forge` fence header blocks ordinary cross-origin, and the `Host`/`Origin` allowlist (`localhost`/`127.0.0.1`/`[::1]`) blocks DNS rebinding. The cost is **localhost restriction**: changing the port is fine (port isn't in the check), an SSH tunnel is fine (Host stays 127.0.0.1), but if you expose DSH web to a LAN and access it from another machine, the Forge panel API will 403 (`FORBIDDEN_HOST`). The fence gives zero protection against other local processes — that's a design assumption (the threat model is a malicious web page in the browser, not a local process). For custom domains, the plugin config `allowedHosts` can explicitly append hostnames (issue #7): **the default empty array keeps behavior byte-identical**; only an explicit config loosens it, and wildcards are rejected outright (a wildcard would dismantle the DNS-rebinding defense).
+- **REST request errors are classified**: malformed JSON returns `400 BAD_BODY`; bodies over 4 MiB return `413 BODY_TOO_LARGE`; `500 IO_FAILURE` is reserved for actual service/IO failures so clients can respond by error code.
 - The anti-AI-smell wordlist and thresholds are **heuristic** — they catch only visible symptoms and don't promise a "cure"; the structural metrics (rhythm variance / information dilution) are what make it stronger than a pure wordlist.
 - `novel_audit` only produces deterministic evidence; "model review" happens in the session; the side-channel engine only serves internal chores (polish / proofread / annotate / draft) and doesn't change the line that "audit tools don't call the model".
 - Batch-draft concurrency cap is **4** (default 1; forced down to 1 when the book has no scene contract); concurrency only applies to drafting, commit is always serial.

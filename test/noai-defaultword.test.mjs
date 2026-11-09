@@ -49,10 +49,11 @@ test('章级：正常用量不报（3000 字 3 处仍在容差内）', () => {
 
 test('★ 用户点名的「摩挲」在词库里（原点：语言基因卡里混进了禁用词）', async () => {
     const lexicon = (await import('../lib/data/noai-lexicon.json', { with: { type: 'json' } })).default;
-    assert.ok(lexicon.defaultword.includes('摩挲'), '摩挲是用户明令禁用的 AI 默认动作，必须在库');
-    assert.ok(lexicon.defaultword.includes('喉结'), '喉结是跨书素材库实证的默认值词');
+    const { ruleText } = await import('../lib/noai.js');
+    assert.ok(lexicon.defaultword.some((e) => ruleText(e) === '摩挲'), '摩挲是用户明令禁用的 AI 默认动作，必须在库');
+    assert.ok(lexicon.defaultword.some((e) => ruleText(e) === '喉结'), '喉结是跨书素材库实证的默认值词');
     // 词库里已有 cliche 的「眼底闪过一丝」与这里的「眼底」是两个维度，不冲突
-    assert.ok(lexicon.cliche.includes('眼底闪过一丝'), 'cliche 侧的长短语仍在（两维互补，不是替代）');
+    assert.ok(lexicon.cliche.some((e) => ruleText(e) === '眼底闪过一丝'), 'cliche 侧的长短语仍在（两维互补，不是替代）');
 });
 
 test('权重表八维合计为 1（新增一维必须从其余匀出，不许把总分放大）', async () => {
