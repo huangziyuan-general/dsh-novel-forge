@@ -1,5 +1,6 @@
-// 局部句式聚集扫描（1.6.x）：过渡词重复 / 一句内缓冲词聚集 / 动作副词聚集。
+// 局部句式聚集扫描（1.6.x）：一句内缓冲词聚集 / 动作副词聚集。
 // 只报不判、不改八维结构与分数；引号内台词不参与统计。
+// 过渡词子判据已按真机标定撤除（517 章各窗口 0/517，取证见 lib/noai.js 注释）。
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,22 +15,15 @@ function pad(target = '') {
     return `${filler}\n\n${target}`;
 }
 
-test('过渡词：章内 ≥3 次才报，2 次不报（外部默认 2 过激进）', () => {
-    assert.equal(LOCAL_STYLE_DEFAULTS.transitionRepeatCount, 3);
-    const three = pad('与此同时，门外的脚步停了。\n\n与此同时，灯芯爆了一下。\n\n与此同时，她把手缩回袖子里。');
-    const r = scanLocalStyleSignals(three);
+test('过渡词不再参与判定：章内反复出现也不报（真机标定后撤除）', () => {
+    const repeated = pad('与此同时，门外的脚步停了。\n\n与此同时，灯芯爆了一下。\n\n与此同时，她把手缩回袖子里。');
+    const r = scanLocalStyleSignals(repeated);
     assert.equal(r.status, 'ok');
-    const f = r.findings.find((x) => x.ruleId === 'template.transition');
-    assert.ok(f !== undefined, '三次必须报');
-    assert.equal(f.terms[0], '与此同时');
-    assert.equal(f.hits, 3);
-    assert.ok(localStyleSignalMessage(f).includes('与此同时'));
-
-    const two = pad('与此同时，门外的脚步停了。\n\n与此同时，灯芯爆了一下。');
-    assert.equal(scanLocalStyleSignals(two).findings.some((x) => x.ruleId === 'template.transition'), false, '两次不报');
+    assert.equal(r.findings.some((x) => x.ruleId === 'template.transition'), false);
 });
 
 test('句内缓冲词聚集：一句 ≥3 个才报；两个不报', () => {
+    assert.equal(LOCAL_STYLE_DEFAULTS.clusterCount, 3);
     const three = pad('他似乎隐隐觉得，这背后有某种说不清的东西。');
     const f = scanLocalStyleSignals(three).findings.find((x) => x.ruleId === 'surface.repeated-softeners');
     assert.ok(f !== undefined, '似乎/隐隐/某种 = 3 个必须报');
@@ -48,8 +42,8 @@ test('动作副词聚集：一句 ≥3 个才报', () => {
     assert.ok(localStyleSignalMessage(f).includes('动作副词'));
 });
 
-test('引号内合法用法不误报：台词里的副词/过渡词不统计', () => {
-    const dialogue = pad('“缓缓，微微，轻轻，你倒是说句话啊。”\n\n“与此同时，与此同时，与此同时。”');
+test('引号内合法用法不误报：台词里的副词不统计', () => {
+    const dialogue = pad('“缓缓，微微，轻轻，你倒是说句话啊。”');
     const r = scanLocalStyleSignals(dialogue);
     assert.deepEqual(r.findings, [], '引号内重复是角色说话，不算叙述聚集');
 });
