@@ -99,7 +99,7 @@ test('idempotency: 回执写入失败不抛错，receiptStored:false 且同键�
     assert.equal(first.value.version, 1);
     assert.equal(first.replayed, false);
     assert.equal(first.receiptStored, false);
-    // 无回执 ⇒ 同键重试重新执行（结果不受影响，代价只是重复执行一次）。
+    // 无回执 ⇒ 同键重试会重新执行，调用方必须先核对提案或批次状态。
     const second = await runIdempotent({
         ...base(io), execute: async () => { calls += 1; return { ok: true, version: 2 }; },
     });

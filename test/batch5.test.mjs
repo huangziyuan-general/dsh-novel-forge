@@ -24,8 +24,9 @@ import {
 } from '../lib/retrieval.js';
 import {
     planDraftBatch, deriveTitleSummary, mapWithConcurrency, buildDraftPrompt,
-    runDraftBatch, MAX_CONCURRENCY, draftSystem, buildContinuationPrompt,
+    runDraftBatch, MAX_CONCURRENCY, draftSystem, buildContinuationPrompt, findContinuationRepeat,
 } from '../lib/batch-draft.js';
+import { createRecoveryRecorder } from '../lib/recovery.js';
 import { pathsFor } from '../lib/store.js';
 import { updateJson, isVersionConflict } from '../lib/fsio.js';
 
@@ -1674,6 +1675,27 @@ test('续写提示：只补差额、带最后一段衔接锚点、明确不许�
     assert.match(prompt, /最多不超过 2\d\d 字/);
 });
 
+test('续写重合：整份初稿或原段落被复述时必须在合并前识别', () => {
+    const first = '冰面上裂开一道细缝。他把绳索取回手里。\n\n她蹲下去，看见裂纹正向河岸延伸。';
+    assert.equal(findContinuationRepeat(first, `${first}\n\n身后的人递来火把。`), '整份初稿');
+    assert.equal(findContinuationRepeat(first, '她蹲下去，看见裂纹正向河岸延伸。'), '初稿段落');
+    assert.equal(findContinuationRepeat(first, '身后的人没有出声，只把火把往前递了递。'), null);
+});
+
+test('续写近似复述：改标点/个别同义词后整份复述必须被拦', () => {
+    const draft = '冰面上裂开一道细缝。他把绳索取回手里，又看了看天色。\n\n她蹲下去，看见裂纹正向河岸延伸，指尖在冰上停了很久。';
+    // 精确包含已不成立（两段各改一处），但公共序列占比 >0.8
+    const repeated = '冰面上裂开一道细缝，他把绳索取回手里，又看了看天色。\n\n她蹲下去，看见裂纹正向岸边延伸，指尖在冰上停了很久。';
+    assert.equal(findContinuationRepeat(draft, repeated), '初稿段落（近似）');
+});
+
+test('续写近似复述：从末段承接、只重述半句衔接语必须放行', () => {
+    const draft = '冰面上裂开一道细缝。他把绳索取回手里，又看了看天色。\n\n她蹲下去，看见裂纹正向河岸延伸，指尖在冰上停了很久。';
+    // 只承接末段半句（「指尖在冰上停了很久」9 字），后面是新内容
+    const continuation = '指尖在冰上停了很久之后，她站起来，把绳索在手上绕了两圈，才朝裂缝深处走去。';
+    assert.equal(findContinuationRepeat(draft, continuation), null);
+});
+
 test('批量短稿：未截断且低于下限 → 续写一次，合并后照常过门禁落盘', async () => {
     const book = '续写本';
     const { io, novel, p } = continuationFixture(book);
@@ -1687,6 +1709,9 @@ test('批量短稿：未截断且低于下限 → 续写一次，合并后照常
             return {
                 ok: true, finishKind: 'stop', attempts: 1,
                 route: { provider: 'p', model: 'm', source: 'default' },
+                usage: prompts.length === 1
+                    ? { inputTokens: 10, outputTokens: 20, totalTokens: 30 }
+                    : { inputTokens: 5, outputTokens: 7, totalTokens: 12 },
                 text: prompts.length === 1 ? first : second,
             };
         },
@@ -1703,6 +1728,76 @@ test('批量短稿：未截断且低于下限 → 续写一次，合并后照常
     const saved = io.files.get(result.results[0].path);
     assert.ok(saved.includes(first) && saved.includes('风从裂缝里灌上来'), '两段都在，没有裁剪');
     assert.ok(saved.replace(/\s/g, '').length >= 100);
+    const record = result.checkpoint.records.find((item) => item.chapter === 1);
+    assert.equal(record.attempts, 2);
+    assert.deepEqual(record.usage, { inputTokens: 15, outputTokens: 27, totalTokens: 42 });
+});
+
+test('批量续写复述初稿：拒绝合并与落章，完整稿留在恢复候选', async () => {
+    const book = '续写重复本';
+    const { io, novel, p } = continuationFixture(book);
+    const first = '冰面上裂开一道细缝。他把绳索取回手里。\n\n她蹲下去，看见裂纹正向河岸延伸。';
+    const addition = '身后的人没有出声，只把火把往前递了递。';
+    let calls = 0;
+    const engine = {
+        async run() {
+            calls += 1;
+            return {
+                ok: true, finishKind: 'stop', attempts: 1, route: null, usage: null,
+                text: calls === 1 ? first : `${first}\n\n${addition}`,
+            };
+        },
+    };
+    const result = await runDraftBatch({
+        engine, config: { ...TEST_CFG, minChapterChars: 100, maxChapterChars: 400 },
+        io, p, book, novel, from: 1, count: 1, concurrency: 1,
+    });
+    assert.equal(calls, 2);
+    assert.equal(result.results[0].ok, false);
+    assert.equal(result.results[0].code, 'CONTINUATION_REPEAT');
+    assert.equal([...io.files.keys()].some((key) => key.includes(`${book}/正文/第1章`)), false);
+    const recovery = JSON.parse(io.files.get(p.recoveryCandidate(result.results[0].recoveryId)));
+    assert.equal(recovery.partialText, `${first}\n\n${first}\n\n${addition}`);
+});
+
+test('批量续写近似复述：改标点/同义词后复述初稿同样拒绝合并与落章', async () => {
+    const book = '续写近似重复本';
+    const { io, novel, p } = continuationFixture(book);
+    const first = '冰面上裂开一道细缝。他把绳索取回手里，后退了半步。\n\n她蹲下去，看见裂纹正向河岸延伸，指尖在冰上停了很久。';
+    const repeated = '冰面上裂开一道细缝，他把绳索取回手里，后退了半步。\n\n她蹲下去，看见裂纹正向岸边延伸，指尖在冰上停了很久。';
+    let calls = 0;
+    const engine = {
+        async run() {
+            calls += 1;
+            return {
+                ok: true, finishKind: 'stop', attempts: 1, route: null, usage: null,
+                text: calls === 1 ? first : `${repeated}\n\n身后的人没有出声，只把火把往前递了递。`,
+            };
+        },
+    };
+    const result = await runDraftBatch({
+        engine, config: { ...TEST_CFG, minChapterChars: 100, maxChapterChars: 400 },
+        io, p, book, novel, from: 1, count: 1, concurrency: 1,
+    });
+    assert.equal(calls, 2);
+    assert.equal(result.results[0].ok, false);
+    assert.equal(result.results[0].code, 'CONTINUATION_REPEAT');
+    assert.match(result.results[0].reason, /近似/);
+    assert.equal([...io.files.keys()].some((key) => key.includes(`${book}/正文/第1章`)), false);
+});
+
+test('续写恢复记录：第二次调用的累计 delta 不覆盖初稿', async () => {
+    const { io, p } = continuationFixture('续写恢复本');
+    const recorder = createRecoveryRecorder({ io, p, book: '续写恢复本', runId: 'run', chapter: 1, sourceHash: 'h' });
+    const first = '初稿甲。\n\n初稿乙。';
+    await recorder.start();
+    await recorder.onDelta({ type: 'text-delta', text: first }, { text: first, attempt: 1 });
+    await recorder.beginContinuation(first);
+    await recorder.onDelta({ type: 'text-delta', text: '续写丙。' }, { text: '续写丙。', attempt: 1 });
+    await recorder.finish(null, { status: 'failed', error: { code: 'ABORTED', message: '中断' } });
+    const saved = JSON.parse(io.files.get(p.recoveryCandidate(recorder.candidate.id)));
+    assert.equal(saved.partialText, `${first}\n\n续写丙。`);
+    assert.equal(saved.engineAttempt, 1);
 });
 
 test('批量截断稿：不续写（交给截断门禁），只调一次模型', async () => {
