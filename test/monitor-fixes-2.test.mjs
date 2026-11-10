@@ -241,6 +241,9 @@ const OUTLINE_OK = [
     '- 不得出现玄铁令——实物不入场',
 ].join('\n');
 
+/** 造 n 个不重复汉字并以句号收尾：逐字复读/截断是新门禁的阻断项，夹具不能再用「整」.repeat。 */
+const filler = (n, offset = 0) => Array.from({ length: Math.max(0, n - 1) }, (_, i) => String.fromCharCode(0x4e00 + offset + i)).join('') + '。';
+
 test('★ E15 端到端：机审连驳且净增 <100 字 → 驳回文案硬指引换新回合；净增够就不误报', async () => {
     await initBook('锚定书');
     await tool('novel_outline').execute({ action: 'save_chapter', book: '锚定书', chapter: 1, outline: OUTLINE_OK }, exec);
@@ -250,7 +253,7 @@ test('★ E15 端到端：机审连驳且净增 <100 字 → 驳回文案硬指�
     }, exec);
 
     // 首驳（200 字 ≥ 非成稿线 75、< 下限 300）：无上一稿可比，不给锚定文案
-    await assert.rejects(() => write('整'.repeat(200)), (err) => {
+    await assert.rejects(() => write(filler(200)), (err) => {
         assert.match(String(err.message), /机审未通过/);
         assert.doesNotMatch(String(err.message), /同回合重发锚定/, '第一次驳回没有可比对的上一稿');
         return true;
@@ -259,7 +262,7 @@ test('★ E15 端到端：机审连驳且净增 <100 字 → 驳回文案硬指�
     assert.equal(novel1.gateFailures['1:last'].chars, 200, '被驳稿字数已落盘（E15 判据的数据源）');
 
     // 二驳（250 字，净增 +50 < 100）：锚定文案 + 换回合硬指引
-    await assert.rejects(() => write('整'.repeat(248) + '补字'), (err) => {
+    await assert.rejects(() => write(filler(250)), (err) => {
         const msg = String(err.message);
         assert.match(msg, /同回合重发锚定/);
         assert.match(msg, /本稿 250 字，比上次驳回稿（200 字）只多 50 字/);
@@ -274,7 +277,7 @@ test('★ E15 端到端：机审连驳且净增 <100 字 → 驳回文案硬指�
     assert.equal(second.chars, 250, '审计行带显式 chars（E5：不再靠 reason 正则反提）');
 
     // 三驳后（这里直接走正例）：够下限 + 段数达标（≥3 段，机审另有段落数规则）→ 正常落盘、无锚定文案
-    const ok = await write(['整'.repeat(120), '整'.repeat(120), '整'.repeat(100)].join('\n\n'));
+    const ok = await write([filler(120, 0), filler(120, 200), filler(100, 400)].join('\n\n'));
     assert.equal(ok.chars, 340, '够下限正常落盘');
 });
 
@@ -286,12 +289,12 @@ test('★ E15 端到端：净增 ≥100 字的推进不误报锚定', async () =
         book: '推进书', chapter: 1, title: '渡口夜审', summary: '推进回归章。', content,
     }, exec);
 
-    await assert.rejects(() => write('整'.repeat(90)), (err) => {
+    await assert.rejects(() => write(filler(90)), (err) => {
         assert.match(String(err.message), /机审未通过/);
         return true;
     });
     // 净增 +160（≥100）：仍在下限之下（250 < 300）但属于有效推进，不许喊「锚定」
-    await assert.rejects(() => write('整'.repeat(250)), (err) => {
+    await assert.rejects(() => write(filler(250)), (err) => {
         const msg = String(err.message);
         assert.match(msg, /机审未通过/);
         assert.doesNotMatch(msg, /同回合重发锚定/, '净增 160 ≥ 阈值，是推进不是锚定');

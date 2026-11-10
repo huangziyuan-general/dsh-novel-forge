@@ -24,7 +24,7 @@ import {
 } from '../lib/retrieval.js';
 import {
     planDraftBatch, deriveTitleSummary, mapWithConcurrency, buildDraftPrompt,
-    runDraftBatch, MAX_CONCURRENCY, draftSystem,
+    runDraftBatch, MAX_CONCURRENCY, draftSystem, buildContinuationPrompt,
 } from '../lib/batch-draft.js';
 import { pathsFor } from '../lib/store.js';
 import { updateJson, isVersionConflict } from '../lib/fsio.js';
@@ -1647,6 +1647,103 @@ test('batch-draft: 盘上检查点已过期（>10min）时正常接管', async (
     const ck = JSON.parse(io.files.get(ckPath));
     assert.notEqual(ck.startedAt, staleStartedAt, '过期检查点被本批接管（startedAt 换新）');
     assert.equal(ck.status, 'done', '跑完后状态落 done（resume 侧不再 409）');
+});
+
+// ── 短稿有界续写（1.6.x，仅批量路径）────────────────────────────────────────
+
+function continuationFixture(book) {
+    const meta = `${book}/novel.json`;
+    const files = {
+        [meta]: JSON.stringify({
+            title: book, genre: '仙侠', logline: '', stage: 'chapter', phases: {},
+            approvals: { outline: { 1: true } },
+            chapters: {}, cast: [], proposals: [], gateFailures: {},
+        }),
+        [`${book}/大纲/细纲/第1章.md`]: '# 第1章 冰面\n\n- 冰面裂开：他把绳索收回手里。',
+    };
+    return { io: memIo(files), novel: JSON.parse(files[meta]), p: pathsFor(book) };
+}
+
+test('续写提示：只补差额、带最后一段衔接锚点、明确不许重复', () => {
+    const prompt = buildContinuationPrompt({
+        prompt: 'BASE', draft: '第一段。\n\n最后一段的结尾。', minChars: 200, maxChars: 300,
+    });
+    assert.match(prompt, /续写指令/);
+    assert.match(prompt, /不要重复初稿/);
+    assert.match(prompt, /最后一段的结尾/);
+    assert.match(prompt, /最多不超过 2\d\d 字/);
+});
+
+test('批量短稿：未截断且低于下限 → 续写一次，合并后照常过门禁落盘', async () => {
+    const book = '续写本';
+    const { io, novel, p } = continuationFixture(book);
+    const first = '冰面上裂开一道细缝。他把绳索取回手里，后退了半步。';
+    const second = '风从裂缝里灌上来，带着河底的腥气。\n\n他蹲下去，用刀背敲了敲冰面，裂纹又向前爬了一尺。身后的人没有出声，只把火把往前递了递，火苗被风吹得贴在木柄上。\n\n他数着裂纹的走向，确认冰层下面不是空膛，才把绳索重新绕回肩头。';
+    const prompts = [];
+    const engine = {
+        async run(channel, { prompt }) {
+            assert.equal(channel, 'draft');
+            prompts.push(prompt);
+            return {
+                ok: true, finishKind: 'stop', attempts: 1,
+                route: { provider: 'p', model: 'm', source: 'default' },
+                text: prompts.length === 1 ? first : second,
+            };
+        },
+    };
+    const cfg = { ...TEST_CFG, minChapterChars: 100, maxChapterChars: 400 };
+    const result = await runDraftBatch({ engine, config: cfg, io, p, book, novel, from: 1, count: 1, concurrency: 1 });
+
+    assert.equal(prompts.length, 2, '只续写一次');
+    assert.match(prompts[1], /续写指令/);
+    assert.match(prompts[1], /只补写差额/);
+    assert.equal(result.results[0].ok, true, JSON.stringify(result.results[0]));
+    assert.equal(result.results[0].committed, true, '合并稿正常过完整提交门禁');
+    assert.match((result.results[0].warnings ?? []).join('\n'), /短稿续写/);
+    const saved = io.files.get(result.results[0].path);
+    assert.ok(saved.includes(first) && saved.includes('风从裂缝里灌上来'), '两段都在，没有裁剪');
+    assert.ok(saved.replace(/\s/g, '').length >= 100);
+});
+
+test('批量截断稿：不续写（交给截断门禁），只调一次模型', async () => {
+    const book = '截断本';
+    const { io, novel, p } = continuationFixture(book);
+    let calls = 0;
+    const truncated = '冰面上裂开一道细缝。他把绳索取回手里，后退了半步。\n\n风从裂缝里灌上来，带着河底的腥气。他蹲下去，用刀背敲了敲冰面，裂纹又向前爬了一尺。\n\n身后的人没有出声，只把火把往前递了递，火苗被风吹得贴在木柄';
+    const engine = {
+        async run() {
+            calls += 1;
+            return { ok: true, finishKind: 'stop', attempts: 1, route: { provider: 'p', model: 'm', source: 'default' }, text: truncated };
+        },
+    };
+    const cfg = { ...TEST_CFG, minChapterChars: 80, maxChapterChars: 400 };
+    const result = await runDraftBatch({ engine, config: cfg, io, p, book, novel, from: 1, count: 1, concurrency: 1 });
+    assert.equal(calls, 1, '截断稿不续写');
+    assert.equal(result.results[0].ok, false);
+    assert.equal(result.results[0].stage, 'commit');
+    assert.match(result.results[0].reason, /截断/);
+});
+
+test('批量续写超上限：绝不裁剪，整章按生成失败处理', async () => {
+    const book = '续写越界本';
+    const { io, novel, p } = continuationFixture(book);
+    let calls = 0;
+    const engine = {
+        async run() {
+            calls += 1;
+            return {
+                ok: true, finishKind: 'stop', attempts: 1, route: { provider: 'p', model: 'm', source: 'default' },
+                text: calls === 1 ? '冰面裂开了。' : '风从裂缝里灌上来。'.repeat(30),
+            };
+        },
+    };
+    const cfg = { ...TEST_CFG, minChapterChars: 100, maxChapterChars: 150 };
+    const result = await runDraftBatch({ engine, config: cfg, io, p, book, novel, from: 1, count: 1, concurrency: 1 });
+    assert.equal(calls, 2);
+    assert.equal(result.results[0].ok, false);
+    assert.equal(result.results[0].code, 'CONTINUATION_OVERFLOW');
+    assert.match(result.results[0].reason, /不裁剪/);
+    assert.equal([...io.files.keys()].some((k) => k.includes(`${book}/正文/第1章`)), false, '没有落盘任何截断/裁剪版本');
 });
 
 // ── 审查批 L2：FTS5 保留字符不进 gram ─────────────────────────────────────────

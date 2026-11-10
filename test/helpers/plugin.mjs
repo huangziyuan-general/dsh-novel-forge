@@ -125,14 +125,15 @@ export async function bootPlugin(opts = {}) {
 
 /** 造一篇**机器口径**约 n 字的正文（去空白后计数）：多段 + 隔段对白，无直角引号/无外文字符。 */
 export function chapterOf(n) {
-    const narration = '他把灯芯又捻短了一截，屋子里亮了一些，也还是照着同一张桌子、同一摞纸、同一道没解开的题。';
+    // 每段叙事带序号：章内逐字复读是内容门禁的阻断项，夹具不能再靠同一句循环凑字数。
+    const narration = (k) => `他把第${k}盏灯芯捻短了一截，屋子里亮了一些，也还是照着同一张桌子、同一摞纸、同一道没解开的题。`;
     const dialogue = '“这不是一晚上能做完的事。”她说，“但你今晚必须做完。”';
     const tail = '门外忽然传来三声叩击，不轻不重，像是敲门的人在等里面先出声？';
     const paras = [];
     let chars = tail.length;
     let i = 0;
     while (chars < n) {
-        const block = i % 2 === 0 ? narration : dialogue;
+        const block = i % 2 === 0 ? narration(i / 2 + 1) : dialogue;
         const take = block.slice(0, Math.min(block.length, n - chars));
         if (take === '') break;
         paras.push(take);
