@@ -218,9 +218,12 @@ test('★ 提案与润色的上下限也按本书区间（改一版不许把书�
         }, h.exec),
         /超出上下限（1500-3000）/,
     );
+    // 补字段落只用中文数词、不带阿拉伯数字：数字 token 多重集不变，才会走到「超过上限」这条判据。
+    const zh = '一二三四五六七八九十';
+    const extra = Array.from({ length: 24 }, (_, i) => `檐下的风把灯影吹到第${zh[i % 10]}块砖上，夜色比方才又深了一层。`).join('\n\n');
     await assert.rejects(
         () => h.tool('novel_polish').execute({
-            action: 'submit', book: '提案本', chapter: 1, content: chapterOf(3200),
+            action: 'submit', book: '提案本', chapter: 1, content: `${inside}\n\n${extra}`,
         }, h.exec),
         /超过上限 3000/,
     );
