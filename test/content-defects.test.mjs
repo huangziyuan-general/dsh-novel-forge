@@ -81,6 +81,15 @@ test('引号剥离：成对区间被遮住、未闭合引号不遮（截断判�
     assert.deepEqual(quotedRanges('他说：“别走'), [], '未闭合不剥');
 });
 
+test('嵌套引号：外层对白不会因内层区间回退而重新暴露', () => {
+    const dialogue = '「他先说“细纲”只是旧时书名，随后又提到细纲。」';
+    const masked = maskQuotedText(`${dialogue}叙述继续。`);
+    assert.equal(masked.includes('细纲'), false);
+    assert.equal(masked.includes('只是旧时书名'), false);
+    assert.equal(masked.includes('叙述继续。'), true);
+    assert.ok(!codes(contentGate({ content: dialogue, chapter: 1 })).includes('engineering-term-leak'));
+});
+
 test('audit 元叙述词表：强工程词与软叙述层词都计入同一计数并出警告', () => {
     const eng = computeAudit({ content: '他推门进来。按细纲，这一章该收尾了。' });
     assert.ok(eng.metaNarrative >= 2, '细纲 + 这一章 都要计入');

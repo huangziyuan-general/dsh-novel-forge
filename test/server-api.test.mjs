@@ -1578,6 +1578,8 @@ test('R9 审稿筛选、三路合并与影响清单走通 REST 数据面', async
         chapterVersion: 1, selectedIssueIds: [selected.id], guidance: '只处理所选项，保留结尾',
     } });
     assert.equal(polished.statusCode, 200, polished.body);
+    assert.equal(polished.json.value.receiptStored, false);
+    assert.ok(!polished.json.value.warnings.some((message) => /回执写入失败/.test(message)), '未提供 nonce 不得误报回执写失败');
     assert.equal(prompts.length, 1);
     assert.match(prompts[0], new RegExp(`¶${selected.paragraph}(?!\\d)`));
     assert.doesNotMatch(prompts[0], new RegExp(`¶${unselected.paragraph}(?!\\d)`));

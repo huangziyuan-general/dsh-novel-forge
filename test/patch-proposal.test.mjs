@@ -3,6 +3,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { validatePolishEdits, applyTextPatches, numberTokenDiff } from '../lib/polish.js';
+import { proposeRevision } from '../lib/proposals.js';
 import { bootPlugin, chapterOf } from './helpers/plugin.mjs';
 
 test('润色守卫：数字 token 多重集变了就拦（格式归一不算）', () => {
@@ -53,6 +54,9 @@ test('补丁应用：唯一匹配、从后往前、区间不重叠', () => {
     assert.throws(() => applyTextPatches(longBase, [
         { find: longBase.slice(0, 80), replace: 'x' },
     ]), /超过上限/);
+    assert.throws(() => applyTextPatches(`锚点${'甲'.repeat(408)}`, [
+        { find: '锚点', replace: '乙'.repeat(880) },
+    ]), /超过上限/, '短锚点夹带长 replace 也算大规模修改');
 });
 
 let h;
@@ -116,4 +120,60 @@ test('patch 提案：content 与 patches 二选一；base_version 不一致拒�
         /基于 v9.*当前已是 v1/,
     );
     assert.equal(h.readJson(`${book}/novel.json`).proposals.length, 0);
+});
+
+test('patch 提案：读取基线后章节升级，登记时必须拒绝而不是改写 baseVersion', async () => {
+    const book = '补丁竞态本';
+    const metaPath = `${book}/novel.json`;
+    let latest = 1;
+    let diskVersion = 1;
+    let registered = false;
+    const novel = () => ({
+        title: book, platform: '', proposals: [], updatedAt: '2026-01-01T00:00:00.000Z',
+        chapters: { 1: { title: '一', latest, path: `${book}/ch1.md`, files: [{ version: latest, file: `${book}/ch1.md` }] } },
+    });
+    const io = {
+        readJson: async (path) => path === metaPath ? novel() : null,
+        readJsonWithVersion: async (path) => ({ value: path === metaPath ? novel() : null, version: String(diskVersion) }),
+        readText: async () => { latest = 2; diskVersion += 1; return `甲${'文'.repeat(99)}`; },
+        writeJson: async () => { registered = true; },
+        writeJsonAtVersion: async () => { registered = true; },
+        appendLine: async () => {},
+    };
+    await assert.rejects(() => proposeRevision(io, book, {
+        chapter: 1, base_version: 1, patches: [{ find: '甲', replace: '乙' }],
+    }, { minChapterChars: 1, maxChapterChars: 1000, quoteStyle: 'block' }), /提案基于 v1.*当前已是 v2/);
+    assert.equal(registered, false, '陈旧补丁不得留下提案文件或索引');
+});
+
+test('content 提案同样受乐观锁保护：base_version 与当前 latest 不一致直接拒绝', async () => {
+    const book = '整章基线本';
+    await bookWithChapter(book);
+    await assert.rejects(
+        () => propose(book, { content: chapterOf(2400), base_version: 9 }),
+        /提案基于 v9.*当前已是 v1/,
+    );
+    assert.equal(h.readJson(`${book}/novel.json`).proposals.length, 0);
+});
+
+test('content 提案：读取后章节升级，登记时必须拒绝（CAS 复核，不只靠入口快照）', async () => {
+    const book = '整章竞态本';
+    const metaPath = `${book}/novel.json`;
+    let registered = false;
+    const novel = (latest) => ({
+        title: book, platform: '', proposals: [], updatedAt: '2026-01-01T00:00:00.000Z',
+        chapters: { 1: { title: '一', latest, path: `${book}/ch1.md`, files: [{ version: latest, file: `${book}/ch1.md` }] } },
+    });
+    // 入口读到 v1（本次提案基于它），登记时盘上已是 v2 —— 模拟「读正文 → 提交」之间的升级。
+    const io = {
+        readJson: async (path) => path === metaPath ? novel(1) : null,
+        readJsonWithVersion: async (path) => ({ value: path === metaPath ? novel(2) : null, version: '2' }),
+        writeJson: async () => { registered = true; },
+        writeJsonAtVersion: async () => { registered = true; },
+        appendLine: async () => {},
+    };
+    await assert.rejects(() => proposeRevision(io, book, {
+        chapter: 1, content: `修${'文'.repeat(99)}`,
+    }, { minChapterChars: 1, maxChapterChars: 1000, quoteStyle: 'block' }), /提案基于 v1.*当前已是 v2/);
+    assert.equal(registered, false, '陈旧整章提案不得留下提案文件或索引');
 });
