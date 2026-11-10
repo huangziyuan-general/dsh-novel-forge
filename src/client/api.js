@@ -10,6 +10,13 @@ export const API_BASE = '/api/novel-forge';
 /** 服务端门禁头：值不重要，存在即可。 */
 export const FENCE = 'x-dsh-novel-forge';
 
+/** 一次逻辑调用的幂等键：网络结果不明时由控制器复用，成功或明确 4xx/5xx 后换新。 */
+export function newInvocationNonce() {
+	const uuid = globalThis.crypto?.randomUUID?.();
+	if (typeof uuid === 'string') return `inv_${uuid}`;
+	return `inv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
+}
+
 /** 单请求超时（毫秒）：卡死的请求 12 秒后必须变成可见错误，不许永远「加载中」。 */
 export const FETCH_TIMEOUT_MS = 12_000;
 

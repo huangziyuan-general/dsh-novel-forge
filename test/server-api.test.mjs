@@ -21,15 +21,18 @@
 //     语义），防止 handler 双写响应在测试里静默通过。
 
 import { test, before, after } from 'node:test';
-import { normalizeWorldEntry } from '../lib/store.js';
+import { normalizeWorldEntry, pathsFor } from '../lib/store.js';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { registerServerApi } from '../lib/server-api.js';
+import { sha256 } from '../lib/basis.js';
 import { probeSessionCapabilities, resetSessionRateLimit } from '../lib/server-routes/session.js';
 import { createServerFsio } from '../lib/fsio.js';
+import { captureExtractionTargets, submitExtractionProposal } from '../lib/extraction-io.js';
+import { invocationFingerprint } from '../lib/request-idempotency.js';
 
 const PREFIX = '/api/novel-forge';
 const FENCE = 'x-dsh-novel-forge';
@@ -44,12 +47,17 @@ const FENCE = 'x-dsh-novel-forge';
 const ROUTES = [
     { name: 'GET /projects（列表）', method: 'GET', url: `${PREFIX}/projects` },
     { name: 'GET /panel-config（面板引导配置，issue #8）', method: 'GET', url: `${PREFIX}/panel-config` },
+    { name: 'GET /projects/:id/recovery-candidates', method: 'GET', url: `${PREFIX}/projects/护栏本/recovery-candidates` },
+    { name: 'GET /projects/:id/recovery-candidates/:rid', method: 'GET', url: `${PREFIX}/projects/护栏本/recovery-candidates/R1` },
     { name: 'POST /projects/claim', method: 'POST', url: `${PREFIX}/projects/claim` },
     { name: 'POST /projects（创建）', method: 'POST', url: `${PREFIX}/projects` },
     { name: 'GET /projects/:id', method: 'GET', url: `${PREFIX}/projects/护栏本` },
     { name: 'GET /projects/:id/elements', method: 'GET', url: `${PREFIX}/projects/护栏本/elements` },
     { name: 'GET /projects/:id/chapters', method: 'GET', url: `${PREFIX}/projects/护栏本/chapters` },
     { name: 'GET /projects/:id/chapters/:no', method: 'GET', url: `${PREFIX}/projects/护栏本/chapters/1` },
+    { name: 'GET /projects/:id/chapters/:no/impact', method: 'GET', url: `${PREFIX}/projects/护栏本/chapters/1/impact` },
+    { name: 'GET /projects/:id/chapters/:no/review-issues', method: 'GET', url: `${PREFIX}/projects/护栏本/chapters/1/review-issues` },
+    { name: 'POST /projects/:id/chapters/:no/annotations/:id', method: 'POST', url: `${PREFIX}/projects/护栏本/chapters/1/annotations/A1` },
     { name: 'GET /projects/:id/continuity', method: 'GET', url: `${PREFIX}/projects/护栏本/continuity` },
     { name: 'GET /projects/:id/diagnose', method: 'GET', url: `${PREFIX}/projects/护栏本/diagnose` },
     { name: 'GET /projects/:id/dashboard', method: 'GET', url: `${PREFIX}/projects/护栏本/dashboard` },
@@ -62,7 +70,10 @@ const ROUTES = [
     { name: 'GET /projects/:id/proposals/:pid', method: 'GET', url: `${PREFIX}/projects/护栏本/proposals/P1` },
     { name: 'POST /projects/:id/proposals/prune', method: 'POST', url: `${PREFIX}/projects/护栏本/proposals/prune` },
     { name: 'POST /projects/:id/proposals/:pid/apply', method: 'POST', url: `${PREFIX}/projects/护栏本/proposals/P1/apply` },
+    { name: 'POST /projects/:id/proposals/:pid/merge', method: 'POST', url: `${PREFIX}/projects/护栏本/proposals/P1/merge` },
     { name: 'POST /projects/:id/proposals/:pid/discard', method: 'POST', url: `${PREFIX}/projects/护栏本/proposals/P1/discard` },
+    { name: 'GET /projects/:id/extraction-proposals', method: 'GET', url: `${PREFIX}/projects/护栏本/extraction-proposals` },
+    { name: 'POST /projects/:id/extraction-proposals/:pid/apply', method: 'POST', url: `${PREFIX}/projects/护栏本/extraction-proposals/E1/apply` },
     { name: 'POST /projects/:id/export', method: 'POST', url: `${PREFIX}/projects/护栏本/export` },
     { name: 'DELETE /projects/:id', method: 'DELETE', url: `${PREFIX}/projects/护栏本` },
     { name: 'POST /projects/:id/rename', method: 'POST', url: `${PREFIX}/projects/护栏本/rename` },
@@ -226,7 +237,7 @@ async function drive(opts) {
     if (opts.fence !== false) headers[FENCE] = '1';
     const req = new FakeReq({ method: opts.method, url: opts.url, headers, body: opts.body });
     const res = new FakeRes();
-    const running = handler(req, res);
+    const running = (opts.handler ?? handler)(req, res);
     let timer;
     try {
         await new Promise((r) => setImmediate(() => setImmediate(r)));   // 让 body 事件有机会按流语义送达
@@ -1095,7 +1106,46 @@ test('R1+ draft-batch resume：运行中 409 BATCH_RUNNING 防双跑；过期 ru
     assert.equal(stale.statusCode, 503, `过期的 running 应放行到引擎检查，实际 ${stale.statusCode}：${stale.body}`);
 });
 
-// ── R2：workspace 白名单（H4 修复）+ 非法书名 ──────────────────────────
+test('R1+ draft-batch resume：检查点已完成时，同 nonce 重试先回放回执而不是 409', async () => {
+    const book = '回放本';
+    await createBook(book);
+    // 模拟「上次请求已完成但响应丢失」：检查点是 done，回执已落盘。
+    // 旧实现先读检查点 → 409 BATCH_DONE；新实现必须先查回执 → 200 replayed:true。
+    const ckPath = path.join(root, book, '.novel', 'batch-checkpoint.json');
+    fs.mkdirSync(path.dirname(ckPath), { recursive: true });
+    fs.writeFileSync(ckPath, JSON.stringify({
+        book, from: 1, count: 1, concurrency: 1, force: false,
+        status: 'done', startedAt: new Date().toISOString(), completed: [1], failed: [],
+    }));
+    const nonce = 'audit-resume-0001';
+    const payload = { from: 1, count: 1, concurrency: 1, force: false, resume: true };
+    const receipt = {
+        version: 1, nonce, operation: 'draft-batch',
+        fingerprint: invocationFingerprint('draft-batch', payload),
+        status: 'done', createdAt: new Date().toISOString(),
+        response: {
+            result: {
+                concurrency: 1, stats: { total: 1, committed: 1, failed: 0 },
+                warnings: [], checkpoint: { status: 'done' }, items: [], results: [],
+            },
+            resumed: true,
+        },
+    };
+    const receiptPath = path.join(root, book, '.novel', 'invocations', `${nonce}.json`);
+    fs.mkdirSync(path.dirname(receiptPath), { recursive: true });
+    fs.writeFileSync(receiptPath, JSON.stringify(receipt));
+
+    const res = await drive({
+        method: 'POST', url: `${PREFIX}/projects/${book}/draft-batch`,
+        body: { resume: true, invocationNonce: nonce },
+    });
+    assert.equal(res.statusCode, 200, `应回放已完成的回执，实际 ${res.statusCode}：${res.body}`);
+    assert.equal(res.json.value.replayed, true);
+    assert.equal(res.json.value.resumed, true);
+    assert.equal(res.json.value.stats.committed, 1);
+});
+
+
 
 test('R2a workspace 不在受控根集合 → 403 WORKSPACE_FORBIDDEN 且盘上无落点', async () => {
     const evilRoot = path.join(os.tmpdir(), `novel-forge-evil-${Date.now()}`);
@@ -1243,6 +1293,10 @@ test('R4 面板保存章节：空稿 400、低于下限 409 不落盘、合格�
     const meta = JSON.parse(fs.readFileSync(path.join(root, '审计书', 'novel.json'), 'utf8'));
     assert.equal(meta.chapters['1'].latest, 1, 'novel.json 章节索引必须更新');
     assert.ok(meta.chapters['1'].path.startsWith('审计书/'), 'chapterRelPath 语义：path 已含书目前缀');
+    assert.equal(meta.chapters['1'].sourceRefs.version, 1);
+    assert.equal(meta.chapters['1'].sourceRefs.contentHash,
+        sha256(fs.readFileSync(path.join(root, '审计书', '正文', '第1章-雨夜来客-v1.md'), 'utf8').trimEnd()),
+        '面板保存也必须记录本版正文指纹');
 
     const rows = readAudit('审计书');
     const save = rows.find((r) => r.action === 'rest/chapter_save');
@@ -1340,6 +1394,242 @@ test('★ R4d 面板保存落质量债：欠债照记，重写干净后旧账清
     assert.equal(second.statusCode, 200, second.body);
     const meta2 = JSON.parse(fs.readFileSync(path.join(root, '面板记账书', 'novel.json'), 'utf8'));
     assert.deepEqual(meta2.quality?.debts?.['1'], [], '★ 重写干净后面板保存必须清掉旧账，否则 novel_quality 永远显示上一版的债');
+});
+
+test('★ 持久批注 REST：跨保存精确重锚，解决记录保留且可重开', async () => {
+    const book = '持久批注书';
+    await createBook(book);
+    const original = `${PASSAGE}\n\n${'他看见雨。'.repeat(80)}\n\n${'她听见风。'.repeat(80)}`;
+    const saved = await drive({ method: 'POST', url: `${PREFIX}/projects/${book}/chapters/1`, body: { title: '雨夜', text: original, force: true } });
+    assert.equal(saved.statusCode, 200, saved.body);
+    const reviewed = await drive({ method: 'GET', url: `${PREFIX}/projects/${book}/chapters/1/review-issues` });
+    assert.equal(reviewed.statusCode, 200, reviewed.body);
+    assert.ok(reviewed.json.value.issues.length > 0, '重复段应产生真实批注');
+    const target = reviewed.json.value.issues[0];
+    const resolved = await drive({
+        method: 'POST', url: `${PREFIX}/projects/${book}/chapters/1/annotations/${target.id}`, body: { status: 'resolved' },
+    });
+    assert.equal(resolved.statusCode, 200, resolved.body);
+    assert.equal(resolved.json.value.annotation.status, 'resolved');
+
+    const moved = await drive({
+        method: 'POST', url: `${PREFIX}/projects/${book}/chapters/1`, body: { title: '雨夜', text: `新增的开场保持独立。\n\n${original}`, force: true },
+    });
+    assert.equal(moved.statusCode, 200, moved.body);
+    const annotationPath = path.join(root, book, '.novel', 'annotations.json');
+    const persisted = JSON.parse(fs.readFileSync(annotationPath, 'utf8')).chapters['1'];
+    const relocated = persisted.find((item) => item.id === target.id);
+    assert.equal(relocated.status, 'resolved');
+    assert.equal(relocated.version, 2);
+    assert.equal(relocated.paragraph, target.paragraph + 1);
+    assert.equal(relocated.location, 'exact');
+
+    const reopened = await drive({
+        method: 'POST', url: `${PREFIX}/projects/${book}/chapters/1/annotations/${target.id}`, body: { status: 'open' },
+    });
+    assert.equal(reopened.statusCode, 200, reopened.body);
+    assert.equal(reopened.json.value.annotation.status, 'open');
+    assert.equal(reopened.json.value.annotation.resolvedAt, null);
+    const scannedAgain = await drive({ method: 'GET', url: `${PREFIX}/projects/${book}/chapters/1/review-issues` });
+    assert.ok(scannedAgain.json.value.issues.some((item) => item.id === target.id), '重扫描不得吞掉已有持久批注');
+});
+
+test('★ review-issues 连读两次不写盘（内容与 mtime 都不变）；同状态重复 POST 也不写', async () => {
+    const book = '批注只读书';
+    await createBook(book);
+    const original = `${PASSAGE}\n\n${'他看见雨。'.repeat(80)}\n\n${'她听见风。'.repeat(80)}`;
+    const saved = await drive({ method: 'POST', url: `${PREFIX}/projects/${book}/chapters/1`, body: { title: '雨夜', text: original, force: true } });
+    assert.equal(saved.statusCode, 200, saved.body);
+    const file = path.join(root, book, '.novel', 'annotations.json');
+
+    const first = await drive({ method: 'GET', url: `${PREFIX}/projects/${book}/chapters/1/review-issues` });
+    assert.equal(first.statusCode, 200, first.body);
+    assert.ok(first.json.value.issues.length > 0, '应有真实审稿项');
+    const beforeText = fs.readFileSync(file, 'utf8');
+    const beforeStat = fs.statSync(file);
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const second = await drive({ method: 'GET', url: `${PREFIX}/projects/${book}/chapters/1/review-issues` });
+    assert.equal(second.statusCode, 200, second.body);
+    assert.equal(fs.readFileSync(file, 'utf8'), beforeText, '第二次 GET 不得改写 annotations.json');
+    assert.equal(fs.statSync(file).mtimeMs, beforeStat.mtimeMs, '第二次 GET 不得刷新 mtime');
+
+    const id = first.json.value.issues[0].id;
+    const firstPost = await drive({ method: 'POST', url: `${PREFIX}/projects/${book}/chapters/1/annotations/${id}`, body: { status: 'resolved' } });
+    assert.equal(firstPost.statusCode, 200, firstPost.body);
+    const resolvedText = fs.readFileSync(file, 'utf8');
+    const resolvedStat = fs.statSync(file);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const secondPost = await drive({ method: 'POST', url: `${PREFIX}/projects/${book}/chapters/1/annotations/${id}`, body: { status: 'resolved' } });
+    assert.equal(secondPost.statusCode, 200, secondPost.body);
+    assert.equal(fs.readFileSync(file, 'utf8'), resolvedText, '同状态重复 POST 不得改写 annotations.json');
+    assert.equal(fs.statSync(file).mtimeMs, resolvedStat.mtimeMs, '同状态重复 POST 不得刷新 mtime');
+});
+
+test('★ 细纲照搬 REST：长段重合只警告并记 minor 债，不阻断面板保存', async () => {
+    const book = '细纲照搬书';
+    await createBook(book);
+    const copied = '守夜人把旧灯放在石门前面然后拆开那封没有署名的信仔细阅读每一行字';
+    const copied2 = '城门口那面破旧的旗子在风里来回摆动像在等一个永远不回来的人直到天亮也没有人经过';
+    const outlinePath = path.join(root, book, '大纲', '细纲', '第1章.md');
+    fs.mkdirSync(path.dirname(outlinePath), { recursive: true });
+    fs.writeFileSync(outlinePath, `## 本章必写场景\n- 夜访：${copied}，随后离开。\n- 归途：${copied2}，随后离开。`);
+    const saved = await drive({
+        method: 'POST', url: `${PREFIX}/projects/${book}/chapters/1`,
+        body: { title: '夜访', text: `${copied.slice(0, 20)}\n\n${copied.slice(20)}。\n\n${copied2}。\n\n他把信收好，吹熄旧灯，独自走进雨里。` },
+    });
+    assert.equal(saved.statusCode, 200, saved.body);
+    assert.ok(saved.json.value.warnings.some((message) => /长段逐字重合/.test(message) && /只提示，不阻断/.test(message)));
+    const meta = JSON.parse(fs.readFileSync(path.join(root, book, 'novel.json'), 'utf8'));
+    const debts = meta.quality.debts['1'].filter((debt) => debt.code === 'outline-overlap');
+    assert.equal(debts.length, 1, '一章多处重合也只落一条 minor 债');
+    assert.equal(debts[0].level, 'minor');
+});
+
+test('★ 档案抽取 REST：逐项应用进世界书，人工改档后返回冲突', async () => {
+    const book = '抽取接口书';
+    await createBook(book);
+    const io = createServerFsio(ctx, root);
+    const p = pathsFor(book);
+    const candidate = {
+        id: 'X1', kind: 'worldbook', status: 'pending', name: '城南渡口', aliases: [], keywords: ['城南渡口'],
+        content: '涨潮时封闭。', chapter: 1, quote: '城南渡口每逢涨潮便封闭。', always: false, priority: 50,
+    };
+    const items = await captureExtractionTargets(io, p, [candidate]);
+    const proposal = await submitExtractionProposal(io, p, { items, from: 1, to: 1 });
+    const listed = await drive({ method: 'GET', url: `${PREFIX}/projects/${book}/extraction-proposals` });
+    assert.equal(listed.statusCode, 200, listed.body);
+    assert.equal(listed.json.value.proposals[0].items[0].quote, candidate.quote);
+
+    const applied = await drive({
+        method: 'POST', url: `${PREFIX}/projects/${book}/extraction-proposals/${proposal.id}/apply`,
+        body: { items: [{ id: 'X1', name: '城南渡口', content: '涨潮封闭，持牌船家除外。', keywords: ['渡口'], priority: 70 }] },
+    });
+    assert.equal(applied.statusCode, 200, applied.body);
+    assert.equal(applied.json.value.count, 1);
+    const entries = JSON.parse(fs.readFileSync(path.join(root, book, '设定', '世界书.json'), 'utf8'));
+    assert.match(entries[0].content, /持牌船家/);
+    assert.equal(entries[0].priority, 70);
+    const combined = await drive({ method: 'GET', url: `${PREFIX}/projects/${book}/proposals` });
+    assert.equal(combined.json.value.extractionProposals[0].status, 'applied');
+
+    const secondItems = await captureExtractionTargets(io, p, [candidate]);
+    const second = await submitExtractionProposal(io, p, { items: secondItems, from: 1, to: 1 });
+    entries[0].content = '人工修订：渡口永久关闭。';
+    await io.writeJson(p.worldbook, entries);
+    const conflict = await drive({
+        method: 'POST', url: `${PREFIX}/projects/${book}/extraction-proposals/${second.id}/apply`, body: { items: [{ id: 'X1' }] },
+    });
+    assert.equal(conflict.statusCode, 409, conflict.body);
+    assert.equal(conflict.json.error.code, 'EXTRACTION_CONFLICT');
+    assert.match(JSON.parse(fs.readFileSync(path.join(root, book, '设定', '世界书.json'), 'utf8'))[0].content, /人工修订/);
+});
+
+test('R9 审稿筛选、三路合并与影响清单走通 REST 数据面', async () => {
+    const book = '修订集成书';
+    assert.equal((await createBook(book)).statusCode, 200);
+    const original = `第一章 审稿\n\n${'他看见雨。'.repeat(80)}\n\n${'她听见风。'.repeat(80)}`;
+    const firstRel = `${book}/正文/第1章-审稿-v1.md`;
+    fs.mkdirSync(path.join(root, book, '正文'), { recursive: true });
+    fs.writeFileSync(path.join(root, firstRel), original);
+    const metaPath = path.join(root, book, 'novel.json');
+    const seeded = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    seeded.chapters = { 1: {
+        title: '审稿', latest: 1, versions: [1], path: firstRel,
+        files: [{ version: 1, file: firstRel }], chars: original.replace(/\s/g, '').length, summary: '',
+    } };
+    fs.writeFileSync(metaPath, JSON.stringify(seeded));
+
+    const prompts = [];
+    const registrations = [];
+    const engineCtx = {
+        fs: backend, emit() {}, logger: { info() {} },
+        inject: (_deps, fn) => { fn(engineCtx); },
+        effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
+        webServer: { register: (def) => { registrations.push(def); return () => {}; } },
+    };
+    registerServerApi(engineCtx, { workspaceRoot: root, scanTopK: 8, minChapterChars: 10, maxChapterChars: 5000 }, {
+        homedir: fakeHome,
+        engine: { run: async (_channel, request) => {
+            prompts.push(request.prompt);
+            return { ok: true, attempts: 1, route: null, text: original, usage: null };
+        } },
+    });
+    const apiDrive = (opts) => drive({ ...opts, handler: registrations[0].handler });
+    const prefix = `${PREFIX}/projects/${encodeURIComponent(book)}`;
+
+    const review = await apiDrive({ method: 'GET', url: `${prefix}/chapters/1/review-issues` });
+    assert.equal(review.statusCode, 200, review.body);
+    assert.ok(review.json.value.issues.length >= 2, '夹具需要至少两条真实审稿项');
+    const [selected, unselected] = review.json.value.issues;
+    const empty = await apiDrive({ method: 'POST', url: `${prefix}/chapters/1/polish`, body: {
+        chapterVersion: 1, selectedIssueIds: [], guidance: '',
+    } });
+    assert.equal(empty.statusCode, 400);
+    assert.equal(empty.json.error.code, 'EMPTY_REVIEW_SELECTION');
+    const stale = await apiDrive({ method: 'POST', url: `${prefix}/chapters/1/polish`, body: {
+        chapterVersion: 1, selectedIssueIds: ['I-stale'], guidance: '',
+    } });
+    assert.equal(stale.statusCode, 409);
+    assert.equal(stale.json.error.code, 'STALE_REVIEW');
+    assert.equal(prompts.length, 0, '无效选择不得调用模型');
+
+    const polished = await apiDrive({ method: 'POST', url: `${prefix}/chapters/1/polish`, body: {
+        chapterVersion: 1, selectedIssueIds: [selected.id], guidance: '只处理所选项，保留结尾',
+    } });
+    assert.equal(polished.statusCode, 200, polished.body);
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0], new RegExp(`¶${selected.paragraph}(?!\\d)`));
+    assert.doesNotMatch(prompts[0], new RegExp(`¶${unselected.paragraph}(?!\\d)`));
+    assert.match(prompts[0], /只处理所选项，保留结尾/);
+    const proposalId = polished.json.value.proposalId;
+
+    const current = `${original}\n\n夜色落下后，院内只剩一盏灯。`;
+    const secondRel = `${book}/正文/第1章-审稿-v2.md`;
+    fs.writeFileSync(path.join(root, secondRel), current);
+    const advanced = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    advanced.chapters['1'] = {
+        ...advanced.chapters['1'], latest: 2, versions: [1, 2], path: secondRel,
+        files: [...advanced.chapters['1'].files, { version: 2, file: secondRel }],
+        chars: current.replace(/\s/g, '').length,
+    };
+    fs.writeFileSync(metaPath, JSON.stringify(advanced));
+    const detail = await apiDrive({ method: 'GET', url: `${prefix}/proposals/${proposalId}` });
+    assert.equal(detail.statusCode, 200, detail.body);
+    assert.equal(detail.json.value.latestVersion, 2);
+    assert.equal(detail.json.value.currentHash, sha256(current));
+
+    const mergedContent = `${current}\n\n作者确认保留这一段。`;
+    const conflict = await apiDrive({ method: 'POST', url: `${prefix}/proposals/${proposalId}/merge`, body: {
+        content: mergedContent, currentVersion: 2, currentHash: '0'.repeat(16),
+    } });
+    assert.equal(conflict.statusCode, 409);
+    assert.equal(conflict.json.error.code, 'MERGE_CONFLICT');
+    assert.equal(JSON.parse(fs.readFileSync(metaPath, 'utf8')).proposals.find((x) => x.id === proposalId).status, 'pending');
+
+    const merged = await apiDrive({ method: 'POST', url: `${prefix}/proposals/${proposalId}/merge`, body: {
+        content: mergedContent, currentVersion: 2, currentHash: detail.json.value.currentHash,
+    } });
+    assert.equal(merged.statusCode, 200, merged.body);
+    assert.equal(merged.json.value.version, 3);
+    assert.equal(merged.json.value.merged, true);
+    const afterMerge = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    assert.equal(afterMerge.chapters['1'].latest, 3);
+    assert.equal(afterMerge.chapters['1'].sourceRefs.contentHash, sha256(mergedContent));
+    assert.equal(afterMerge.proposals.find((x) => x.id === proposalId).appliedVia, 'three-way-merge');
+
+    const laterRel = `${book}/正文/第2章-后章-v1.md`;
+    fs.writeFileSync(path.join(root, laterRel), '后章沿用上一版结尾，需要复核。');
+    afterMerge.chapters['2'] = {
+        title: '后章', latest: 1, versions: [1], path: laterRel,
+        files: [{ version: 1, file: laterRel }], chars: 16, summary: '',
+        sourceRefs: { version: 1, previousChapter: { chapter: 1, version: 2, contentHash: sha256(current) } },
+    };
+    fs.writeFileSync(metaPath, JSON.stringify(afterMerge));
+    const impact = await apiDrive({ method: 'GET', url: `${prefix}/chapters/1/impact` });
+    assert.equal(impact.statusCode, 200, impact.body);
+    assert.deepEqual(impact.json.value.affected.map((x) => [x.chapter, x.kind]), [[2, 'direct']]);
+    assert.match(impact.json.value.notice, /不会自动重写/);
 });
 
 // ── R5：createServerFsio 的 mode 语义（H1 修复，REST 永不静默覆盖）──────

@@ -1502,6 +1502,232 @@ test('★ 批量控制器采用服务端最新 checkpoint，旧断点记录被�
     assert.deepEqual(controller.state.batchResult.checkpoint, checkpoint);
     assert.deepEqual(controller.state.detail.batchCheckpoint, checkpoint);
     assert.notEqual(controller.state.detail.batchCheckpoint.records[0].reason, '旧失败原因');
+    const batchRequest = seq.requests.find((r) => r.url.includes('/draft-batch'));
+    assert.ok(JSON.parse(batchRequest.init.body).invocationNonce, '批量请求带幂等键');
+});
+
+test('★ 幂等键：网络结果不明时重试复用同一 nonce', async () => {
+    const seq = scriptedFetch([
+        { reject: 'socket lost' },
+        { value: { resumed: false, replayed: true, stats: { committed: 1, failed: 0 }, checkpoint: { records: [] }, results: [] } },
+        { value: [] },
+        { value: { proposals: [] } },
+    ]);
+    const mod = loadClient(createDom(), BUNDLE, { fetch: seq.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+    controller.state.selected = '书A';
+    controller.state.detail = { title: '书A', batchCheckpoint: { records: [] } };
+    await controller.handleAction('draft-batch', { dataset: {} });
+    assert.match(controller.state.error, /网络错误/);
+    await controller.handleAction('draft-batch', { dataset: {} });
+    const calls = seq.requests.filter((r) => r.url.includes('/draft-batch'));
+    assert.equal(calls.length, 2);
+    const first = JSON.parse(calls[0].init.body).invocationNonce;
+    const second = JSON.parse(calls[1].init.body).invocationNonce;
+    assert.equal(second, first);
+    assert.match(controller.state.notice, /未重复生成或落章/);
+});
+
+test('★ 失败恢复：真实动作取候选进编辑器，不直接写正文；未保存草稿不被覆盖', async () => {
+    const seq = scriptedFetch([
+        { value: { id: 'RDEMO', chapter: 3, chars: 12, partialText: '恢复出来的半截正文', stale: false } },
+        { value: '' },
+    ]);
+    const mod = loadClient(createDom(), BUNDLE, { fetch: seq.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+    controller.state.selected = '书A';
+    controller.state.draftModified = true;
+    controller.state.draft = '不能丢的手改稿';
+    await controller.handleAction('recovery-load', { dataset: { id: 'RDEMO' } });
+    assert.equal(seq.requests.length, 0);
+    assert.match(controller.state.error, /未保存/);
+
+    controller.state.draftModified = false;
+    controller.state.error = '';
+    await controller.handleAction('recovery-load', { dataset: { id: 'RDEMO' } });
+    assert.equal(controller.state.chapterNo, 3);
+    assert.equal(controller.state.draft, '恢复出来的半截正文');
+    assert.equal(controller.state.draftModified, true);
+    assert.match(controller.state.notice, /尚未写入正文/);
+    assert.equal(seq.requests.some((r) => r.init.method === 'POST'), false);
+});
+
+test('★ 审稿项筛选：真实复选框驱动选择，未选项与指导按契约进入请求体', async () => {
+    const seq = scriptedFetch([
+        { value: { chapter: 1, version: 4, issues: [
+            { id: 'I1', paragraph: 1, issues: ['第一段问题'] },
+            { id: 'I2', paragraph: 2, issues: ['第二段问题'] },
+        ] } },
+        { value: { proposalId: 'P2', chars: 100, deltaChars: 2, warnings: [] } },
+        { value: { proposals: [] } },
+    ]);
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch: seq.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+    Object.assign(controller.state, {
+        selected: '书A', chapterNo: 1, chapterList: [{ no: 1, title: '一', chars: 100 }],
+        detail: { chapters: { 1: {} } }, draftModified: false,
+    });
+    await controller.handleAction('review-options', { dataset: {} });
+    assert.deepEqual(controller.state.reviewSelectedIssueIds, ['I1', 'I2']);
+
+    const view = mod.exports.__internals.ProjectDetailView({ state: controller.state });
+    const first = collect(view, (e) => e.props?.['data-field'] === 'review-issue' && e.props?.['data-id'] === 'I1')[0];
+    const guidance = collect(view, (e) => e.props?.['data-field'] === 'review-guidance')[0];
+    assert.ok(first && guidance, '真实视图必须渲染审稿复选框与指导输入');
+    const root = new dom.El('div'); controller.attach(root);
+    const checkbox = new dom.El('input');
+    checkbox.dataset.field = first.props['data-field']; checkbox.dataset.id = first.props['data-id']; checkbox.checked = false;
+    root.append(checkbox); checkbox.dispatch('change');
+    const input = new dom.El('textarea'); input.dataset.field = guidance.props['data-field']; input.value = '只收第二段，别动结尾';
+    root.append(input); input.dispatch('input');
+    assert.deepEqual([...controller.state.reviewSelectedIssueIds], ['I2']);
+
+    await controller.handleAction('polish', { dataset: {} });
+    const request = seq.requests.find((r) => r.url.includes('/polish'));
+    const body = JSON.parse(request.init.body);
+    assert.deepEqual(body.selectedIssueIds, ['I2']);
+    assert.equal(body.chapterVersion, 4);
+    assert.equal(body.guidance, '只收第二段，别动结尾');
+    assert.ok(!body.selectedIssueIds.includes('I1'), '未选意见不得发往服务端');
+});
+
+test('★ 持久批注：真实解决/重开按钮提交 data-id 与 data-choice', async () => {
+    const seq = scriptedFetch([
+        { value: { annotation: { id: 'A1', status: 'resolved', resolvedAt: 'now' } } },
+        { value: { annotation: { id: 'A1', status: 'open', resolvedAt: null } } },
+    ]);
+    const mod = loadClient(createDom(), BUNDLE, { fetch: seq.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+    Object.assign(controller.state, {
+        selected: '书A', chapterNo: 2, chapterList: [{ no: 2, title: '二', chars: 100 }],
+        detail: { chapters: { 2: {} } }, reviewVisible: true, reviewIssues: [
+            { id: 'A1', status: 'open', paragraph: 3, quote: '需要处理的段落', issues: ['段落需要复核'] },
+        ], reviewSelectedIssueIds: ['A1'],
+    });
+    const firstView = mod.exports.__internals.ProjectDetailView({ state: controller.state });
+    const resolve = collect(firstView, (element) => element.props?.['data-action'] === 'annotation-status'
+        && element.props?.['data-id'] === 'A1' && element.props?.['data-choice'] === 'resolved')[0];
+    assert.ok(resolve, '真实审稿视图必须渲染带持久 id 的解决按钮');
+    await controller.handleAction(resolve.props['data-action'], { dataset: {
+        id: resolve.props['data-id'], choice: resolve.props['data-choice'],
+    } });
+    assert.equal(controller.state.reviewIssues[0].status, 'resolved');
+    assert.deepEqual(controller.state.reviewSelectedIssueIds, []);
+    assert.equal(JSON.parse(seq.requests[0].init.body).status, 'resolved');
+
+    const secondView = mod.exports.__internals.ProjectDetailView({ state: controller.state });
+    const reopen = collect(secondView, (element) => element.props?.['data-action'] === 'annotation-status'
+        && element.props?.['data-id'] === 'A1' && element.props?.['data-choice'] === 'open')[0];
+    assert.ok(reopen, '已解决批注必须能按同一 id 重开');
+    await controller.handleAction(reopen.props['data-action'], { dataset: {
+        id: reopen.props['data-id'], choice: reopen.props['data-choice'],
+    } });
+    assert.equal(controller.state.reviewIssues[0].status, 'open');
+    assert.equal(JSON.parse(seq.requests[1].init.body).status, 'open');
+});
+
+test('★ 档案抽取：真实编辑与取消勾选后只提交所选项', async () => {
+    const pending = { id: 'E1', status: 'pending', from: 1, to: 1, items: [
+        { id: 'X1', kind: 'character', status: 'pending', name: '林砚', content: '旧钥匙随身。', aliases: ['阿砚'], chapter: 1, quote: '林砚带着旧钥匙。' },
+        { id: 'X2', kind: 'worldbook', status: 'pending', name: '城南渡口', content: '涨潮封闭。', aliases: [], keywords: ['城南渡口'], chapter: 1, quote: '城南渡口涨潮封闭。' },
+    ] };
+    const seq = scriptedFetch([
+        { value: { proposals: [], extractionProposals: [pending] } },
+        { value: { count: 1 } },
+        { value: { proposals: [], extractionProposals: [{ ...pending, status: 'partial', items: [
+            { ...pending.items[0], status: 'applied' }, pending.items[1],
+        ] }] } },
+        { value: { characters: [], worldbook: [] } },
+    ]);
+    const dom = createDom();
+    const mod = loadClient(dom, BUNDLE, { fetch: seq.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+    controller.state.selected = '书A';
+    await controller.loadProposals('书A');
+    const view = mod.exports.__internals.ExtractionProposalView({ state: controller.state });
+    const name = collect(view, (element) => element.props?.['data-field'] === 'extraction-name'
+        && element.props?.['data-id'] === 'X1')[0];
+    const unchecked = collect(view, (element) => element.props?.['data-field'] === 'extraction-selected'
+        && element.props?.['data-id'] === 'X2')[0];
+    const apply = collect(view, (element) => element.props?.['data-action'] === 'extraction-apply'
+        && element.props?.['data-id'] === 'E1')[0];
+    assert.ok(name && unchecked && apply, '真实抽取视图必须渲染编辑、选择和应用控件');
+    const root = new dom.El('div'); controller.attach(root);
+    const input = new dom.El('input');
+    input.dataset.field = name.props['data-field']; input.dataset.pid = name.props['data-pid']; input.dataset.id = name.props['data-id'];
+    input.value = '林砚（人工订正）'; root.append(input); input.dispatch('input');
+    const checkbox = new dom.El('input');
+    checkbox.dataset.field = unchecked.props['data-field']; checkbox.dataset.pid = unchecked.props['data-pid']; checkbox.dataset.id = unchecked.props['data-id'];
+    checkbox.checked = false; root.append(checkbox); checkbox.dispatch('change');
+    await controller.handleAction(apply.props['data-action'], { dataset: { id: apply.props['data-id'] } });
+    const request = seq.requests.find((entry) => entry.url.includes('/extraction-proposals/E1/apply'));
+    const body = JSON.parse(request.init.body);
+    assert.equal(body.items.length, 1);
+    assert.equal(body.items[0].id, 'X1');
+    assert.equal(body.items[0].name, '林砚（人工订正）');
+    assert.ok(!body.items.some((item) => item.id === 'X2'), '取消勾选的世界书候选不得提交');
+    assert.match(controller.state.notice, /未勾选项仍留/);
+});
+
+test('★ 逐段合并：真实选项按钮改选择，应用带当前版本/哈希；未保存草稿先拦住', async () => {
+    const seq = scriptedFetch([
+        { value: { chapter: 1, version: 3, gate: null, impact: null } },
+        { value: { proposals: [] } },
+        { value: [] },
+        { value: '合并后正文' },
+    ]);
+    const mod = loadClient(createDom(), BUNDLE, { fetch: seq.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+    Object.assign(controller.state, {
+        selected: '书A', chapterNo: 1, draftModified: false,
+        proposalDetail: { id: 'P1', loading: false, error: '', data: {
+            id: 'P1', chapter: 1, content: '甲提案\n\n乙', baseContent: '甲\n\n乙', currentContent: '甲当前\n\n乙当前',
+            latestVersion: 2, currentHash: '0123456789abcdef',
+        } },
+    });
+    controller.state.draftModified = true;
+    await controller.handleAction('proposal-merge-open', { dataset: { id: 'P1' } });
+    assert.match(controller.state.error, /未保存/);
+    assert.equal(seq.requests.length, 0);
+
+    controller.state.draftModified = false; controller.state.error = '';
+    await controller.handleAction('proposal-merge-open', { dataset: { id: 'P1' } });
+    assert.equal(controller.state.proposalMerge.conflicts, 1);
+    const conflict = controller.state.proposalMerge.rows.find((row) => row.conflict);
+    assert.equal(conflict.defaultChoice, 'current');
+    const view = mod.exports.__internals.ProposalMergeView({ state: controller.state, proposal: { id: 'P1' } });
+    const choice = collect(view, (e) => e.props?.['data-action'] === 'proposal-merge-choice'
+        && e.props?.['data-row'] === conflict.id && e.props?.['data-choice'] === 'proposal')[0];
+    assert.ok(choice, '真实合并视图必须渲染冲突的提案选择');
+    await controller.handleAction('proposal-merge-choice', { dataset: {
+        id: choice.props['data-id'], row: choice.props['data-row'], choice: choice.props['data-choice'],
+    } });
+    await controller.handleAction('proposal-merge-apply', { dataset: { id: 'P1' } });
+    const request = seq.requests.find((r) => r.url.includes('/merge'));
+    const body = JSON.parse(request.init.body);
+    assert.equal(body.currentVersion, 2);
+    assert.equal(body.currentHash, '0123456789abcdef');
+    assert.equal(body.content, '甲提案\n\n乙当前');
+    assert.equal(controller.state.proposalMerge, null);
+});
+
+test('★ 前章影响：真实按钮取只读报告，直接与不可判定分组展示', async () => {
+    const seq = scriptedFetch([{ value: {
+        chapter: 1, checked: 2, notice: '只提示，不自动重写。',
+        affected: [{ chapter: 2, title: '二', kind: 'direct', via: 1, reasons: ['前章已变'], outline: { exists: true } }],
+        unknown: [{ chapter: 3, title: '三', reason: '没有来源记录' }],
+    } }]);
+    const mod = loadClient(createDom(), BUNDLE, { fetch: seq.fetch });
+    const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
+    Object.assign(controller.state, { selected: '书A', chapterNo: 1, chapterList: [{ no: 1 }], detail: { chapters: { 1: {} } } });
+    await controller.handleAction('impact', { dataset: {} });
+    assert.ok(seq.requests[0].url.includes('/chapters/1/impact'));
+    assert.equal(controller.state.impact.affected[0].kind, 'direct');
+    const view = mod.exports.__internals.ProjectDetailView({ state: controller.state });
+    const text = JSON.stringify(view);
+    assert.match(text, /直接影响/);
+    assert.match(text, /无法判定/);
 });
 
 test('★ Feedback：错误是 alert、通知是 status——异步反馈读屏必须能听到', () => {

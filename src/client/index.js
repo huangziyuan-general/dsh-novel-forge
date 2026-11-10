@@ -25,8 +25,10 @@ import { Feedback, Btn } from './ui.js';
 import { ProjectListView, projectMatches } from './views/project-list.js';
 import { ChapterListView } from './views/chapters.js';
 import { LorebookView } from './views/lorebook.js';
-import { ProjectDetailView, BatchRecordsView } from './views/project-detail.js';
+import { ProjectDetailView, BatchRecordsView, RecoveryCandidatesView } from './views/project-detail.js';
 import { ProjectOverviewView } from './views/overview.js';
+import { ProposalMergeView } from './views/proposal-merge.js';
+import { ExtractionProposalView } from './views/extraction-proposals.js';
 import { SettingsView } from './views/settings.js';
 
 // 版本号：必须与 package.json 的 version 一致。
@@ -150,4 +152,7 @@ export const __internals = {
 	// 其余视图导出：动作契约对账用例要渲染它们、收集真实 data-action（视图↔控制器一致性）
 	ProjectDetailView, ProjectOverviewView, SettingsView,
 	BatchRecordsView,
+	RecoveryCandidatesView,
+	ProposalMergeView,
+	ExtractionProposalView,
 };

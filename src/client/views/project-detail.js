@@ -20,6 +20,9 @@ import { Card, Btn, Chip, StatTile, Fold, Mono, Feedback } from '../ui.js';
 import { phaseLabel } from '../../../lib/phases.js';
 import { ChapterListView } from './chapters.js';
 import { ProjectOverviewView } from './overview.js';
+import { ProposalMergeView } from './proposal-merge.js';
+import { ImpactReportView } from './impact.js';
+import { ExtractionProposalView } from './extraction-proposals.js';
 
 /** 分段控件（替代并排两个描边按钮：当前项一眼看得出）。 */
 function Segmented({ tab }) {
@@ -165,6 +168,24 @@ export function BatchRecordsView({ checkpoint }) {
 		...records.map((record) => batchRow({
 			...record, ok: record.status === 'completed',
 		}, record.chapter)),
+	);
+}
+
+export function RecoveryCandidatesView({ candidates }) {
+	const rows = Array.isArray(candidates) ? candidates : [];
+	if (rows.length === 0) return null;
+	return Fold({ title: `失败正文恢复（${rows.length}）`, open: true },
+		h('div', { style: { ...hintStyle, fontSize: font.caption, marginBottom: space.sm } },
+			'候选只来自失败或被驳回的生成；载入编辑器后仍需人工检查与保存，绝不会自动成为正文。'),
+		...rows.map((candidate) => h('div', { key: candidate.id, style: { marginBottom: space.sm } },
+			h('div', { style: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: space.xs } },
+				Chip({ tone: candidate.stale ? 'warn' : 'accent' }, `第 ${candidate.chapter} 章 · ${candidate.chars} 字`),
+				h('span', { style: { ...hintStyle, fontSize: font.caption } }, `${candidate.status} · ${candidate.error?.code ?? '候选'}`),
+				Btn({ size: 'sm', variant: 'secondary', action: 'recovery-load', id: candidate.id }, '载入编辑器'),
+			),
+			candidate.preview ? h('div', { style: { ...hintStyle, fontSize: font.caption, marginTop: space.xs } }, candidate.preview) : null,
+			candidate.stale ? h('div', { style: { ...warnStyle, fontSize: font.caption } }, '该章已有更新正文；恢复稿是旧候选，保存时会另存新版本。') : null,
+		)),
 	);
 }
 
@@ -429,13 +450,16 @@ h('span', { style: { flex: '1 1 auto' } }),
 								? h('div', { style: { ...hintStyle, fontSize: font.caption } }, '加载全文中…')
 								: detail.error
 									? h('div', { style: { ...errStyle, fontSize: font.caption } }, detail.error)
-									: h('div', {
+									: h('div', null,
+										h('div', {
 										style: {
 											maxHeight: '260px', overflowY: 'auto', whiteSpace: 'pre-wrap',
 											fontSize: font.caption, lineHeight: 1.8, color: color.text2,
 											padding: space.sm, borderRadius: '6px', background: color.surface1,
 										},
-									}, detail.data?.content ?? '（提案内容为空）')),
+										}, detail.data?.content ?? '（提案内容为空）'),
+										ProposalMergeView({ state: s, proposal: p }),
+									)),
 						);
 					}),
 				),
@@ -473,13 +497,56 @@ h('span', { style: { flex: '1 1 auto' } }),
 
 		// 润色 / 校对走真端点，产物是提案（点「应用」才生效）
 		h('div', { style: { ...rowWrapStyle(space.xs), marginTop: space.md } },
+				Btn({ size: 'sm', variant: 'secondary', action: 'review-options', disabled: s.chapterNo > maxWritten },
+					s.reviewVisible ? '收起审稿项' : '☑ 审稿项'),
 			Btn({ size: 'sm', variant: 'accent', action: 'polish', disabled: revising !== null || s.chapterNo > maxWritten },
 				revising === 'polish' ? '润色中…' : '✨ 润色'),
 			Btn({ size: 'sm', variant: 'secondary', action: 'proofread', disabled: revising !== null || s.chapterNo > maxWritten },
 				revising === 'proofread' ? '校对中…' : '🔍 校对'),
 			h('span', { style: { ...hintStyle, fontSize: font.caption } },
 				'产物是提案（在「待批准提案」里点「应用」才生成新版本）'),
+				Btn({ size: 'sm', variant: 'ghost', action: 'impact', disabled: s.impactLoading || s.chapterNo > maxWritten },
+					s.impactLoading ? '核对中…' : '↗ 前章影响'),
 		),
+
+			s.reviewVisible ? h('div', { style: { marginTop: space.sm, padding: space.sm, borderRadius: '8px', background: color.surface2 } },
+				s.reviewLoading ? h('div', { style: hintStyle }, '正在生成审稿项（零 token）…') : null,
+				s.reviewError ? Feedback({ tone: 'err' }, s.reviewError) : null,
+				!s.reviewLoading && !s.reviewError ? h('div', null,
+					h('div', { style: { ...rowWrapStyle(space.xs), marginBottom: space.xs } },
+						h('span', { style: hintStyle }, `已选 ${s.reviewSelectedIssueIds.length}/${s.reviewIssues.length} 条；未选意见不会进入提示词`),
+						Btn({ size: 'sm', variant: 'ghost', action: 'review-select-all' }, '全选'),
+						Btn({ size: 'sm', variant: 'ghost', action: 'review-select-none' }, '全不选'),
+					),
+					...s.reviewIssues.map((issue) => h('div', {
+						key: issue.id, style: { display: 'flex', alignItems: 'flex-start', gap: space.xs, marginBottom: space.xs, fontSize: font.caption, color: color.text2 },
+					},
+						h('input', {
+							type: 'checkbox', 'data-field': 'review-issue', 'data-id': issue.id,
+							checked: s.reviewSelectedIssueIds.includes(issue.id),
+							disabled: issue.status === 'resolved' || issue.status === 'stale',
+						}),
+						h('div', { style: { flex: 1 } },
+							h('div', null,
+								issue.status === 'resolved' ? Chip({ tone: 'ok' }, '已解决') : issue.status === 'stale' ? Chip({ tone: 'warn' }, '锚点失效') : Chip({ tone: 'accent' }, '待处理'),
+								` ¶${issue.paragraph ?? '全章'}：${(issue.issues ?? []).join('；')}`,
+							),
+							issue.quote ? h('div', { style: { ...hintStyle, marginTop: '2px' } }, `引文：${String(issue.quote).slice(0, 90)}${String(issue.quote).length > 90 ? '…' : ''}`) : null,
+						),
+						issue.status === 'open' || issue.status === undefined
+							? Btn({ size: 'sm', variant: 'ghost', action: 'annotation-status', id: issue.id, choice: 'resolved' }, '解决')
+							: Btn({ size: 'sm', variant: 'ghost', action: 'annotation-status', id: issue.id, choice: 'open', disabled: issue.status === 'stale' }, '重开'),
+					)),
+					s.reviewIssues.length === 0 ? h('div', { style: hintStyle }, '没有自动病灶项；可只填作者指导进行定向润色。') : null,
+					h('textarea', {
+						'data-field': 'review-guidance', defaultValue: s.reviewGuidance, rows: 3,
+						placeholder: '作者指导（可选）：只改哪段、保留什么、不要动什么…',
+						'aria-label': '润色作者指导', style: { ...inputStyle, marginTop: space.xs },
+					}),
+				) : null,
+			) : null,
+
+			ImpactReportView({ state: s }),
 
 		s.error ? Feedback({ tone: 'err' }, s.error) : null,
 		s.notice ? Feedback({ tone: 'ok' }, s.notice) : null,
@@ -619,6 +686,7 @@ h('span', { style: { flex: '1 1 auto' } }),
 			)
 			: null,
 		h(BatchRecordsView, { checkpoint: batchCheckpoint }),
+			h(RecoveryCandidatesView, { candidates: s.detail?.recoveryCandidates }),
 	);
 
 	// ── 每章字数（用户 2026-10-20 要求面板能设）──
@@ -669,6 +737,7 @@ h('span', { style: { flex: '1 1 auto' } }),
 		continuityBlock,
 		diagnosisBlock,
 		proposalsBlock,
+		ExtractionProposalView({ state: s }),
 		editBlock,
 		batchBlock,
 	);

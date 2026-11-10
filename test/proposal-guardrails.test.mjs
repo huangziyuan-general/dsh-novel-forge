@@ -11,7 +11,8 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { computeAudit, chapterCharTarget } from '../lib/audit.js';
-import { applyProposal, discardProposal } from '../lib/proposals.js';
+import { applyProposal, discardProposal, readProposal } from '../lib/proposals.js';
+import { sha256 } from '../lib/basis.js';
 import { pathsFor, effectiveCharConfig } from '../lib/store.js';
 import { bootPlugin, chapterOf, testConfig } from './helpers/plugin.mjs';
 
@@ -37,6 +38,8 @@ test('提案登记时预留基线：回执与索引都带 baseVersion', async ()
     const created = await propose('基线本', chapterOf(2500));
     assert.equal(created.baseVersion, 1, '★ 基线＝登记那一刻的 latest');
     const meta = h.readJson('基线本/novel.json');
+    assert.equal(meta.chapters['1'].sourceRefs.version, 1, '工具写章链必须记录来源指纹');
+    assert.equal(meta.chapters['1'].sourceRefs.contentHash, sha256(h.read(meta.chapters['1'].path).trimEnd()));
     const entry = meta.proposals.find((x) => x.id === created.id);
     assert.equal(entry.baseVersion, 1, '索引与提案文件两处都要写，否则 apply 无从判断');
     const file = h.readJson(`基线本/.novel/proposals/${created.id}.json`);
@@ -124,7 +127,38 @@ test('基线一致的提案正常应用（守卫不许把活路一起堵死）',
     const applied = await applyProposal(h.io(), '正常本', created.id, CFG, 'user');
     assert.equal(applied.status, 'applied');
     assert.equal(applied.version, 2);
-    assert.equal(h.readJson('正常本/novel.json').chapters['1'].latest, 2);
+    const meta = h.readJson('正常本/novel.json');
+    assert.equal(meta.chapters['1'].latest, 2);
+    assert.equal(meta.chapters['1'].sourceRefs.contentHash, sha256(h.read(meta.chapters['1'].path).trimEnd()),
+        '提案应用链也必须刷新本版正文指纹');
+});
+
+test('★ 三路合并：允许基于已确认的当前稿应用，版本/哈希不符则不改提案状态', async () => {
+    await bookWithChapter1('合并本');
+    const created = await propose('合并本', chapterOf(2500));
+    await h.tool('novel_write_chapter').execute({
+        book: '合并本', chapter: 1, title: '初稿', content: chapterOf(2600), summary: '当前稿', force: true,
+    }, h.exec);
+    const detail = await readProposal(h.io(), '合并本', created.id);
+    assert.equal(detail.baseVersion, 1);
+    assert.equal(detail.latestVersion, 2);
+    assert.ok(detail.baseContent.length > 0 && detail.currentContent.length > 0);
+
+    await assert.rejects(() => applyProposal(h.io(), '合并本', created.id, CFG, 'user', {
+        mergedContent: `${detail.currentContent}\n\n合并新增段。`, expectedVersion: 2, expectedHash: '0'.repeat(16),
+    }), /当前正文已变化/);
+    let meta = h.readJson('合并本/novel.json');
+    assert.equal(meta.chapters['1'].latest, 2);
+    assert.equal(meta.proposals.find((x) => x.id === created.id).status, 'pending', '冲突不能把提案误判 superseded');
+
+    const applied = await applyProposal(h.io(), '合并本', created.id, CFG, 'user', {
+        mergedContent: `${detail.currentContent}\n\n合并新增段。`, expectedVersion: 2, expectedHash: sha256(h.read(meta.chapters['1'].path)),
+    });
+    assert.equal(applied.version, 3);
+    assert.equal(applied.merged, true);
+    meta = h.readJson('合并本/novel.json');
+    assert.equal(meta.chapters['1'].latest, 3);
+    assert.ok(h.read(meta.chapters['1'].path).includes('合并新增段'));
 });
 
 test('★ 同章已有待批提案就拒绝再提（面板上不许摆两条互相矛盾的修订）', async () => {

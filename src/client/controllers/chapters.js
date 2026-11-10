@@ -9,7 +9,9 @@ export function createChaptersController(ctx) {
 	const loadChapter = async (no) => {
 		if (!state.selected) return;
 		const mine = ++seq.chapter;
-		state.chapterNo = no; state.discardPending = null; state.saveBlocked = ''; notify();
+		state.chapterNo = no; state.discardPending = null; state.saveBlocked = '';
+		state.reviewVisible = false; state.reviewIssues = []; state.reviewSelectedIssueIds = []; state.reviewChapter = null; state.reviewVersion = null; state.reviewGuidance = '';
+		state.impact = null; state.impactChapter = null; state.impactError = ''; state.proposalMerge = null; notify();
 		try {
 			const text = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/chapters/${no}`);
 			if (mine !== seq.chapter) return; // 期间已切章/切书：丢弃陈旧正文
@@ -33,14 +35,19 @@ export function createChaptersController(ctx) {
 		const no = state.chapterNo;
 		const snapshot = state.draft;
 		try {
-			await apiFetch(`/projects/${encodeURIComponent(bookId)}/chapters/${no}`, {
+			const value = await apiFetch(`/projects/${encodeURIComponent(bookId)}/chapters/${no}`, {
 				// title 不再送占位值：服务端缺省时沿用索引里的原标题（旧实现每次 POST
 				// 都写「第 N 章」，存一次就把真标题抹掉一次）。
 				method: 'POST', body: JSON.stringify({ text: snapshot, ...(force ? { force: true } : {}) }),
 			});
+			const affectedCount = value?.impact?.affected?.length ?? 0;
+			if (state.selected === bookId && state.chapterNo === no) {
+				state.impact = value?.impact ?? null; state.impactChapter = value?.impact ? no : null;
+				state.reviewVisible = false; state.reviewIssues = []; state.reviewSelectedIssueIds = []; state.reviewChapter = null; state.reviewVersion = null;
+			}
 			if (state.selected === bookId && state.chapterNo === no && state.draft === snapshot) {
 				state.saveBlocked = '';
-				state.notice = `已保存：第 ${no} 章`;
+				state.notice = `已保存：第 ${no} 章${affectedCount > 0 ? `；${affectedCount} 个后章需要复核（不会自动重写）` : ''}`;
 				state.baseline = snapshot; state.draftModified = false; state.undoStack = [];
 			} else {
 				state.notice = `已保存：第 ${no} 章——但编辑器已切走或继续改动，当前改动仍未保存`;
@@ -58,6 +65,20 @@ export function createChaptersController(ctx) {
 		notify();
 	};
 
+	const loadImpact = async () => {
+		if (!state.selected || state.impactLoading) return;
+		const bookId = state.selected; const no = state.chapterNo;
+		state.impactLoading = true; state.impactError = ''; notify();
+		try {
+			const value = await apiFetch(`/projects/${encodeURIComponent(bookId)}/chapters/${no}/impact`);
+			if (state.selected === bookId && state.chapterNo === no) { state.impact = value; state.impactChapter = no; }
+		} catch (error) {
+			if (state.selected === bookId && state.chapterNo === no) state.impactError = String(error?.message ?? error);
+		} finally {
+			if (state.selected === bookId && state.chapterNo === no) { state.impactLoading = false; notify(); }
+		}
+	};
+
 	const exportProject = async () => {
 		if (!state.selected) return;
 		state.exporting = true; notify();
@@ -73,5 +94,5 @@ export function createChaptersController(ctx) {
 		finally { state.exporting = false; notify(); }
 	};
 
-	return { loadChapter, saveChapter, exportProject };
+	return { loadChapter, saveChapter, loadImpact, exportProject };
 }

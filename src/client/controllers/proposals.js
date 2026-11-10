@@ -2,6 +2,7 @@
 // 从 panel.js 的 createForgeController 按域拆出；应用后要刷目录与正文，
 // 因此经 ctx 晚绑定调用 ctx.loadChapterList / ctx.loadChapter（不直接 import，解环）。
 import { apiFetch } from '../api.js';
+import { buildThreeWayMerge, mergedText } from '../../../lib/paragraph-merge.js';
 
 export function createProposalsController(ctx) {
 	const { state, notify, seq } = ctx;
@@ -16,6 +17,27 @@ export function createProposalsController(ctx) {
 			const value = await apiFetch(`/projects/${encodeURIComponent(bookId)}/proposals`);
 			if (mine !== seq.open) return; // 期间已切书：丢弃陈旧提案队列
 			state.proposals = Array.isArray(value?.proposals) ? value.proposals : [];
+			state.extractionProposals = Array.isArray(value?.extractionProposals) ? value.extractionProposals : [];
+			const edits = { ...state.extractionEdits };
+			const selected = { ...state.extractionSelected };
+			for (const proposal of state.extractionProposals) {
+				edits[proposal.id] = { ...(edits[proposal.id] ?? {}) };
+				for (const item of proposal.items ?? []) {
+					if (item.status !== 'pending') {
+						delete edits[proposal.id][item.id];
+						delete selected[`${proposal.id}:${item.id}`];
+						continue;
+					}
+					if (!edits[proposal.id][item.id]) {
+						edits[proposal.id][item.id] = {
+							name: item.name, content: item.content, aliases: (item.aliases ?? []).join('、'),
+							keywords: (item.keywords ?? []).join('、'), always: item.always === true, priority: item.priority ?? 50,
+						};
+					}
+					if (selected[`${proposal.id}:${item.id}`] === undefined) selected[`${proposal.id}:${item.id}`] = true;
+				}
+			}
+			state.extractionEdits = edits; state.extractionSelected = selected;
 		} catch (error) {
 			// 加载失败 ≠ 没有待批：必须留痕可辨（2026-09-23 真机教训——失败曾被静默
 			// 渲染成「没有待批的修订」，用户盯着空列表误以为提案被吞了几天）
@@ -24,50 +46,139 @@ export function createProposalsController(ctx) {
 		finally { if (mine === seq.open) { state.proposalsLoading = false; notify(); } }
 	};
 
-	/** 应用提案：生成新版本（旧版保留），审计 actor 记 'user'。 */
-	const applyProposalAction = async (proposalId) => {
-		if (!state.selected || !proposalId) return;
-		// 跨书竞态守卫（CodeBuddy 审计 2026-10-09）：应用请求可能很慢，期间用户切书，
-		// 迟到的写回会把 A 书的 notice/gateNotice/编辑器状态挂到 B 书头上。
+	const updateExtractionEdit = (proposalId, itemId, field, value) => {
+		const current = state.extractionEdits[proposalId]?.[itemId];
+		if (!current) { state.error = '找不到要编辑的档案候选'; notify(); return; }
+		current[field] = value;
+	};
+
+	const toggleExtractionItem = (proposalId, itemId, checked) => {
+		if (!state.extractionEdits[proposalId]?.[itemId]) { state.error = '找不到要选择的档案候选'; notify(); return; }
+		state.extractionSelected[`${proposalId}:${itemId}`] = checked;
+	};
+
+	const applyExtraction = async (proposalId) => {
+		const proposal = state.extractionProposals.find((entry) => entry.id === proposalId);
+		if (!state.selected || !proposal) { state.error = '找不到要应用的档案抽取提案'; notify(); return; }
+		const items = (proposal.items ?? []).filter((item) => item.status === 'pending'
+			&& state.extractionSelected[`${proposalId}:${item.id}`] === true).map((item) => {
+			const edit = state.extractionEdits[proposalId]?.[item.id];
+			return {
+				id: item.id, name: String(edit?.name ?? '').trim(), content: String(edit?.content ?? '').trim(),
+				aliases: String(edit?.aliases ?? '').split(/[,，、]/).map((value) => value.trim()).filter(Boolean),
+				keywords: String(edit?.keywords ?? '').split(/[,，、]/).map((value) => value.trim()).filter(Boolean),
+				always: edit?.always === true, priority: Number(edit?.priority ?? 50),
+			};
+		});
+		if (items.length === 0) { state.error = '至少勾选一条档案候选'; notify(); return; }
 		const bookId = state.selected;
-		state.proposalBusy = proposalId; state.error = ''; notify();
+		state.extractionBusy = proposalId; state.error = ''; notify();
 		try {
-			const value = await apiFetch(`/projects/${encodeURIComponent(bookId)}/proposals/${encodeURIComponent(proposalId)}/apply`, { method: 'POST' });
-			if (state.selected !== bookId) return; // 已切书：结果作废，不污染新书状态
-			state.notice = `已应用提案 ${proposalId}：第${value.chapter}章 v${value.version}（旧版保留）`;
+			const value = await apiFetch(`/projects/${encodeURIComponent(bookId)}/extraction-proposals/${encodeURIComponent(proposalId)}/apply`, {
+				method: 'POST', body: JSON.stringify({ items }),
+			});
+			state.notice = `已应用 ${value.count} 条档案候选；未勾选项仍留在提案中`;
+			await Promise.all([loadProposals(bookId), ctx.loadElements(bookId)]);
+		} catch (error) {
+			if (state.selected === bookId) state.error = String(error?.message ?? error);
+			await Promise.all([loadProposals(bookId), ctx.loadElements(bookId)]);
+		}
+		finally { if (state.selected === bookId) { state.extractionBusy = null; notify(); } }
+	};
+
+	const finishApply = async (bookId, proposalId, value, { merged = false } = {}) => {
+		if (state.selected !== bookId) return; // 已切书：结果作废，不污染新书状态
+		state.notice = `已${merged ? '应用逐段合并稿' : '应用提案'} ${proposalId}：第${value.chapter}章 v${value.version}（旧版保留）`;
 			// 服务端已把这版正文过了一遍内容门禁（lib/proposals.js）：应用是用户主权不拦，
 			// 但「改出了死人复活/隐藏人物泄底」必须当场看见。gate 为 null = 门禁输入读不到，跳过。
-			const gate = value.gate;
-			state.gateNotice = gate && ((gate.blocking?.length ?? 0) > 0 || (gate.warnings?.length ?? 0) > 0)
-				? { chapter: value.chapter, version: value.version, ...gate }
-				: null;
-			if (state.gateNotice) {
-				const bits = [...(state.gateNotice.blocking ?? []), ...(state.gateNotice.warnings ?? [])];
-				state.notice += ` ⚠ 门禁提示 ${bits.length} 条（详见下方）`;
-			}
-			await Promise.all([loadProposals(bookId), ctx.loadChapterList(bookId)]);
-			if (state.selected !== bookId) return;
+		const gate = value.gate;
+		state.gateNotice = gate && ((gate.blocking?.length ?? 0) > 0 || (gate.warnings?.length ?? 0) > 0)
+			? { chapter: value.chapter, version: value.version, ...gate }
+			: null;
+		if (state.gateNotice) {
+			const bits = [...(state.gateNotice.blocking ?? []), ...(state.gateNotice.warnings ?? [])];
+			state.notice += ` ⚠ 门禁提示 ${bits.length} 条（详见下方）`;
+		}
+		state.proposalMerge = null; state.proposalDetail = null;
+		await Promise.all([loadProposals(bookId), ctx.loadChapterList(bookId)]);
+		if (state.selected !== bookId) return;
 			// 提示与正文必须对齐：应用的是第 N 章，编辑器却停在第一章，会出现
 			// 「本章编辑」区挂着第 N 章的提示、下面却是第 1 章的怪相。故把编辑器切到被改的那一章：
 			//   · 正开着该章 → 重新载入取新版本（旧分支行为不变）；
 			//   · 别的章有未保存草稿 → 不静默丢弃，挂起交给视图的「丢弃改动 / 取消」；
 			//   · 否则直接切过去。
-			const targetChapter = Number(value.chapter);
-			if (!Number.isFinite(targetChapter) || targetChapter <= 0) {
+		const targetChapter = Number(value.chapter);
+		if (!Number.isFinite(targetChapter) || targetChapter <= 0) {
 				// 服务端没回章号 = 拿不到目标章，别猜（Number(undefined)=NaN 会切到幽灵章）
 				state.notice += '；未拿到被改的章号，编辑器未切换';
 				console.warn('[novel-forge] 应用提案返回的 chapter 非法：', value.chapter);
-			} else if (state.chapterNo === targetChapter) {
-				await ctx.loadChapter(targetChapter);
-			} else if (state.draftModified) {
-				state.discardPending = { kind: 'chapter', no: targetChapter };
-				state.notice += `；第 ${state.chapterNo} 章有未保存改动，确认后切到第 ${targetChapter} 章`;
-			} else {
-				await ctx.loadChapter(targetChapter);
-				state.notice += `；已切到第 ${targetChapter} 章`;
-			}
+		} else if (state.chapterNo === targetChapter) {
+			await ctx.loadChapter(targetChapter);
+		} else if (state.draftModified) {
+			state.discardPending = { kind: 'chapter', no: targetChapter };
+			state.notice += `；第 ${state.chapterNo} 章有未保存改动，确认后切到第 ${targetChapter} 章`;
+		} else {
+			await ctx.loadChapter(targetChapter);
+			state.notice += `；已切到第 ${targetChapter} 章`;
+		}
+		state.impact = value.impact ?? null; state.impactChapter = value.impact ? targetChapter : null;
+		if ((value.impact?.affected?.length ?? 0) > 0) state.notice += `；${value.impact.affected.length} 个后章需要复核（不会自动重写）`;
+	};
+
+	const runApply = async (proposalId, request, options = {}) => {
+		if (!state.selected || !proposalId) return;
+		const bookId = state.selected;
+		state.proposalBusy = proposalId; state.error = ''; notify();
+		try {
+			const value = await request(bookId);
+			await finishApply(bookId, proposalId, value, options);
 		} catch (error) { if (state.selected === bookId) state.error = String(error?.message ?? error); }
 		finally { state.proposalBusy = null; notify(); }
+	};
+
+	/** 应用提案：生成新版本（旧版保留），审计 actor 记 'user'。 */
+	const applyProposalAction = async (proposalId) => runApply(proposalId,
+		(bookId) => apiFetch(`/projects/${encodeURIComponent(bookId)}/proposals/${encodeURIComponent(proposalId)}/apply`, { method: 'POST' }));
+
+	const prepareProposalMerge = async (proposalId) => {
+		const detail = state.proposalDetail;
+		if (!proposalId || detail?.id !== proposalId || !detail.data) { state.error = '先展开提案全文，再打开逐段合并'; notify(); return; }
+		const data = detail.data;
+		if (state.draftModified && state.chapterNo === Number(data.chapter)) {
+			state.error = '当前章有未保存改动——先保存或丢弃，再进行三路合并'; notify(); return;
+		}
+		if (typeof data.baseContent !== 'string' || typeof data.currentContent !== 'string'
+			|| !Number.isInteger(data.latestVersion) || typeof data.currentHash !== 'string') {
+			state.error = '缺少提案基线或当前正文，无法安全三路合并；旧提案可通读全文后丢弃重提'; notify(); return;
+		}
+		const merged = buildThreeWayMerge(data.baseContent, data.content, data.currentContent);
+		state.proposalMerge = {
+			id: proposalId, rows: merged.rows, selections: {}, conflicts: merged.conflicts,
+			currentVersion: data.latestVersion, currentHash: data.currentHash,
+		};
+		notify();
+	};
+
+	const chooseMergeParagraph = (proposalId, rowId, choice) => {
+		const merge = state.proposalMerge;
+		if (!merge || merge.id !== proposalId || !merge.rows.some((row) => row.id === rowId) || !['base', 'proposal', 'current'].includes(choice)) {
+			state.error = '逐段选择参数不完整，未修改合并稿'; notify(); return;
+		}
+		merge.selections = { ...merge.selections, [rowId]: choice }; notify();
+	};
+
+	const applyMergedProposal = async (proposalId) => {
+		const merge = state.proposalMerge;
+		if (!merge || merge.id !== proposalId) { state.error = '合并稿已关闭或属于另一条提案'; notify(); return; }
+		if (state.draftModified && state.chapterNo === Number(state.proposalDetail?.data?.chapter)) {
+			state.error = '当前章有未保存改动——先保存或丢弃，再应用合并稿'; notify(); return;
+		}
+		const content = mergedText(merge.rows, merge.selections);
+		if (content.trim() === '') { state.error = '合并稿为空，未提交'; notify(); return; }
+		await runApply(proposalId, (bookId) => apiFetch(
+			`/projects/${encodeURIComponent(bookId)}/proposals/${encodeURIComponent(proposalId)}/merge`,
+			{ method: 'POST', body: JSON.stringify({ content, currentVersion: merge.currentVersion, currentHash: merge.currentHash }) },
+		), { merged: true });
 	};
 
 	/** 丢弃提案：正文不动，提案转 discarded（同样只从面板触发）。 */
@@ -94,10 +205,10 @@ export function createProposalsController(ctx) {
 		}
 		// 再点一次收起
 		if (state.proposalDetail?.id === proposalId && !state.proposalDetail.loading) {
-			state.proposalDetail = null; notify();
+			state.proposalDetail = null; state.proposalMerge = null; notify();
 			return;
 		}
-		state.proposalDetail = { id: proposalId, loading: true, data: null, error: '' }; notify();
+		state.proposalDetail = { id: proposalId, loading: true, data: null, error: '' }; state.proposalMerge = null; notify();
 		try {
 			const value = await apiFetch(`/projects/${encodeURIComponent(state.selected)}/proposals/${encodeURIComponent(proposalId)}`);
 			if (state.proposalDetail?.id !== proposalId) return; // 期间已点别条/换书：丢弃陈旧响应
@@ -119,5 +230,8 @@ export function createProposalsController(ctx) {
 		loadProposals(state.selected);
 	};
 
-	return { loadProposals, applyProposalAction, discardProposalAction, toggleProposalDetail, refreshProposalsIfIdle };
+	return {
+		loadProposals, updateExtractionEdit, toggleExtractionItem, applyExtraction, applyProposalAction, prepareProposalMerge, chooseMergeParagraph, applyMergedProposal,
+		discardProposalAction, toggleProposalDetail, refreshProposalsIfIdle,
+	};
 }
