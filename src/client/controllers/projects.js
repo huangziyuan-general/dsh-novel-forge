@@ -394,6 +394,8 @@ export function createProjectsController(ctx) {
 			const delta = Number(value?.deltaChars ?? 0);
 			state.notice = `${what}完成：提案 ${value.proposalId}（${value.chars} 字，改动 ${delta >= 0 ? '+' : ''}${delta}）—— 到「待批准提案」里点应用才生效`;
 				if (value.replayed === true) state.notice += '；已回放首次成功回执，未重复调用模型';
+				const warnings = Array.isArray(value.warnings) ? value.warnings.filter((warning) => typeof warning === 'string' && warning !== '') : [];
+				if (warnings.length > 0) state.notice += `；注意：${warnings.join('；')}`;
 				clearRetry(revisionRetry);
 				if (filtered) {
 					state.reviewVisible = false; state.reviewIssues = []; state.reviewSelectedIssueIds = []; state.reviewVersion = null; state.reviewChapter = null; state.reviewGuidance = '';

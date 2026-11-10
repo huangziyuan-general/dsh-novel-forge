@@ -6,7 +6,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runIdempotent, pruneInvocationReceipts } from '../lib/request-idempotency.js';
 import { pruneRecoveryCandidates, readRecoveryCandidate, listRecoveryCandidates } from '../lib/recovery.js';
-import { PRUNED_INDEX_LIMIT, shouldSweep } from '../lib/retention.js';
+import { PRUNED_INDEX_LIMIT } from '../lib/retention.js';
+import { shouldSweep } from '../lib/retention-runtime.js';
 import { pathsFor } from '../lib/store.js';
 
 /**
@@ -198,6 +199,49 @@ test('retention: 删除撞 FS_STALE_VERSION 跳过，绝不删有效数据', asy
     const sweep = await pruneInvocationReceipts(io, p, { keepNewest: 1, maxAgeDays: 30, now: NOW });
     assert.deepEqual(sweep, { scanned: 2, pruned: 0 });
     assert.equal(JSON.parse(io.files.get(p.invocation('receipt-e'))).status, 'done', '有效回执不得被删');
+});
+
+test('retention: 墓碑回执撞并发写回时跳过，新回执不被覆盖', async () => {
+    const io = memIo();
+    const p = pathsFor('保留书');
+    await seedReceipt(io, p, 'receipt-e', daysAgo(40));
+    const guardedWrite = io.writeJsonAtVersion;
+    let injected = false;
+    io.writeJsonAtVersion = async (path, value, version) => {
+        if (!injected && path === p.invocation('receipt-e') && value.status === 'pruned') {
+            injected = true;
+            await io.writeJson(path, {
+                version: 1, nonce: 'receipt-e', operation: 'test-write', fingerprint: 'new', status: 'done',
+                response: { ok: true, fresh: true }, createdAt: NOW.toISOString(),
+            });
+        }
+        return guardedWrite(path, value, version);
+    };
+    const sweep = await pruneInvocationReceipts(io, p, { keepNewest: 0, maxAgeDays: 0, now: NOW });
+    assert.deepEqual(sweep, { scanned: 1, pruned: 0 });
+    assert.equal(injected, true);
+    assert.equal(JSON.parse(io.files.get(p.invocation('receipt-e'))).response.fresh, true);
+});
+
+test('retention: 墓碑恢复候选撞并发写回时跳过，新候选不被覆盖', async () => {
+    const io = memIo();
+    const p = pathsFor('保留书');
+    await io.writeJson(p.recoveryCandidate('R1'), {
+        version: 1, id: 'R1', status: 'failed', partialText: 'old', updatedAt: daysAgo(40),
+    });
+    const guardedWrite = io.writeJsonAtVersion;
+    let injected = false;
+    io.writeJsonAtVersion = async (path, value, version) => {
+        if (!injected && path === p.recoveryCandidate('R1') && value.status === 'pruned') {
+            injected = true;
+            await io.writeJson(path, { version: 1, id: 'R1', status: 'generated', partialText: 'fresh', updatedAt: NOW.toISOString() });
+        }
+        return guardedWrite(path, value, version);
+    };
+    const sweep = await pruneRecoveryCandidates(io, p, { keepNewest: 0, maxAgeDays: 0, now: NOW });
+    assert.deepEqual(sweep, { scanned: 1, pruned: 0 });
+    assert.equal(injected, true);
+    assert.equal(JSON.parse(io.files.get(p.recoveryCandidate('R1'))).partialText, 'fresh');
 });
 
 test('retention: 恢复候选真删后靠有界索引维持「已清理 / 从未存在」区分', async () => {

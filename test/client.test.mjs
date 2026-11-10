@@ -1558,7 +1558,7 @@ test('★ 审稿项筛选：真实复选框驱动选择，未选项与指导按�
             { id: 'I1', paragraph: 1, issues: ['第一段问题'] },
             { id: 'I2', paragraph: 2, issues: ['第二段问题'] },
         ] } },
-        { value: { proposalId: 'P2', chars: 100, deltaChars: 2, warnings: [] } },
+        { value: { proposalId: 'P2', chars: 100, deltaChars: 2, warnings: ['幂等回执未落盘'] } },
         { value: { proposals: [] } },
     ]);
     const dom = createDom();
@@ -1590,6 +1590,7 @@ test('★ 审稿项筛选：真实复选框驱动选择，未选项与指导按�
     assert.equal(body.chapterVersion, 4);
     assert.equal(body.guidance, '只收第二段，别动结尾');
     assert.ok(!body.selectedIssueIds.includes('I1'), '未选意见不得发往服务端');
+    assert.match(controller.state.notice, /幂等回执未落盘/, '成功响应里的警示必须在面板可见');
 });
 
 test('★ 持久批注：真实解决/重开按钮提交 data-id 与 data-choice', async () => {
