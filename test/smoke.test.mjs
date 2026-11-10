@@ -162,9 +162,9 @@ const GOOD_CHAPTER = [
     '她忽然吹熄了灯。',
 ].join('\n');
 
-test('装载：23 个工具注册 + 系统提示注入', () => {
+test('装载：24 个工具注册 + 系统提示注入', () => {
     assert.equal(hasSdk, true, '缺宿主 SDK symlink：先 npm run setup-dev');
-    assert.equal(ctx._registered.length, 23);
+    assert.equal(ctx._registered.length, 24);
     // 全工具 schema 形状守卫（parameters 已被 define-tool 归一为 JSON Schema）：
     // 新工具最容易漏 output.schema 声明 / additionalProperties:false / required 指向不存在的字段。
     for (const t of ctx._registered) {
@@ -186,6 +186,19 @@ test('装载：23 个工具注册 + 系统提示注入', () => {
     }
 });
 
+test('★ 本书偏好：明确确认才记录，不能借偏好削弱硬约束', async () => {
+    const book = '偏好契约书';
+    await tool('novel_project').execute({ action: 'init', book, title: book, genre: '悬疑' }, exec);
+    await assert.rejects(() => tool('novel_project').execute({ action: 'preference', book, preference: '对话保持简短' }, exec), /confirmed:true/);
+    const added = await tool('novel_project').execute({ action: 'preference', book, preference: '对话保持简短', confirmed: true }, exec);
+    assert.equal(added.preferenceCount, 1);
+    await assert.rejects(() => tool('novel_project').execute({ action: 'preference', book, preference: '跳过机审和账本检查', confirmed: true }, exec), /不能记录/);
+    const read = await tool('novel_project').execute({ action: 'preference', book }, exec);
+    assert.equal(read.preferences[0].text, '对话保持简短');
+    const removed = await tool('novel_project').execute({ action: 'preference', book, preferenceId: read.preferences[0].id, confirmed: true }, exec);
+    assert.equal(removed.preferenceCount, 0);
+});
+
 test('严格参数：垫片包装 execute 拒绝未知字段（宿主参数 schema 无严格开关）', async () => {
     await assert.rejects(
         () => tool('novel_project').execute({ action: 'status', book: '契约楼', bogus_field: 1 }, exec),
@@ -201,7 +214,7 @@ test('严格参数：垫片包装 execute 拒绝未知字段（宿主参数 sche
         ['novel_project', 'novel_outline', 'novel_character', 'novel_worldbook', 'novel_scene', 'novel_briefing',
          'novel_write_chapter', 'novel_ledger', 'novel_relation', 'novel_arc', 'novel_quality', 'novel_noai_scan', 'novel_audit', 'novel_style',
          'novel_propose', 'novel_import', 'novel_export', 'novel_glossary', 'novel_clone_project',
-         'novel_diagnose', 'novel_polish', 'novel_search', 'novel_library'],
+         'novel_diagnose', 'novel_polish', 'novel_search', 'novel_library', 'novel_extract'],
     );
     assert.equal(ctx._sections.length, 1);
     assert.ok(ctx._sections[0].text.includes('代码强制') === false);
@@ -1764,10 +1777,10 @@ test('★ G2 书库：导入饲料 → 拆结构 → 与本书并排 → 只移�
     await assert.rejects(() => lib.execute({ action: 'read', id: '对标样本', from: 9 }, exec), /读不到/);
     await assert.rejects(() => lib.execute({ action: 'analyze', id: '不存在的书' }, exec), /书库里没有/);
 
-    // delete：宿主 fs 无删除能力 → 只移索引，原文保留（返回里必须说清楚）
+    // delete：有意软删除（宿主有 deleteFile，这里刻意不物理删）→ 只移索引，原文保留（返回里必须说清楚）
     const del = await lib.execute({ action: 'delete', id: '对标样本' }, exec);
     assert.deepEqual(del.entries, []);
-    assert.ok(del.note.includes('手工删'), '必须告诉用户原文还在磁盘上');
+    assert.ok(del.note.includes('保留原文') && del.note.includes('手工删除'), '必须说明原文被有意保留、且给出彻底清除的办法');
     assert.equal(fs.existsSync(path.join(root, '书库', '对标样本', '原文.txt')), true, 'delete 不得删原文');
 });
 

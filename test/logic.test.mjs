@@ -922,6 +922,31 @@ test('continuity: 伏笔倒挂/超期/重复 id、索引缺文件、账本同章
     assert.ok(!noCards.issues.some((i) => i.code === 'character-card-missing'), '不传 castCards 就不查卡');
 });
 
+test('continuity: 账本锚点章已不在索引里 → warning 且不阻断', () => {
+    const chapter = (n) => ({
+        title: `c${n}`, path: `b/第${n}章-c-v1.md`, latest: 1,
+        files: [{ file: `b/第${n}章-c-v1.md` }], summary: 's',
+    });
+    // 第 2 章被删掉（或改号），但账本里仍有锚在第 2 章的记录
+    const deleted = validateContinuity({
+        novel: { cast: [], chapters: { 1: chapter(1), 3: chapter(3) } },
+        facts: [{ entity: '甲', key: '境界', value: '筑基', chapter: 2 }],
+    });
+    const orphan = deleted.issues.filter((i) => i.code === 'ledger-orphan-chapter');
+    assert.equal(orphan.length, 1, '同一章只报一条');
+    assert.equal(orphan[0].severity, 'warning', '锚点缺失只能 warning');
+    assert.match(orphan[0].message, /第2章/);
+    assert.match(orphan[0].message, /甲\.境界/);
+    assert.equal(deleted.ok, true, 'warning 不得把体检判成失败，更不得阻断写章');
+
+    // 正常连续书：零误报
+    const normal = validateContinuity({
+        novel: { cast: [], chapters: { 1: chapter(1), 2: chapter(2) } },
+        facts: [{ entity: '甲', key: '境界', value: '筑基', chapter: 2 }],
+    });
+    assert.ok(!normal.issues.some((i) => i.code === 'ledger-orphan-chapter'), '正常书零误报');
+});
+
 // ── 第二批融合 C2/C3：四维内容门禁 ──────────────────────────────────────────
 
 test('content-gate: 死人复活阻断；账本旧值仍在用则警告', () => {
@@ -2413,6 +2438,11 @@ test('★ cloneProject（lib/clone.js 共享核心）：章节资产全带走、
     files.set('源书/设定/世界书.json', '[]');
     files.set('源书/账本/facts.json', '{}');
     files.set('源书/人物/主角.md', '人物卡');
+    files.set('源书/设定/故事承诺书.md', '承诺');
+    files.set('源书/.novel/reader-promises.json', '{"schemaVersion":1,"items":[]}');
+    files.set('源书/.novel/preferences.json', '{"schemaVersion":1,"items":[]}');
+    files.set('源书/.novel/annotations.json', '{"schemaVersion":1,"chapters":{}}');
+    files.set('源书/.novel/extraction-proposals.json', '{"schemaVersion":1,"proposals":[]}');
 
     const v = await cloneProject(io, { fromBook: '源书', newBook: '新书', session: 'sess-面板' });
     assert.equal(v.action, 'clone');
@@ -2431,6 +2461,11 @@ test('★ cloneProject（lib/clone.js 共享核心）：章节资产全带走、
     assert.ok(files.get('新书/设定/世界书.json') !== undefined, '世界书复制');
     assert.ok(files.get('新书/账本/facts.json') !== undefined, '账本复制');
     assert.ok(files.get('新书/人物/主角.md')?.includes('人物卡'), '人物卡复制');
+    assert.equal(files.get('新书/设定/故事承诺书.md'), '承诺', '故事承诺书属于设定，应随模板复制');
+    assert.ok(files.get('新书/.novel/reader-promises.json') !== undefined, '结构化承诺清单与承诺书一起复制');
+    assert.ok(files.get('新书/.novel/preferences.json') !== undefined, '本书作者偏好随模板复制');
+    assert.equal(files.get('新书/.novel/annotations.json'), undefined, '审稿处理状态不带进新模板');
+    assert.equal(files.get('新书/.novel/extraction-proposals.json'), undefined, '待批抽取提案不带进新模板');
     assert.ok(files.get('新书/.novel/audit.jsonl')?.includes('project/clone'), '审计落新书');
 
     // 防呆：同名 / 目标已存在 / 源不存在

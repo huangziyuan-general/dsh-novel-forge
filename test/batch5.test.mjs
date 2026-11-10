@@ -16,7 +16,7 @@ import {
 } from '../lib/engine.js';
 import {
     buildPolishPrompt, buildProofreadPrompt, extractChapterText, parseTags,
-    GUARD_PROFILES, POLISH_SYSTEM, PROOFREAD_SYSTEM, runRevisionTask, runAnnotateTask,
+    GUARD_PROFILES, POLISH_SYSTEM, PROOFREAD_SYSTEM, runRevisionTask, runAnnotateTask, polishIssues,
 } from '../lib/engine-tasks.js';
 import {
     bigrams, ftsQuery, chunkChapter, hashChunk, makeSnippet, hitRatio,
@@ -293,6 +293,7 @@ test('engine: 重试策略——限流退避重试、鉴权不重试、空输出
     const e4 = createEngine({ ctx: ctxWith(cut), config: {}, sleep: noSleep });
     const r4 = await e4.run('polish', {});
     assert.equal(r4.error.code, 'TRUNCATED');
+    assert.equal(r4.partialText, '半截', '截断正文必须交回调用方做恢复候选');
     assert.equal(cut.count, 1, '截断重试也会截断——一次就够，交回调用方拆批');
 });
 
@@ -351,6 +352,7 @@ test('engine-tasks: 提示词带病灶与禁项；校对档守卫比润色档严
         content: '原文。',
         issues: [{ paragraph: 2, chars: 260, aiScore: 55, issues: ['段落过长（260 字）'] }],
         forbidden: ['香炉', '陆寒'],
+        guidance: '只收紧第二场，别动结尾。',
     });
     assert.match(p, /第 7 章/);
     assert.match(p, /¶2/);
@@ -358,6 +360,7 @@ test('engine-tasks: 提示词带病灶与禁项；校对档守卫比润色档严
     assert.match(p, /本章禁项/);
     assert.match(p, /香炉/);
     assert.match(p, /原文。/);
+    assert.match(p, /只收紧第二场/);
 
     const q = buildProofreadPrompt({ chapter: 1, title: 'T', content: '正文' });
     assert.match(q, /正文/);
@@ -367,6 +370,30 @@ test('engine-tasks: 提示词带病灶与禁项；校对档守卫比润色档严
     assert.ok(GUARD_PROFILES.proofread.minSim > GUARD_PROFILES.polish.minSim, '校对的「同源」要求更严');
     assert.match(POLISH_SYSTEM, /标题原样保留/);
     assert.match(PROOFREAD_SYSTEM, /不许改动句式/);
+});
+
+test('engine-tasks: 审稿项 ID 稳定；上下文超限只裁可选项且保留原稿/禁项/指导', async () => {
+    const original = '第一章 雪夜\n\n她坐在灯下，把刀横在膝上，听着外面的橹声一遍遍地响。';
+    const issues = polishIssues(`${original}\n\n${'他看见雨。'.repeat(80)}\n\n${'她听见风。'.repeat(80)}`, { top: 3 });
+    assert.ok(issues.length >= 2, '测试需要至少两条可选病灶');
+    assert.deepEqual(issues.map((x) => x.id), polishIssues(`${original}\n\n${'他看见雨。'.repeat(80)}\n\n${'她听见风。'.repeat(80)}`, { top: 3 }).map((x) => x.id));
+    const prompts = [];
+    const engine = { run: async (_channel, request) => {
+        prompts.push(request.prompt);
+        if (prompts.length === 1) return { ok: false, attempts: 1, route: null, error: { code: 'CONTEXT_WINDOW_EXCEEDED', message: 'too large' } };
+        return { ok: true, attempts: 1, route: null, text: original, usage: null };
+    } };
+    const book = '修订降载书';
+    const io = memIo({ [`${book}/novel.json`]: JSON.stringify({ title: book, chapters: { 1: { title: '雪夜', latest: 1, files: [{ version: 1, file: `${book}/正文/1.md` }] } }, proposals: [] }) });
+    const result = await runRevisionTask(engine, io, book, {
+        mode: 'polish', chapter: 1, title: '雪夜', content: original, issues,
+        forbidden: ['禁词'], guidance: '保留章末停顿',
+    });
+    assert.equal(result.ok, true);
+    assert.equal(prompts.length, 2);
+    assert.ok(prompts[1].length < prompts[0].length);
+    for (const required of [original, '禁词', '保留章末停顿']) assert.ok(prompts[1].includes(required), `第二次提示词必须保留：${required}`);
+    assert.match(result.warnings.join('\n'), /仅重建一次/);
 });
 
 test('engine-tasks: 润色端到端落提案；改标题被保守守卫拦下（不落提案）', async () => {
@@ -705,6 +732,7 @@ test('batch-draft: 生成失败也持久化错误码、阶段与调用指标', a
                 ok: false, attempts: 2,
                 route: { provider: 'p', model: 'm', source: 'default' },
                 usage: { inputTokens: 30, outputTokens: 0 },
+                partialText: '第1章 雨夜\n\n已经写出但没能完成的一半正文。',
                 error: { code: 'ENGINE_TIMEOUT', message: '模型调用超时', advice: '稍后重试' },
             };
         },
@@ -728,6 +756,49 @@ test('batch-draft: 生成失败也持久化错误码、阶段与调用指标', a
     assert.deepEqual(JSON.parse(io.files.get(p.batchCheckpoint)).records, [record]);
     assert.deepEqual(result.checkpoint.completed, []);
     assert.deepEqual(result.checkpoint.failed, [1]);
+    const recovery = JSON.parse(io.files.get(p.recoveryCandidate(record.recoveryId)));
+    assert.equal(recovery.status, 'failed');
+    assert.match(recovery.partialText, /没能完成的一半正文/);
+    assert.equal(recovery.runId, result.checkpoint.runId);
+    assert.ok(recovery.attemptId.includes('-C1'));
+    assert.match(recovery.sourceHash, /^[0-9a-f]{16}$/);
+    assert.equal(JSON.parse(io.files.get(meta)).chapters?.[1], undefined, '恢复候选绝不自动成为正文');
+});
+
+test('batch-draft: 上下文超限只重建一次，缩减后成功再提交', async () => {
+    const book = '上下文重建书';
+    const meta = `${book}/novel.json`;
+    const world = Array.from({ length: 12 }, (_unused, index) => ({
+        id: `W${index + 1}`, title: `设定${index + 1}`, content: `第${index + 1}组可选背景。`.repeat(300),
+    }));
+    const io = memIo({
+        [meta]: JSON.stringify({ title: book, stage: 'chapter', phases: {}, approvals: { outline: { 1: true } }, chapters: {}, cast: ['测试角色'], proposals: [], gateFailures: {} }),
+        [`${book}/大纲/细纲/第1章.md`]: '# 第1章 雪夜\n\n- 码头相遇：她在雾里认出暗号。',
+        [`${book}/人物/测试角色.md`]: '角色经历与关系。'.repeat(1500),
+        [`${book}/设定/世界书.json`]: JSON.stringify(world),
+        [`${book}/设定/场景契约.json`]: JSON.stringify({
+            1: { scene: '码头', participants: ['测试角色'], hidden: [], settings: world.map((entry) => entry.id), forbidden: [], notes: '' },
+        }),
+    });
+    const prompts = [];
+    const engine = {
+        async run(_channel, { prompt }) {
+            prompts.push(prompt);
+            if (prompts.length === 1) return { ok: false, attempts: 1, partialText: ' discarded ', error: { code: 'CONTEXT_WINDOW_EXCEEDED', message: 'too large', advice: 'reduce' } };
+            return { ok: true, attempts: 1, text: CHAPTER_TEXTS[1], route: null, usage: null };
+        },
+    };
+    const p = pathsFor(book);
+    const result = await runDraftBatch({ engine, config: TEST_CFG, io, p, book, novel: JSON.parse(io.files.get(meta)), from: 1, count: 1 });
+    assert.equal(prompts.length, 2, '只允许一次缩减重建');
+    assert.ok(prompts[1].length < prompts[0].length, '第二次必须真的减载，不是原样重试');
+    assert.equal(result.results[0].committed, true);
+    assert.equal(result.checkpoint.records[0].attempts, 2);
+    assert.match(result.results[0].warnings.join('\n'), /按字符从 4000 缩到 3000/);
+    const candidates = [...io.files.keys()].filter((name) => name.includes('/.novel/recovery/'));
+    const saved = JSON.parse(io.files.get(candidates[0]));
+    assert.equal(saved.status, 'committed');
+    assert.equal(saved.partialText, '', '已提交候选不保留一份可误恢复的旧正文');
 });
 
 test('★ batch-draft: 会话纪律段不进起草提示词（旁路引擎没有 novel_* 工具可调，也不会向用户汇报）', async () => {

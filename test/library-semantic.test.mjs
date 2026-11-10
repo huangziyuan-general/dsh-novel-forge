@@ -130,3 +130,18 @@ test('semantic: 复用 annotate 真引擎，usage 持久化，伪造引文零报
         harness.cleanup();
     }
 });
+
+test('semantic: JSON 只做一次保守语法修复，标量与引文证据不被改写', async () => {
+    const { parseSemanticDetails } = await import('../lib/library-semantic.js');
+    const expected = validItem({ analysis: '保留，全角：标点与 \"引号”。', transfer: '只学习结构，不换写证据。' });
+    const raw = `说明：下面是结果\n{"items":[{"dimension":"narrative"，"chapter":1，"quote":${JSON.stringify(QUOTE)}，`+
+        `"analysis":${JSON.stringify(expected.analysis)},"transfer":${JSON.stringify(expected.transfer)},}]`;
+    const parsed = parseSemanticDetails(raw, { chapters: selectedFixture(), dimensions: ['narrative'] });
+    assert.equal(parsed.syntaxRepaired, true);
+    assert.deepEqual(parsed.items, [expected]);
+    assert.ok(parsed.syntaxRepairs.includes('punctuation'));
+    assert.ok(parsed.syntaxRepairs.includes('close'));
+
+    const forged = raw.replace(JSON.stringify(QUOTE), JSON.stringify('这段伪造引文长度足够，但是从未在原文出现。'));
+    assert.throws(() => parseSemanticDetails(forged, { chapters: selectedFixture(), dimensions: ['narrative'] }), /逐字找不到/);
+});

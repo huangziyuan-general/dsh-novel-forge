@@ -13,8 +13,7 @@
 | --- | --- | --- |
 | `ctx.tools.register(tool)` | `@deepseek-ai/dsh-tools` | 工具注册 |
 | `defineTool({name, description, parameters, output, isConcurrencySafe, timeoutMs, execute})` | `@deepseek-ai/dsh-tools` | 与 `dsh-files` 0.5.x 同款用法 |
-| `ctx.fs.resolve / stat / readText / writeText` | `@deepseek-ai/dsh-fs` | 全部文件读写走宿主 fs（受沙箱与审批策略约束）；`writeText` 由本地后端自动创建父目录 |
-| 宿主 fs **没有删除面** | `@deepseek-ai/dsh-fs` | **0.12.0 起明确依赖此事实**：FileSystem 服务只有 `resolve / stat / readText / streamText / listDir / writeText`。所以本插件所有「删除」都只能是**软删除**——`novel_library delete` 只移索引、原文留在磁盘（返回里必须说清），`novel_propose prune` 同理只清索引。将来宿主即使补上删除面，书库仍保留软删除语义（饲料删错了没法找回） |
+| `ctx.fs.resolve / stat / readText / writeText / deleteFile` | `@deepseek-ai/dsh-fs` | 全部文件读写走宿主 fs（受沙箱与审批策略约束）；`writeText` 由本地后端自动创建父目录。`deleteFile` 带版本守卫与沙箱围栏、只删普通文件（老宿主可能不带，调用前先 `typeof` 探测）。宿主没有的是**公开的 `mkdir` / `deleteDir`**——空目录随首次写入自动出现。书库与提案的「软删除」是**产品选择**（删错了能找回），不是能力限制：`novel_library delete` 只移索引、原文留在磁盘（返回里说清），`novel_propose prune` 同理 |
 | `ctx.fs.listDir` | `@deepseek-ai/dsh-fs` | 0.2.1 起依赖：`novel_clone_project` 经 `fsio.listNames` 扫描细纲目录（未批准细纲一并复制）。若宿主移除该面，克隆退化为"只复制已批准/已写章" |
 | `ctx.systemPrompt.section({name, order, text})` | 宿主 system-prompt 服务 | 工作流纪律注入 |
 | `exec.agent?.session?.header?.cwd` | 工具执行上下文 | 会话工作目录解析（`dsh-files` 同款） |
