@@ -2,10 +2,17 @@
 // 旁路引擎（润色/校对）、全书体检、黄金三章诊断、批量起草。
 // 从 panel.js 的 createForgeController 按域拆出。跨域动作（章正文、提案、目录）经 ctx
 // 晚绑定调用，避免模块间循环 import。
-import { apiFetch } from '../api.js';
+import { apiFetch, newInvocationNonce } from '../api.js';
 
 export function createProjectsController(ctx) {
 	const { state, notify, syncSession, withSession, seq, player } = ctx;
+	let revisionRetry = { key: '', nonce: '' };
+	let batchRetry = { key: '', nonce: '' };
+	const nonceFor = (slot, key) => {
+		if (slot.key !== key || slot.nonce === '') { slot.key = key; slot.nonce = newInvocationNonce(); }
+		return slot.nonce;
+	};
+	const clearRetry = (slot) => { slot.key = ''; slot.nonce = ''; };
 
 	/** 拉小说基本要素（基本信息标签的展示数据）；缺失要素是常态，失败置空即可。 */
 	const loadElements = async (id) => {
@@ -150,7 +157,10 @@ export function createProjectsController(ctx) {
 		// deleteState 属于「上一本书的删除确认」：漏清会让 B 书的「删除」单击直接生效
 		//（两步确认跨书泄漏）。gateNotice/listDeleting 同理，都是上一本书的残留。
 		state.deleteState = null; state.gateNotice = null; state.saveBlocked = ''; state.listDeleting = false;
-		state.proposals = []; state.proposalsError = null; state.proposalBusy = null; state.proposalDetail = null; // 展开的全文也属于上一本书
+			state.proposals = []; state.extractionProposals = []; state.extractionEdits = {}; state.extractionSelected = {}; state.extractionBusy = null; state.proposalsError = null; state.proposalBusy = null; state.proposalDetail = null; // 展开的全文也属于上一本书
+		state.proposalMerge = null;
+		state.reviewVisible = false; state.reviewIssues = []; state.reviewSelectedIssueIds = []; state.reviewVersion = null; state.reviewChapter = null; state.reviewGuidance = '';
+		state.impact = null; state.impactChapter = null; state.impactError = '';
 		state.copiedHandoff = false; // 交接摘要的「已复制」反馈同样属于上一本书
 		state.rotatePending = false; // 轮换的两段确认同样属于上一本书
 		// 换书：体检结果与批量结果都属于「上一本书」，必须清掉（否则会把 A 书的红字
@@ -354,6 +364,17 @@ export function createProjectsController(ctx) {
 		// 期间切书后迟到的写回会把 A 书的 notice / 提案队列挂到 B 书头上。
 		const bookId = state.selected;
 		const chapterNo = state.chapterNo;
+		const filtered = mode === 'polish' && state.reviewVisible;
+		if (filtered && (state.reviewLoading || state.reviewChapter !== chapterNo || !Number.isInteger(state.reviewVersion))) {
+			state.error = '审稿项尚未加载完成，请稍候或重新打开审稿项'; notify(); return;
+		}
+		const selectedIssueIds = filtered ? [...state.reviewSelectedIssueIds] : null;
+		const guidance = filtered ? state.reviewGuidance.trim() : '';
+		if (filtered && selectedIssueIds.length === 0 && guidance === '') {
+			state.error = '至少勾选一条审稿项，或填写作者指导；未选意见不会进入提示词'; notify(); return;
+		}
+		const retryKey = `${bookId}:${chapterNo}:${mode}:${filtered ? `${state.reviewVersion}:${selectedIssueIds.slice().sort().join(',')}:${guidance}` : 'all'}`;
+		const invocationNonce = nonceFor(revisionRetry, retryKey);
 		state.revising = mode; state.error = ''; state.notice = ''; notify();
 		try {
 			const value = await apiFetch(
@@ -362,16 +383,68 @@ export function createProjectsController(ctx) {
 					method: 'POST', timeoutMs: REVISION_TIMEOUT_MS,
 					// session = 面板锚定的会话 id：服务端拿它找活的父 agent 起子代理
 					// （SubagentStartRequest.parent 必填，缺了宿主直接炸进程——0.13.2 事故）。
-					body: JSON.stringify({ session: state.sessionId ?? undefined }),
+					body: JSON.stringify({
+						session: state.sessionId ?? undefined, invocationNonce,
+						...(filtered ? { selectedIssueIds, guidance, chapterVersion: state.reviewVersion } : {}),
+					}),
 				},
 			);
 			if (state.selected !== bookId) return; // 已切书：结果作废
 			const what = mode === 'proofread' ? '校对' : '润色';
 			const delta = Number(value?.deltaChars ?? 0);
 			state.notice = `${what}完成：提案 ${value.proposalId}（${value.chars} 字，改动 ${delta >= 0 ? '+' : ''}${delta}）—— 到「待批准提案」里点应用才生效`;
+				if (value.replayed === true) state.notice += '；已回放首次成功回执，未重复调用模型';
+				clearRetry(revisionRetry);
+				if (filtered) {
+					state.reviewVisible = false; state.reviewIssues = []; state.reviewSelectedIssueIds = []; state.reviewVersion = null; state.reviewChapter = null; state.reviewGuidance = '';
+				}
 			await ctx.loadProposals(bookId);
-		} catch (error) { if (state.selected === bookId) state.error = revisionErrorText(error, mode); }
+			} catch (error) {
+				if (Number.isInteger(error?.status)) clearRetry(revisionRetry);
+				if (state.selected === bookId) state.error = revisionErrorText(error, mode);
+			}
 		finally { state.revising = null; notify(); }
+	};
+
+	const loadReviewIssues = async () => {
+		if (!state.selected || state.reviewLoading) return;
+		if (state.reviewVisible) { state.reviewVisible = false; notify(); return; }
+		const bookId = state.selected; const chapterNo = state.chapterNo;
+		state.reviewVisible = true; state.reviewLoading = true; state.reviewError = ''; state.reviewIssues = []; state.reviewSelectedIssueIds = [];
+		state.reviewChapter = null; state.reviewVersion = null; notify();
+		try {
+			const value = await apiFetch(`/projects/${encodeURIComponent(bookId)}/chapters/${chapterNo}/review-issues`);
+			if (state.selected !== bookId || state.chapterNo !== chapterNo) return;
+			state.reviewIssues = Array.isArray(value?.issues) ? value.issues : [];
+			state.reviewSelectedIssueIds = state.reviewIssues.filter((issue) => issue.status === undefined || issue.status === 'open').map((issue) => issue.id);
+			state.reviewChapter = chapterNo; state.reviewVersion = value?.version ?? null;
+		} catch (error) {
+			if (state.selected === bookId && state.chapterNo === chapterNo) state.reviewError = String(error?.message ?? error);
+		} finally {
+			if (state.selected === bookId && state.chapterNo === chapterNo) { state.reviewLoading = false; notify(); }
+		}
+	};
+
+	const setReviewSelection = (all) => {
+		state.reviewSelectedIssueIds = all ? state.reviewIssues.filter((issue) => issue.status === undefined || issue.status === 'open').map((issue) => issue.id) : []; notify();
+	};
+
+	const setReviewIssueStatus = async (id, status) => {
+		if (!state.selected || !id || !['open', 'resolved', 'stale'].includes(status)) {
+			state.error = '批注状态动作缺少有效 id 或目标状态'; notify(); return;
+		}
+		const bookId = state.selected; const chapterNo = state.chapterNo;
+		try {
+			const value = await apiFetch(`/projects/${encodeURIComponent(bookId)}/chapters/${chapterNo}/annotations/${encodeURIComponent(id)}`, {
+				method: 'POST', body: JSON.stringify({ status }),
+			});
+			if (state.selected !== bookId || state.chapterNo !== chapterNo) return;
+			const annotation = value?.annotation;
+			state.reviewIssues = state.reviewIssues.map((issue) => issue.id === id ? { ...issue, ...annotation } : issue);
+			state.reviewSelectedIssueIds = state.reviewSelectedIssueIds.filter((selectedId) => selectedId !== id);
+			state.notice = status === 'resolved' ? '批注已解决；记录保留，正文未自动修改' : status === 'open' ? '批注已重开' : '批注已标为失效';
+		} catch (error) { state.error = String(error?.message ?? error); }
+		notify();
 	};
 
 	// ── 批量起草（D2）──
@@ -399,6 +472,8 @@ export function createProjectsController(ctx) {
 		const bookId = state.selected;
 		const batchFrom = Number(state.batchFrom) || 1;
 		const batchCount = Number(state.batchCount) || 1;
+		const retryKey = JSON.stringify({ bookId, batchFrom, batchCount, concurrency: Number(state.batchConcurrency) || 1, force: state.batchForce === true, resume: opts.resume === true });
+		const invocationNonce = nonceFor(batchRetry, retryKey);
 		state.batchBusy = true; state.error = ''; state.notice = ''; state.batchResult = null; notify();
 		try {
 			state.batchResult = await apiFetch(`/projects/${encodeURIComponent(bookId)}/draft-batch`, {
@@ -410,6 +485,7 @@ export function createProjectsController(ctx) {
 					concurrency: Number(state.batchConcurrency) || 1,
 					force: state.batchForce === true,
 					session: state.sessionId ?? undefined,
+						invocationNonce,
 					// 断点续跑：参数由服务端从 .novel/batch-checkpoint.json 恢复
 					...(opts.resume === true ? { resume: true } : {}),
 				}),
@@ -417,6 +493,8 @@ export function createProjectsController(ctx) {
 			if (state.selected !== bookId) return; // 已切书：结果作废，不污染新书状态
 			const st = state.batchResult?.stats ?? {};
 			state.notice = `${state.batchResult?.resumed === true ? '断点续跑：' : ''}批量起草完成：落盘 ${st.committed ?? 0} 章，被拦 ${st.failed ?? 0} 章`;
+				if (state.batchResult?.replayed === true) state.notice += '；已回放首次成功回执，未重复生成或落章';
+				clearRetry(batchRetry);
 			// 检查点状态同步：全落盘 → done（「继续上次批量」按钮退场），有被拦 → partial
 			if (state.detail?.batchCheckpoint) {
 				const batchCheckpoint = state.batchResult?.checkpoint ?? {
@@ -424,6 +502,9 @@ export function createProjectsController(ctx) {
 				};
 				state.detail = { ...state.detail, batchCheckpoint };
 			}
+				if (state.detail && Array.isArray(state.batchResult?.recoveryCandidates)) {
+					state.detail = { ...state.detail, recoveryCandidates: state.batchResult.recoveryCandidates };
+				}
 			// 新章会改变账本与提案队列；同时体检结果作废（它按章算的）
 			await Promise.all([loadChapterList(bookId), ctx.loadProposals(bookId)]);
 			if (state.selected !== bookId) return;
@@ -437,6 +518,7 @@ export function createProjectsController(ctx) {
 				state.notice += `；第 ${state.chapterNo} 章已在编辑器里重载为最新版本`;
 			}
 		} catch (error) {
+				if (Number.isInteger(error?.status)) clearRetry(batchRetry);
 			if (state.selected === bookId) {
 				const raw = String(error?.message ?? error);
 				state.error = /ENGINE_UNAVAILABLE|引擎未就绪/.test(raw)
@@ -444,6 +526,36 @@ export function createProjectsController(ctx) {
 					: raw;
 			}
 		} finally { state.batchBusy = false; notify(); }
+	};
+
+	const loadRecoveryCandidate = async (recoveryId) => {
+		if (!state.selected || !recoveryId) return;
+		if (state.draftModified) {
+			state.error = '当前章节还有未保存修改——先保存或丢弃，再载入恢复候选。';
+			notify();
+			return;
+		}
+		const bookId = state.selected;
+		const mine = ++seq.chapter;
+		state.error = ''; state.notice = ''; notify();
+		try {
+			const candidate = await apiFetch(`/projects/${encodeURIComponent(bookId)}/recovery-candidates/${encodeURIComponent(recoveryId)}`);
+			if (mine !== seq.chapter || state.selected !== bookId) return;
+			let baseline = '';
+			try { baseline = await apiFetch(`/projects/${encodeURIComponent(bookId)}/chapters/${candidate.chapter}`); }
+			catch { baseline = ''; }
+			if (mine !== seq.chapter || state.selected !== bookId) return;
+			state.chapterNo = candidate.chapter;
+			state.baseline = baseline ?? '';
+			state.draft = candidate.partialText ?? '';
+			state.draftVersion += 1;
+			state.draftModified = state.draft !== state.baseline;
+			state.undoStack = [];
+			state.saveBlocked = '';
+			state.detailTab = 'info';
+			state.notice = `已载入第 ${candidate.chapter} 章恢复候选（${candidate.chars} 字）——尚未写入正文；检查后继续补完并手动保存。${candidate.stale ? '该章后来已有正文，保存会生成新版本。' : ''}`;
+		} catch (error) { if (mine === seq.chapter) state.error = String(error?.message ?? error); }
+		notify();
 	};
 
 	// 会话疲劳「创建新会话并交接」（全自动版，用户钦定 2026-10-10）：
@@ -545,6 +657,6 @@ export function createProjectsController(ctx) {
 	return {
 		loadElements, loadChapterList, refreshProjects, claimProject, renameProject, cloneProject,
 		deleteListProject, openProject, createProject, deleteProject, goBack, rotateSession, createSession,
-		loadContinuity, loadDiagnosis, loadDashboard, runRevision, writeSingleChapter, runBatch, saveBookChars,
+		loadContinuity, loadDiagnosis, loadDashboard, runRevision, loadReviewIssues, setReviewSelection, setReviewIssueStatus, writeSingleChapter, runBatch, saveBookChars, loadRecoveryCandidate,
 	};
 }

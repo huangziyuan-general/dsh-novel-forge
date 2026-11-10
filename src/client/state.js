@@ -52,6 +52,11 @@ export function initialState() {
 		// 两者都是**长任务**（服务端可能重试到几分钟），所以单独一个忙标记，
 		// 而不是复用 writing —— 否则「写章中」和「润色中」会互相把按钮按死。
 		revising: null,
+		// 可勾选审稿项：只有这个面板打开且已加载时，润色才按选择集发送。
+		reviewVisible: false, reviewLoading: false, reviewIssues: [], reviewSelectedIssueIds: [],
+		reviewChapter: null, reviewVersion: null, reviewGuidance: '', reviewError: '',
+		// 前章影响清单：只读提示，不自动重写后章。
+		impact: null, impactChapter: null, impactLoading: false, impactError: '',
 		// 全书体检（GET /continuity，纯函数零 token）：null = 没查过
 		continuity: null, continuityLoading: false, continuityError: '',
 		// 创作驾驶舱（GET /dashboard，只读聚合）：打开详情自动拉，手动可刷新
@@ -73,12 +78,15 @@ export function initialState() {
 		// 提案队列（0.7.0）：模型提的修订稿，pending 时等用户点「应用」才生成新版本。
 		// 工具面没有 apply（见 lib/proposals.js）——「批准钥匙」在面板这一侧。
 		proposals: [], proposalsLoading: false,
+		extractionProposals: [], extractionEdits: {}, extractionSelected: {}, extractionBusy: null,
 		proposalsError: null, // 提案队列加载失败——必须可见，不得伪装成「没有待批」（2026-09-23 真机教训）
 		sessionScope: 'session', // 书单范围：'session'=只看本会话名下的书（默认）；'all'=全部书（多会话工作流必需）
 		// 多会话各自的书写给不同会话——只认本会话时别的书完全不可见（空列表才回落全量，
 		// 名下有任何一本书就不回落），用户在写作会话里永远够不到其他会话建的书。
 		// 提案全文展开（👁 查看）：{ id, loading, data, error } | null
 		proposalDetail: null,
+		// 原稿/提案/当前稿逐段合并：{id, rows, selections, conflicts, currentVersion, currentHash}
+		proposalMerge: null,
 		// 正在处理的提案 id（应用/丢弃中，按钮禁用以防重复点）；null = 空闲
 		proposalBusy: null,
 		// 应用提案时服务端跑出的内容门禁提示：{ok, blocking[], warnings[]} | null。

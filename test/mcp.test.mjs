@@ -1,5 +1,5 @@
 // test/mcp.test.mjs — MCP 双通道验证。
-// ① buildStandaloneTools：node:fs 后端语义（containment/版本守卫）+ 17 工具可执行；
+// ① buildStandaloneTools：node:fs 后端语义（containment/版本守卫）+ 24 工具可执行；
 // ② 真起一个 stdio server 子进程，走 JSON-RPC：initialize → tools/list → tools/call。
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,15 +26,16 @@ after(() => {
     if (root !== undefined) fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('standalone: 23 个工具全部装配', () => {
+test('standalone: 24 个工具全部装配', () => {
     if (!hasSdk) return;
-    assert.equal(standalone.tools.length, 23);
+    assert.equal(standalone.tools.length, 24);
     assert.ok(standalone.tools.some((t) => t.name === 'novel_style'));
     assert.ok(standalone.tools.some((t) => t.name === 'novel_search'));
     assert.ok(standalone.tools.some((t) => t.name === 'novel_library'));
     assert.ok(standalone.tools.some((t) => t.name === 'novel_relation'), 'MCP: novel_relation 缺席（主线1 工具未随 apply 注册）');
     assert.ok(standalone.tools.some((t) => t.name === 'novel_arc'), 'MCP: novel_arc 缺席（主线1 工具未随 apply 注册）');
     assert.ok(standalone.tools.some((t) => t.name === 'novel_quality'));
+    assert.ok(standalone.tools.some((t) => t.name === 'novel_extract'));
 });
 
 test('standalone: 后端 containment——越界 resolve 拒绝', () => {
@@ -107,6 +108,24 @@ test('standalone: 后端版本守卫——replaceIfVersion 冲突抛 FS_VERSION_
         (e) => e.code === 'FS_VERSION_CONFLICT',
     );
     assert.notEqual(v1, v2);
+});
+
+test('standalone: 后端 deleteFile——真删 + 版本守卫（不符/已不存在一律 FS_STALE_VERSION）', async () => {
+    if (!hasSdk) return;
+    const backend = createNodeFsBackend(root);
+    const abs = path.join(root, 'delete-me.txt');
+    fs.writeFileSync(abs, 'gone');
+    const target = await backend.resolve('delete-me.txt', { cwd: root });
+    const version = (await backend.stat(target)).version;
+    await assert.rejects(
+        () => backend.deleteFile(target, { version: 'stale-version' }),
+        (e) => e.code === 'FS_STALE_VERSION',
+    );
+    assert.equal(fs.existsSync(abs), true, '版本不符不得删除');
+    const out = await backend.deleteFile(target, { version });
+    assert.equal(out.before, 'gone');
+    assert.equal(fs.existsSync(abs), false, '版本相符才真删');
+    await assert.rejects(() => backend.deleteFile(target, { version }), (e) => e.code === 'FS_STALE_VERSION');
 });
 
 test('standalone: novel_project init 在纯 node:fs 通道可用', async () => {
@@ -215,7 +234,7 @@ test('stdio server: initialize → tools/list → tools/call 全链', async () =
         assert.equal(init.result.serverInfo.name, 'dsh-novel-forge');
 
         const listed = await rpc('tools/list', {});
-        assert.equal(listed.result.tools.length, 23);
+        assert.equal(listed.result.tools.length, 24);
         assert.ok(listed.result.tools.every((t) => t.inputSchema.type === 'object'));
         // inputSchema 必须暴露真实参数（二次包裹回归：全部工具的 properties 都曾是空壳）。
         const outlineTool = listed.result.tools.find((t) => t.name === 'novel_outline');

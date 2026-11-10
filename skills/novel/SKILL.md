@@ -22,7 +22,7 @@ description: Use when the user asks to write, create, outline, or continue a nov
 ## 开新书（无书时按序走）
 
 1. `novel_project init`（book/genre/logline 一句话立意）——**开书前先问一句每章字数**：用户给了就写成 `chars: "2500-3500"`（落库成本书事实，之后所有门禁/简报/提案都按它判），给了平台就写 `platform`（qidian/fanqie/jjwxc/qimao/feilu），两个都不要就别传（回落到插件默认口径，不许自己替用户定）。用户中途想改：`novel_project action=chars`。
-2. `novel_project promise` 写故事承诺书（本书承诺什么爽点、绝不做的事——每次写章自动注入）
+2. `novel_project promise` 写故事承诺书（本书承诺什么爽点、绝不做的事——每次写章自动注入）；需要题材基准时用 `promise_template` 零 token 生成固定清单，已有承诺书须用户确认后 `force:true` 覆盖。写完若干章可用 `promise_review` 复核最近三章，非 uncertain 项必须带原文证据；它只是建议，不是门禁或评分。
 3. 设定固化：`novel_worldbook add`（关键词触发或 always 常驻）；人物 `novel_character save`（多角色同台务必建 voice 语言基因卡：句长/口头禅/禁忌）
 4. `novel_outline save_book` 全书大纲
 5. 逐章循环：`novel_outline save_chapter`（含 `## 本章必写场景` 与 `## 本章禁止偏离项` 契约段）→ `novel_outline approve` → `novel_scene save`（出场人物/隐藏人物/禁项；有反转要藏时 hidden 人物档案不进上下文、正文出现其名会被拦）→ `novel_write_chapter`（title/content/summary/facts_updates，可选 facts_evidence、cognition_updates）
@@ -38,6 +38,8 @@ description: Use when the user asks to write, create, outline, or continue a nov
      ```
 6. 伏笔：`novel_ledger foreshadow_setup` 必带 plan（预计回收章）；回收时 `foreshadow_payoff`。超期未回收优先安排，别开新钩盖旧账。
 7. **关系与弧线落账**（v1.4.0）：人物/组织**之间**的关系变化（盟友→仇敌、信任度升降…）随 `novel_relation update` 落账（多行「A|B|维度|值[|备注]」，(A,B) 与 (B,A) 自动归一）；单人物**弧光维度**（成长/无畏/嫌疑度…）随 `novel_arc update` 落账（多行「人物|维度|值[|趋势][|备注]」）。**三者别混**：境界/位置/持有 → 事实账本（`novel_ledger`）；人物间关系 → `novel_relation`；单人物弧光 → `novel_arc`。正文仍按旧关系写会被内容门禁每章 warning 点名（不拦）；弧线停走（≥15 章未推进）命中时写章链自动落 major 质量债（`novel_quality view` 可见）。收尾体检加跑 `novel_project check fullscan:true`（关系线/弧线/hard 质量债/无 plan 伏笔，零 token）。
+8. **旧稿建档案走提案**：需要补人物卡或世界书时调 `novel_extract`（可指定章节范围与 all/character/worldbook）。候选必须有逐字原文证据，模型只负责提交，不能自行应用；告诉用户到锻炉面板逐项编辑、勾选并应用。人工后续改档造成冲突时不得强盖，应重新抽取或请用户手工合并。
+9. **本书偏好只记明确授权**：只有用户明确要求长期记住/删除某条创作偏好时，才用 `novel_project preference` 并传 `confirmed:true`；不得从正文或修改历史推断。跳门禁、少记账、降低审稿标准等请求会被拒收，任何偏好都不能成为放行理由。
 
 ## 续写已有书
 
@@ -57,9 +59,9 @@ description: Use when the user asks to write, create, outline, or continue a nov
 
 - `novel_audit`：platform 按（起点吃长线结构与章末钩子 / 番茄吃前千字爽点）；`censor:true` 发书前必跑（启发式预筛，命中仍须人工复核）
 - 机审数字（novel_audit / novel_noai_scan / novel_diagnose）是证据，审稿结论必须引用；`novel_polish submit` 的 `review_quotes`（多行「位置|原文原句」）给了就硬校验——引文必须逐字（忽略空白）在**原文**里找到，太短/找不到即整章拒收；凭印象补全/改写转述的引文在这里被拦，不提供不校验（普通润色不受影响）
-- 学习外部作品时：`novel_library analyze` 做零 token 结构画像；需要技巧与迁移方法时再用 `novel_library semantic`（复用现有模型路由）。语义结论必须带原文证据，代码会核对章节范围与引文；校验失败就不保存报告，不得自行补写证据或把失败伪报成空结果。
+- 学习外部作品时：`novel_library analyze` 做零 token 结构画像；需要技巧与迁移方法时再用 `novel_library semantic`（复用现有模型路由）。语义结论必须带原文证据，代码会核对章节范围与引文；JSON 仅允许一次保守语法修复，不得借修复改写证据；校验失败就不保存报告，不得自行补写证据或把失败伪报成空结果。正文与同章细纲长段逐字重合会作为 minor 债提示，不要把场景摘要或登记原话误判成照搬，也不要为了消除提示机械改写必写内容。
 - 导出 `novel_export`（md/txt，只允许落到 书/导出/ 内）
 
 ## 面板联动
 
-面板按钮（润色/校对/导出/提案应用/批量起草）走旁路引擎，产物一律是提案（用户点「应用」才生效）；批量起草并发的第 2 章起看不到前章正文，连环悬念章不要并行。逐章失败原因与模型调用指标在批量断点的 `records` 里，排障先看它，不凭最终结果猜测。
+面板按钮（润色/校对/导出/提案应用/批量起草）走旁路引擎，产物一律是提案（用户点「应用」才生效）；批量起草并发的第 2 章起看不到前章正文，连环悬念章不要并行。逐章失败原因与模型调用指标在批量断点的 `records` 里，排障先看它，不凭最终结果猜测。审稿项只发用户勾选部分与作者指导；批注跨版本重锚，无法可靠定位会标 stale，解决/重开不等于自动改正文；恢复候选只进编辑器，前章影响只提示复核，三路合并冲突默认保留当前稿——这些都不得被当成自动保存、自动重写或自动定稿的授权。

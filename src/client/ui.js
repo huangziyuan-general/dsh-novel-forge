@@ -57,7 +57,7 @@ export function Section({ icon = '', title, right = null } = {}, ...children) {
  * 因为内联样式优先级高于 `:hover` / `:active` —— 外观留在内联里按钮就永远没有按下反馈。
  */
 export function Btn(props = {}, ...label) {
-	const { variant = 'secondary', size = 'md', action, id, disabled = false, title, block = false } = props;
+	const { variant = 'secondary', size = 'md', action, id, disabled = false, title, block = false, row, choice } = props;
 	// 无障碍名：camelCase 与 kebab-case 两种写法都收 —— 只认一种时，另一种会被白名单
 	// 静默吞掉（图标按钮对读屏器不可名），失效方式与 dataset.no 事故同族：不报错、看不出来。
 	const aria = props.ariaLabel ?? props['aria-label'];
@@ -69,6 +69,8 @@ export function Btn(props = {}, ...label) {
 		'data-size': size,
 		...(action ? { 'data-action': action } : {}),
 		...(id === undefined || id === null ? {} : { 'data-id': String(id) }),
+		...(row === undefined || row === null ? {} : { 'data-row': String(row) }),
+		...(choice === undefined || choice === null ? {} : { 'data-choice': String(choice) }),
 		...(disabled ? { disabled: true } : {}),
 		...(title ? { title } : {}),
 		// M17 修复：aria-label 此前被参数白名单丢掉——纯图标按钮（▶⏸⏹）对读屏器不可名

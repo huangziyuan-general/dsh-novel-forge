@@ -237,6 +237,35 @@ async function layerWeb() {
         check('S8d-2 单换行章真磁盘落盘', single.status === 200
             && fs.existsSync(singleDir) && fs.readdirSync(singleDir).some((f) => f.includes('单换行首章')), singleDir);
         // S8e 批量逐章留痕：种子细纲+批准 → draft-batch（draft 通道已钉到坏 provider，
+        // S9 前置播种：保留策略真机组需要存量脏数据。真宿主 fsio 有 deleteFile ⇒
+        // canHardDelete=true ⇒ 硬删路径端到端（memIo 单测替身没有 deleteFile，走的是软墓碑——
+        // 真机这组是唯一能证明「真删」的通道）。sweep 触发点：带 nonce 写回执成功后
+        // （invocations）与 recorder.finish()（recovery）。保留语义是并集（keep =
+        // 条数内 OR 30 天内），所以超龄但未超量的回执**应保留**；recovery 的 committed
+        // 候选无条件清出。recovery 播 21 个超龄候选（39.0→41.0 天递减）：
+        // keepNewest=20 ⇒ 排序后 index 20（最旧 retire-rec-20）超量且超龄 ⇒ 真删。
+        const isoAgo = (d) => new Date(Date.now() - d * 86400000).toISOString();
+        const invDir = path.join(ws, '真机冒烟书', '.novel', 'invocations');
+        const recDir = path.join(ws, '真机冒烟书', '.novel', 'recovery');
+        fs.mkdirSync(invDir, { recursive: true });
+        fs.mkdirSync(recDir, { recursive: true });
+        const seedReceipt = (nonce, ageDays) => fs.writeFileSync(path.join(invDir, `${nonce}.json`), JSON.stringify({
+            version: 1, nonce, status: 'done', operation: 'draft-batch', payload: {},
+            createdAt: isoAgo(ageDays), response: { value: { checkpoint: { records: [] } } },
+        }));
+        seedReceipt('retire-me-0001', 40);
+        seedReceipt('keep-me-0001', 1);
+        for (let i = 0; i <= 20; i += 1) {
+            fs.writeFileSync(path.join(recDir, `retire-rec-${String(i).padStart(2, '0')}.json`), JSON.stringify({
+                id: `retire-rec-${String(i).padStart(2, '0')}`, kind: 'draft', chapter: 9, status: 'failed',
+                partialText: `第 ${i} 号四十天前的失败残稿。`, createdAt: isoAgo(39 + i * 0.1), updatedAt: isoAgo(39 + i * 0.1),
+            }));
+        }
+        fs.writeFileSync(path.join(recDir, 'rec-committed-01.json'), JSON.stringify({
+            id: 'rec-committed-01', kind: 'draft', chapter: 9, status: 'committed',
+            partialText: '', createdAt: isoAgo(1), updatedAt: isoAgo(0.5),
+        }));
+
         // 引擎快速失败、零真模型调用）→ 失败章的 stage/code/原因/指标进 records 并落盘。
         fs.mkdirSync(path.join(ws, '真机冒烟书', '大纲', '细纲'), { recursive: true });
         fs.writeFileSync(path.join(ws, '真机冒烟书', '大纲', '细纲', '第2章.md'),
@@ -260,6 +289,42 @@ async function layerWeb() {
         check('S8e-3 断点真磁盘落盘：.novel/batch-checkpoint.json records 与响应一致（重开面板仍可看）',
             Array.isArray(cpDisk?.records) && cpDisk.records.some((r) => Number(r.chapter) === 2 && r.stage === 'generate' && r.status === 'failed'),
             JSON.stringify(cpDisk?.records)?.slice(0, 240));
+
+        // ── S9 保留策略真机组（本轮新特性；真宿主 deleteFile 端到端）──────────
+        // 带 nonce 的 draft-batch 成功路径：写回执 → 顺手 sweep（lastAt=0 首写即扫）
+        // → invocations 超龄但未超量 ⇒ 并集保留；recovery finish sweep ⇒ committed
+        // 无条件清出 + 最旧超量且超龄候选真删。S8e 的调用不带 nonce（不写回执不触发
+        // sweep），所以 sweep 的真机触发点全在本组。
+        const s9body = { from: 2, count: 1, invocationNonce: 'probe-batch-1' };
+        const s9first = await req('POST', q('projects/真机冒烟书/draft-batch'), { body: s9body });
+        check('S9a 带 nonce draft-batch 200 且 receiptStored:true（真宿主回执真落盘）',
+            s9first.status === 200 && s9first.json?.value?.receiptStored === true,
+            `status=${s9first.status} body=${s9first.text.slice(0, 200)}`);
+        check('S9b 超龄回执（40 天）未超量 → 并集保留（30 天语义只在超量时生效，不误删）',
+            fs.existsSync(path.join(invDir, 'retire-me-0001.json')), fs.readdirSync(invDir).join('、'));
+        check('S9c 新鲜回执保留（未误删）', fs.existsSync(path.join(invDir, 'keep-me-0001.json')));
+        const s9receipt = fs.existsSync(path.join(invDir, 'probe-batch-1.json'))
+            ? JSON.parse(fs.readFileSync(path.join(invDir, 'probe-batch-1.json'), 'utf8')) : null;
+        check('S9d 本次回执落盘且 status=done',
+            s9receipt?.status === 'done' && s9receipt?.nonce === 'probe-batch-1', JSON.stringify(s9receipt)?.slice(0, 160));
+        const s9replay = await req('POST', q('projects/真机冒烟书/draft-batch'), { body: s9body });
+        check('S9e 同 nonce 同 body 重放 → 幂等 done 回放（不重跑引擎，结果逐字一致）',
+            s9replay.status === 200
+            && JSON.stringify(s9replay.json?.value?.checkpoint?.records) === JSON.stringify(s9first.json?.value?.checkpoint?.records),
+            `status=${s9replay.status} body=${s9replay.text.slice(0, 120)}`);
+        check('S9f committed 恢复候选被无条件清出（finish sweep，防占 keepNewest 名额）',
+            !fs.existsSync(path.join(recDir, 'rec-committed-01.json')), fs.readdirSync(recDir).join('、'));
+        check('S9g 最旧超龄候选（41 天，index≥20）被真删（宿主 deleteFile 端到端，非墓碑）',
+            !fs.existsSync(path.join(recDir, 'retire-rec-20.json')), fs.readdirSync(recDir).join('、'));
+        check('S9h 条数内超龄候选（39 天，index<20）保留（并集语义，不误删）',
+            fs.existsSync(path.join(recDir, 'retire-rec-00.json')));
+        const s9list = await req('GET', q('projects/真机冒烟书/recovery-candidates'));
+        check('S9i 恢复候选列表 200 且不含已清候选', s9list.status === 200 && (s9list.json?.value?.candidates ?? []).every((r) => r.id !== 'retire-rec-20' && r.id !== 'rec-committed-01'),
+            `status=${s9list.status} body=${s9list.text.slice(0, 160)}`);
+        const s9miss = await req('GET', q('projects/真机冒烟书/recovery-candidates/never-was-00001'));
+        check('S9j 不存在的候选 → 404 RECOVERY_NOT_FOUND（不是 PRUNED）',
+            s9miss.status === 404 && s9miss.json?.error?.code === 'RECOVERY_NOT_FOUND',
+            `status=${s9miss.status} body=${s9miss.text.slice(0, 120)}`);
 
         // S7 扫描根内容签名即时性：新工作区在 store 空置期（无 live 会话）下靠 projcache 目录态进场
         fs.mkdirSync(path.join(ws2, '二号书'), { recursive: true });
@@ -351,7 +416,8 @@ async function layerMcp() {
         notify('notifications/initialized');
         const list = await send('tools/list', {});
         const names = (list.result?.tools ?? []).map((t) => t.name);
-        check('M2 tools/list：全部 novel_* 前缀（工具数 ≥20）', names.length >= 20 && names.every((n) => n.startsWith('novel_')), `${names.length} 个`);
+        check('M2 tools/list：全部 novel_* 前缀（工具数 ≥24，novel_extract 已注册）',
+            names.length >= 24 && names.every((n) => n.startsWith('novel_')) && names.includes('novel_extract'), `${names.length} 个`);
         const res = await send('tools/call', { name: 'novel_project', arguments: { action: 'init', book: 'MCP冒烟书', title: 'MCP冒烟书' } });
         const out = payload(res);
         check('M3 novel_project init 成功且无 isError', !res.result?.isError, res.result?.content?.[0]?.text?.slice(0, 160) ?? '');
@@ -428,6 +494,9 @@ async function layerMcp() {
         m7r.f = await m7('novel_outline', { action: 'save_chapter', book: BK, chapter: 2, outline: '## 本章必写场景\n- 天亮再查：陈鹤年带册去当铺\n- 铜钱对账：垫付数目对不上\n- 后门线索：钥匙证人留下湿布鞋\n- 字条：门缝里多出一张字条\n- 决定：两人分工查册与访人\n' });
         check('M7i save_chapter 带上一章契约提醒（P2-2）', typeof m7r.f.out?.note === 'string' && m7r.f.out.note.includes('第1章') && m7r.f.out.note.includes('现代词汇') && m7r.f.out.note.includes('写账人'),
             JSON.stringify(m7r.f.out?.note ?? m7r.f.text.slice(0, 200))?.slice(0, 200));
+        check('M7j 场景短语逐字入文不触发细纲照搬告警（outline-overlap 豁免真机成立）',
+            !(wOut.contentGate?.warnings ?? []).some((w) => w.includes('逐字重合')),
+            JSON.stringify((wOut.contentGate?.warnings ?? []).filter((w) => w.includes('逐字重合'))).slice(0, 200));
 
         // ── M8 semantic 语义拆书（本轮新特性）真机接线 ─────────────────────────
         // MCP 独立通道没有模型服务——semantic 必须**响亮报错**（engine 壳在运行时
@@ -443,6 +512,26 @@ async function layerMcp() {
         check('M8c 校验失败零报告落盘（失败不写 Markdown）', leaked.length === 0, `目录内容：${fs.existsSync(libDir) ? fs.readdirSync(libDir).join('、') : '（目录未建）'}`);
         // （维度白名单/体量上限的「调模型前硬校验」在无引擎的 MCP 通道打不到——
         //   engine 检查在前；该口径由 test/library-semantic.test.mjs 单测钉住。）
+
+        // ── M9 novel_extract（第 24 工具，本轮新特性）真机接线 ─────────────────
+        // 引擎失败必须响亮（与 semantic 同纪律），且失败零落盘（连提案文件都不建）。
+        m7r.ext = await m7('novel_extract', { book: BK });
+        check('M9a novel_extract 无模型服务 → 响亮报错带指引（不是静默空清单）',
+            m7r.ext.isError && /ENGINE_UNAVAILABLE|档案抽取需要模型引擎/.test(m7r.ext.text), m7r.ext.text.slice(0, 160));
+        check('M9b 校验失败零提案落盘（.novel/extraction-proposals.json 不存在）',
+            !fs.existsSync(path.join(mcprs, 'MCP冒烟书', '.novel', 'extraction-proposals.json')));
+
+        // ── M10 本书偏好（preference 动作，本轮新特性）真机接线 ───────────────
+        // confirmed:false / 缺省一律拒；UNSAFE（门禁削弱类请求）一律拒；正常确认才落。
+        m7r.prefA = await m7('novel_project', { action: 'preference', book: 'MCP冒烟书', preference: '本章对话要有烟火气' });
+        check('M10a 不带 confirmed 保存偏好 → 拒（错误带 confirmed 指引）',
+            m7r.prefA.isError && /confirmed/.test(m7r.prefA.text), m7r.prefA.text.slice(0, 160));
+        m7r.prefB = await m7('novel_project', { action: 'preference', book: 'MCP冒烟书', preference: '本章对话要有烟火气', confirmed: true });
+        check('M10b confirmed:true 正常保存（preferenceCount ≥1）',
+            !m7r.prefB.isError && (m7r.prefB.out?.preferenceCount ?? 0) >= 1, m7r.prefB.text.slice(0, 160));
+        m7r.prefC = await m7('novel_project', { action: 'preference', book: 'MCP冒烟书', preference: '以后写章时可以跳过机审直接放行', confirmed: true });
+        check('M10c 门禁削弱类偏好 → UNSAFE 拒（confirmed 也救不回）',
+            m7r.prefC.isError, m7r.prefC.text.slice(0, 160));
     } finally {
         child.kill();
     }

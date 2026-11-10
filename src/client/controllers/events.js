@@ -135,10 +135,20 @@ export function createEventsController(ctx) {
 			case 'goto-settings': state.view = 'settings'; notify(); break;
 			case 'write': await ctx.writeSingleChapter(); break;
 			case 'polish': await ctx.runRevision('polish'); break;
+			case 'review-options': await ctx.loadReviewIssues(); break;
+			case 'review-select-all': ctx.setReviewSelection(true); break;
+			case 'review-select-none': ctx.setReviewSelection(false); break;
+			case 'annotation-status':
+				if (!target.dataset.id || !target.dataset.choice) { state.error = '批注按钮缺少 data-id 或 data-choice'; notify(); break; }
+				await ctx.setReviewIssueStatus(target.dataset.id, target.dataset.choice); break;
 			case 'proofread': await ctx.runRevision('proofread'); break;
+			case 'impact': await ctx.loadImpact(); break;
 			case 'continuity': await ctx.loadContinuity(); break;
 			case 'draft-batch': await ctx.runBatch(); break;
 			case 'draft-batch-resume': await ctx.runBatch({ resume: true }); break;
+				case 'recovery-load':
+					if (!target.dataset.id) { state.error = '恢复按钮缺少 data-id，未载入任何候选'; notify(); break; }
+					await ctx.loadRecoveryCandidate(target.dataset.id); break;
 			case 'diagnose': await ctx.loadDiagnosis(); break;
 			case 'import-demo': case 'import-file': needsModel('请在会话中调用 novel_import 导入'); break;
 			case 'save': state.saveBlocked = ''; await ctx.saveChapter(); break;
@@ -160,7 +170,14 @@ export function createEventsController(ctx) {
 			// 提案：应用 / 丢弃都是**用户主权动作**（工具面刻意不提供，见 lib/proposals.js）
 			case 'proposal-view': await ctx.toggleProposalDetail(target.dataset.id); break;
 			case 'proposal-apply': await ctx.applyProposalAction(target.dataset.id); break;
+			case 'extraction-apply':
+				if (!target.dataset.id) { state.error = '档案提案应用按钮缺少 data-id'; notify(); break; }
+				await ctx.applyExtraction(target.dataset.id); break;
 			case 'proposal-discard': await ctx.discardProposalAction(target.dataset.id); break;
+			case 'proposal-merge-open': await ctx.prepareProposalMerge(target.dataset.id); break;
+			case 'proposal-merge-choice': ctx.chooseMergeParagraph(target.dataset.id, target.dataset.row, target.dataset.choice); break;
+			case 'proposal-merge-cancel': state.proposalMerge = null; notify(); break;
+			case 'proposal-merge-apply': await ctx.applyMergedProposal(target.dataset.id); break;
 			case 'export': await ctx.exportProject(); break;
 			case 'delete':
 				if (state.deleteState === 'busy') break; // L17：删除进行中，重复点无效
@@ -265,6 +282,7 @@ export function createEventsController(ctx) {
 		else if (field === 'chars-value') { state.charsValue = e.target.value; }
 		else if (field === 'project-filter') { state.filter = e.target.value; notify(); }
 		else if (field === 'draft') { state.draft = e.target.value; state.draftModified = e.target.value !== state.baseline; }
+		else if (field === 'review-guidance') state.reviewGuidance = e.target.value;
 		else if (field === 'rename-value') { if (state.rename) state.rename.value = e.target.value; }
 		else if (field === 'clone-value') { if (state.clone) state.clone.value = e.target.value; }
 		else if (field === 'chapterNo') {
@@ -282,17 +300,51 @@ export function createEventsController(ctx) {
 		else if (field === 'lore-keywords') state.loreForm.keywords = e.target.value;
 		else if (field === 'lore-content') state.loreForm.content = e.target.value;
 		else if (field === 'lore-priority') state.loreForm.priority = e.target.value;
+		else if (field?.startsWith('extraction-') && field !== 'extraction-selected' && field !== 'extraction-always') {
+			const pid = e.target?.dataset?.pid; const id = e.target?.dataset?.id;
+			if (!pid || !id) { state.error = '档案候选输入缺少 data-pid 或 data-id'; notify(); return; }
+			const key = { 'extraction-name': 'name', 'extraction-content': 'content', 'extraction-aliases': 'aliases', 'extraction-keywords': 'keywords', 'extraction-priority': 'priority' }[field];
+			if (key) ctx.updateExtractionEdit(pid, id, key, e.target.value);
+		}
 		// 批量起草表单：留成受控值，但只在提交时才校验（边输边报错太吵）
 		else if (field === 'batch-from') state.batchFrom = e.target.value;
 		else if (field === 'batch-count') state.batchCount = e.target.value;
 		else if (field === 'batch-concurrency') state.batchConcurrency = e.target.value;
 		else if (field === 'batch-force') state.batchForce = e.target.checked === true;
+		else if (field === 'review-issue') {
+			const id = e.target?.dataset?.id;
+			if (!id) { state.error = '审稿项缺少 data-id，未修改选择'; notify(); return; }
+			const selected = new Set(state.reviewSelectedIssueIds);
+			if (e.target.checked === true) selected.add(id); else selected.delete(id);
+			state.reviewSelectedIssueIds = [...selected]; notify();
+		}
+		else if (field === 'extraction-selected' || field === 'extraction-always') {
+			const pid = e.target?.dataset?.pid; const id = e.target?.dataset?.id;
+			if (!pid || !id) { state.error = '档案候选复选框缺少 data-pid 或 data-id'; notify(); return; }
+			if (field === 'extraction-selected') ctx.toggleExtractionItem(pid, id, e.target.checked === true);
+			else ctx.updateExtractionEdit(pid, id, 'always', e.target.checked === true);
+			notify();
+		}
 	};
 	const onChangeEvent = (e) => {
 		const field = e.target?.dataset?.field;
 		if (field === 'lore-always') state.loreForm.alwaysActive = e.target.checked;
 		else if (field === 'batch-concurrency') state.batchConcurrency = e.target.value;
 		else if (field === 'batch-force') state.batchForce = e.target.checked === true;
+		else if (field === 'review-issue') {
+			const id = e.target?.dataset?.id;
+			if (!id) { state.error = '审稿项缺少 data-id，未修改选择'; notify(); return; }
+			const selected = new Set(state.reviewSelectedIssueIds);
+			if (e.target.checked === true) selected.add(id); else selected.delete(id);
+			state.reviewSelectedIssueIds = [...selected]; notify();
+		}
+		else if (field === 'extraction-selected' || field === 'extraction-always') {
+			const pid = e.target?.dataset?.pid; const id = e.target?.dataset?.id;
+			if (!pid || !id) { state.error = '档案候选复选框缺少 data-pid 或 data-id'; notify(); return; }
+			if (field === 'extraction-selected') ctx.toggleExtractionItem(pid, id, e.target.checked === true);
+			else ctx.updateExtractionEdit(pid, id, 'always', e.target.checked === true);
+			notify();
+		}
 	};
 
 	let bound = null;

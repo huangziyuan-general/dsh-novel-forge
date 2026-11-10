@@ -121,24 +121,28 @@ novel_project init → novel_project phase (see the nine-stage board, fill entry
 | 🎛 Creation cockpit | detail page | automatically aggregates progress, health checks, outline, proposals, diagnosis, and book-scoped char limits; samples the first 3 plus latest 12 chapters for platform review, so the next action comes before a pile of per-chapter tables |
 | 📋 Overview | detail page | archive / outline / character cards / timeline summary; read chapter (📖 reading card), save, **export**, **golden-three-chapter diagnosis** |
 | 🎧 Chapter TTS | detail page | TOC + continuous speech (pause / resume / stop, auto-advances to next chapter when done); each row has 📖 read / ▶ speak, reading and listening are independent |
-| One-click polish / mechanical proofread | chapter | runs through the side-channel engine, output is a **proposal**, doesn't touch the body directly; proofread guard is stricter (length cap 1.06) |
+| One-click polish / mechanical proofread | chapter | selectable review issues plus author guidance; unselected issues never enter the prompt; runs through the side-channel engine, output is a **proposal**, doesn't touch the body directly; proofread guard is stricter (length cap 1.06) |
+| Persistent annotations | review issues | quotes, paragraph hashes, and neighboring context re-anchor after saves; only exact or unique-context matches move, otherwise the item becomes stale; resolve/reopen preserves history |
+| Archive extraction proposals | detail-page proposal area | `novel_extract` creates evidence-backed character/worldbook candidates; edit and select items before applying, while unselected items remain pending and later manual edits are never overwritten |
 | Full-book health check | detail page | dead-character revival / ledger contradictions / overdue foreshadowing / chapter-number gaps / missing character cards, zero token |
 | Golden-three-chapter diagnosis | overview card | four-axis numbers (hook / opening / conflict / infodump) + overall verdict, pure wordlist, zero token |
-| Batch drafting | detail page | concurrent generation, serial commit; per-chapter success/failure laid out; concurrency cap 4, default 1; after interruption "continue last batch (chapters a–b, N committed)" resumes from checkpoint |
+| Batch drafting | detail page | concurrent generation, serial commit; persisted per-chapter diagnostics and token usage; concurrency cap 4, default 1; checkpoint resume; context overflow retries once with optional context reduced, never the outline or hard constraints |
+| Failed-draft recovery | batch card | failed or gate-rejected usable text remains a recovery candidate; restoring only fills the editor, never commits directly or overwrites an unsaved draft |
+| Previous-chapter impact | chapter | source fingerprints identify direct, transitive, and undeterminable later chapters; review notice only, never automatic rewriting or finalization |
 | Session fatigue & handoff | detail-page banner | within-session first-draft decline / session average under 70% of other sessions' first drafts / ≥8 consecutive chapters triggers a warning (the write-progress card carries a session-status line, labelled "first draft = pre-gate draft"); "create new session and hand off" builds + archives a new session in one click, handoff summary auto-copies to clipboard, paste into the new session to continue seamlessly |
-| Proposal approval | detail page | view full proposal → apply (generate new version) / discard; old version never overwritten |
+| Proposal approval | detail page | apply / discard, or merge base, proposal, and current text paragraph by paragraph; conflicts default to current text and stale version/hash checks reject the write; old versions are never overwritten |
 
-## 23 tools
+## 24 tools
 
 | Tool | Responsibility | Hard constraint |
 | --- | --- | --- |
-| `novel_project` | init / status / **phase (nine-stage board & entry judgment)** / set_stage / repair / check / promise | prevents duplicate creation; stage entry judged by code; out-of-order recorded as skipped; repair reconciles index vs disk |
+| `novel_project` | init / status / **phase** / set_stage / repair / check / promise / promise_template / promise_review / preference / platform / chars | templates and preferences are local; `promise_review` reuses `annotate`, checks the latest three chapters by default, verifies every quote, and remains advisory; preferences require explicit user confirmation and cannot weaken gates |
 | `novel_outline` | full-book outline / chapter-N detailed outline / **approve** | the key to the write-chapter gate |
 | `novel_character` | character cards + **voice-gene cards** (voice: sentence length / logic / catchphrases / never-says / small gestures / register, structured storage) | injected as a block when writing; audit voice:true checks taboo words |
 | `novel_worldbook` | worldbook entries (add/update/list/remove + import/export) | settings only recognized here; update preserves id; a missing trigger no longer errors — known entity names are derived from the content, otherwise the entry becomes always-on with a visible warning |
 | `novel_scene` | scene contract (save/get/list/delete): this-chapter scenes / cast / **hidden characters** / worldbook whitelist / forbidden items | hidden-character dossiers never enter context and their names are forbidden in the body; off-contract characters aren't injected (saves tokens) |
 | `novel_briefing` | pre-write context pack (outline → pledge → **scene contract** → character cards → **voice-gene cards** → ledger → foreshadowing → worldbook → previous chapter ending → anchor segments) | consistency supply side; trims cast and worldbook by contract |
-| `novel_write_chapter` | write & commit chapter | gate → mechanical check → ledger → **content gate (six dims)** → **outline-contract metrics** → versioning; contract metrics persisted to chapter index |
+| `novel_write_chapter` | write & commit chapter | gate → mechanical check → ledger → **content gate (six dims)** → **outline-contract metrics** → versioning; long verbatim overlap with the chapter outline only warns as minor debt, with scene summaries and declared quotes exempt |
 | `novel_ledger` | fact ledger (with notes) + **point-in-time simulation** (`status_at` snapshot of chapter n / `timeline` evolution) + foreshadowing plant / payoff / reschedule + cognition ledger | same-chapter value change rejected; chapter-number-ahead rejected; overdue foreshadowing warned; backfill doesn't alter history; cognition regressions surfaced |
 | `novel_relation` | relation ledger: **between-entity** state lines (ally/enemy/mentor/trust…): `update` / `query` / `status_at` / `timeline` | (A,B) and (B,A) auto-normalised to same pair; same-chapter same-pair same-dimension change rejected; body still using old value → content gate warning every chapter |
 | `novel_arc` | arc ledger: per-character **dimension** progression (growth/confidence/suspicion…): `update` / `query` / `status_at` / `diagnose` | `stalled` (≥15 chapters without progress) auto-logs a **major** quality debt; `no-move` (single entry, ≥20 chapters) warning; zero-token |
@@ -152,7 +156,8 @@ novel_project init → novel_project phase (see the nine-stage board, fill entry
 | `novel_diagnose` | golden-three-chapter four-axis diagnosis (hook / opening / conflict / infodump) | deterministic numbers, mechanical and model review separated |
 | `novel_polish` | paragraph-level lesion localization + polish proposal submission | polish also uses proposals, never overwrites old text |
 | `novel_search` | long-work search (build / query / annotate / status): returns chapter number + excerpt + hit ratio | index is a **derivative** (`book/.novel/index.db`), re-runnable after deletion; degrades without sqlite |
-| `novel_library` | **book-library feed** (import/list/read/analyze/semantic/delete): `analyze` profiles chapter length / dialogue / paragraph rhythm / hooks / imagery; `semantic` extracts transferable techniques across seven dimensions, each backed by chapter evidence | `analyze` is zero-token; `semantic` reuses the existing `annotate` model route (no extra key), defaults to 3 chapters and caps each run at 5 chapters / 30,000 chars; code verifies every quote before writing `书库/<id>/语义拆书-第N-M章.md`; never joins book consistency judgments |
+| `novel_library` | **book-library feed** (import/list/read/analyze/semantic/delete): `analyze` profiles chapter length / dialogue / paragraph rhythm / hooks / imagery; `semantic` extracts transferable techniques across seven dimensions, each backed by chapter evidence | `analyze` is zero-token; `semantic` reuses the existing `annotate` model route (no extra key), defaults to 3 chapters and caps each run at 5 chapters / 30,000 chars; one conservative JSON syntax repair never changes evidence, and every quote is still verified before writing `书库/<id>/语义拆书-第N-M章.md`; never joins book consistency judgments |
+| `novel_extract` | proposes character cards, aliases, and worldbook entries from existing chapters | reuses `annotate`; every item needs verbatim evidence containing its name or alias; creates proposals only—users edit, select, and apply them in the panel, with conflict protection for later manual edits |
 | `novel_glossary` | glossary (add/remove/list) | injected with context pack, prevents proper-noun mistranslation |
 | `novel_clone_project` | clone whole book as template | stage reset, proposal and circuit-breaker counters cleared; character cards / worldbook / ledger / foreshadowing / glossary / scene contracts / voice genes all carried along |
 
@@ -171,6 +176,7 @@ novel_project init → novel_project phase (see the nine-stage board, fill entry
 ├─ 设定/术语表.json        # [{term, definition}]
 ├─ 设定/场景契约.json      # per-chapter cast / hidden characters / worldbook whitelist / forbidden items
 ├─ 设定/语言基因.json      # per-character: sentence length / logic / catchphrases / never-says / small gestures / register
+├─ 设定/故事承诺书.md      # free-form pledge or local genre template, injected into chapter context
 ├─ 正文/第3章-雨夜来客-v2.md   # versioned, never overwritten
 ├─ 账本/facts.json        # [{entity, key, value, chapter, note}]
 ├─ 账本/伏笔.json          # [{id, setup, chapter, plan, payoffChapter}]
@@ -178,6 +184,10 @@ novel_project init → novel_project phase (see the nine-stage board, fill entry
    ├─ audit.jsonl         # full action audit (who did what in which chapter, when rejected)
    ├─ batch-checkpoint.json # batch checkpoint + per-chapter records for status/errors/model metrics (running→done|partial)
    ├─ index.db            # search index (derivative: re-run novel_search build after deletion)
+   ├─ annotations.json    # re-anchorable review annotations (open / resolved / stale)
+   ├─ extraction-proposals.json # candidates awaiting user edit, selection, and approval
+   ├─ preferences.json    # explicitly confirmed book-scoped author preferences
+   ├─ reader-promises.json # structured genre checklist, cleared by a manual pledge
    └─ proposals/P3-xxx.json
 ```
 
