@@ -967,8 +967,10 @@ test('content-gate: 死人复活阻断；账本旧值仍在用则警告', () => 
 
 test('content-gate: 到期伏笔零回应且开了新钩 → 阻断；回应了则放行', () => {
     const foreshadows = [{ id: 'F1', setup: '断刃的下落', chapter: 1, plan: 3, payoffChapter: null }];
-    const body = '测试角色走进院子，把灯芯挑亮了一寸。她坐下，又站起来。';
-    const withNewHook = `${body.repeat(8)}\n\n门外忽然传来一声轻响。`;
+    // 长度靠**不同**的句子堆出来：逐字复读是内容门禁的新阻断项，夹具不能再靠 repeat 凑字数。
+    const body = (i) => `测试角色第${i}次走进院子，把第${i}盏灯芯挑亮了一寸。她坐下，又站起来。`;
+    const bodyLong = Array.from({ length: 8 }, (_, i) => body(i + 1)).join('\n\n');
+    const withNewHook = `${bodyLong}\n\n门外忽然传来一声轻响。`;
     const blocked = contentGate({ content: withNewHook, chapter: 4, foreshadows });
     assert.equal(blocked.ok, false);
     assert.ok(blocked.blocking.some((b) => b.code === 'debt-unanswered-with-new-hook'));
@@ -978,7 +980,7 @@ test('content-gate: 到期伏笔零回应且开了新钩 → 阻断；回应了�
     assert.equal(answered.ok, true);
 
     // 没开新钩子、账也没还 → 只警告不阻断
-    const noHook = contentGate({ content: body.repeat(8), chapter: 4, foreshadows });
+    const noHook = contentGate({ content: bodyLong, chapter: 4, foreshadows });
     assert.equal(noHook.ok, true);
     assert.ok(noHook.warnings.some((w) => w.code === 'debt-unanswered'));
 
@@ -990,7 +992,8 @@ test('content-gate: 到期伏笔零回应且开了新钩 → 阻断；回应了�
 
 test('content-gate: 开钩未登记 → 非阻断警告；登记过 setup 的本章或无钩章不提示（0.19.0《某连载本》15 钩零登记实证）', () => {
     // 章末带语义钩（「忽然」在悬念词表），台账没有第 7 章的 setup → 点名
-    const hooked = `${'她把灯芯挑亮，院子里静得能听见霜落。'.repeat(6)}\n\n门外忽然传来三下叩响。`;
+    const padded = (tail) => Array.from({ length: 6 }, (_, i) => `她把第${i + 1}盏灯芯挑亮，院子里静得能听见霜落。`).join('\n\n') + `\n\n${tail}`;
+    const hooked = padded('门外忽然传来三下叩响。');
     const unregistered = contentGate({ content: hooked, chapter: 7, foreshadows: [{ id: 'F1', setup: '旧钟', chapter: 2, plan: 9, payoffChapter: null }] });
     assert.equal(unregistered.ok, true, '非阻断');
     const w = unregistered.warnings.find((x) => x.code === 'open-hook-unregistered');
@@ -1002,7 +1005,7 @@ test('content-gate: 开钩未登记 → 非阻断警告；登记过 setup 的本
     assert.ok(!registered.warnings.some((x) => x.code === 'open-hook-unregistered'), '已登记不点名');
 
     // 无语义钩（陈述收尾，无悬念词）→ 不提示
-    const calm = `${'她把灯芯挑亮，院子里静得能听见霜落。'.repeat(6)}\n\n她收好针线，回屋睡下。`;
+    const calm = padded('她收好针线，回屋睡下。');
     const noHook = contentGate({ content: calm, chapter: 7, foreshadows: [] });
     assert.ok(!noHook.warnings.some((x) => x.code === 'open-hook-unregistered'), '无钩不点名');
 });
