@@ -20,6 +20,9 @@ jobs:
       # 到安装根（其 node_modules/@deepseek-ai 下有 hoist 出来的宿主包）。
       - name: Link host SDK (dsh)
         run: |
-          npm install --prefix "$HOME/.dsh-ci" @deepseek-ai/dsh
+          # 钉精确版本：裸包名 @* 通配在 runner 侧曾报 ETARGET
+          # （0.2.2-rc.1 发布起稳定复现，本地 npm 11 正常）——精确 spec
+          # 走 versions 表，绕开 dist-tag 通配解析。随宿主升级手动 bump。
+          npm install --prefix "$HOME/.dsh-ci" @deepseek-ai/dsh@0.2.2-rc.1
           DSH_CHECKOUT="$HOME/.dsh-ci" npm run setup-dev
       - run: npm test
