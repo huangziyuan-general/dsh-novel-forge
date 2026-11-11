@@ -18,7 +18,7 @@ jobs:
   attach-zip:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.release.tag_name }}
       - name: Package source tree and attach to release
