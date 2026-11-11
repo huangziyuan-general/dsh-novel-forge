@@ -176,7 +176,10 @@ async function layerWeb() {
 
         // S3 存章（REST 直存通道）+ 读回——正文必须 ≥2100 字且按空行分段（≥15 段）：
         // REST 存章与 write_chapter 同链过机审（600 字/单段都会被 GATE_REJECTED 拦下——门禁工作是设计行为）
-        const text = Array.from({ length: 20 }, () => '夜色像墨，长街尽头亮着一盏灯。'.repeat(9)).join('\n\n');
+        // fixture 纪律：每句全章唯一（带序号）——7040f9d 起「章内逐字复读」是 critical 门禁，
+        // 重复凑字 fixture 会被正确拦截（那是门禁在工作，不是产品 bug）。
+        const smokePara = (i) => `第${i}夜，长街尽头亮着一盏灯，灯下坐着守夜人。他数着更漏，把每一个走过巷口的人都记进册子：挑夫${i}号、货郎${i}号，还有一个不肯说姓名的旅人。墨迹干了又湿，册页翻动${i}次，灯芯剪了又剪，直到鸡鸣把灯吹熄，他才合上册子，往灶膛里添了一把柴，把冷掉的茶泼在地上。`;
+        const text = Array.from({ length: 20 }, (_, i) => smokePara(i + 1)).join('\n\n');
         const saved = await req('POST', q('projects/真机冒烟书/chapters/1'), { body: { title: '真机首章', text } });
         check('S3a 存章 200', saved.status === 200, `status=${saved.status} body=${saved.text.slice(0, 200)}`);
         const chapDir = path.join(ws, '真机冒烟书', '正文');
@@ -229,7 +232,7 @@ async function layerWeb() {
         // 拦成 GATE_REJECTED（段数门禁），新版按换行分段放行——docx 导入稿的真机形状。
         const mkSingle = await req('POST', q('projects'), { body: { title: '真机单换行书', session: 'realboot-1' } });
         check('S8d-0 建单换行测试书', mkSingle.status === 200, `status=${mkSingle.status}`);
-        const singleText = Array.from({ length: 20 }, () => '夜色像墨，长街尽头亮着一盏灯。'.repeat(9)).join('\n');
+        const singleText = Array.from({ length: 20 }, (_, i) => smokePara(i + 1)).join('\n');
         const single = await req('POST', q('projects/真机单换行书/chapters/1'), { body: { title: '单换行首章', text: singleText } });
         check('S8d-1 单换行正文（2700 字 20 行零空行）过机审存章（旧版整章 1 段必驳回）',
             single.status === 200, `status=${single.status} body=${single.text.slice(0, 200)}`);
@@ -450,8 +453,10 @@ async function layerMcp() {
             '火盆里的炭塌了一角。我把灯挪近，看清那页末尾还有半行小字，被水渍晕开，认不全了。',
         ];
         let content = '';
-        for (let i = 0; i < 18; i += 1) {
-            content += `${paras[i % paras.length]}这是第${i + 1}遍核对，情形与上一遍略有不同：铜钱数目、垫付名目、来人的时辰，每一条都要对回原册。檐水落了一整夜，火盆的炭明灭不定，我把冷掉的茶泼在地上，重新研墨。\n\n`;
+        // 复读门禁口径：同句 ≥12 字在本章重复 ≥3 次即拦——paras 池 8 句循环 16 段＝每句恰好
+        // 2 次（安全线内），段尾句带序号保证全章唯一。
+        for (let i = 0; i < 16; i += 1) {
+            content += `${paras[i % paras.length]}窗纸上又添了一道${i + 1}寸长的裂口，风把灯焰压得很低。这是第${i + 1}遍核对，情形与上一遍略有不同：铜钱数目、垫付名目、来人的时辰，每一条都要对回原册。檐水落了${i + 1}刻才停，火盆的炭明灭不定，我把冷掉的茶泼在地上，重新研墨。\n\n`;
         }
         content += '我屏住呼吸，把半行小字抄进手心。数到第七下，门被敲响了。\n';
         const m7r = {};
