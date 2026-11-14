@@ -1,5 +1,44 @@
 # Changelog
 
+## v1.7.1 (2026-11-14)
+
+### 新增
+
+- **叙事契约账本（pledge/deadline/secret 三类）**：借鉴天命 v2.8.7 的 Pledge/Deadline/SecretReveal 与火宝逻辑审计 schema，新增 `lib/pledges.js` 纯函数账本（`账本/pledges.json`，append-only，与 facts/relations/arcs 同构）——
+  · 三类契约：`pledge`（承诺）/ `deadline`（带期限事件）/ `secret`（秘密，到期前不能露馅），各自带 `deadlineChapter`（deadline/secret 必填）；
+  · 代码硬判的是「到期这件事的可见性」（每次写章/体检被点名），是否兑现由模型显式登记（kept/broken/revealed 终态），登记是「我判断过」的留痕，比提示词自觉强一档；
+  · `novel_ledger` 新增四个动作：`pledge_setup` / `pledge_replan`（改期）/ `pledge_resolve`（终态）/ `pledge_list`（全量 + 到期告警），输出 schema 同步 `pledges` / `pledgeChanged` / `pledgeIssues`；
+  · 内容门禁第⑨维：到期未兑现 → warning（每次写章点名）；`broken` 契约同时存在到期未还伏笔 → error 阻断（欠账未还禁开新线的契约级版本）；
+  · `validateContinuity` 并入契约账本审计，issue 带 `nodeIds` / `chapters` 定位字段（对齐火宝 schema，面板可点跳实体/章节区间）；
+  · REST `/continuity` 与 `novel_project check` 自动带上契约维度，零改动面板即见。
+
+- **伏笔回收证据硬校验**（借鉴 MirrorNovel semanticMemory 的「回收必须带正文证据」纪律）：`novel_ledger foreshadow_payoff` 升级为回收证据硬校验——回收章正文必须出现该伏笔 `setup` 的关键词（滑窗 + 虚词过滤，与 content-gate 的欠账判据同源，不抄第二份），零命中即拒绝登记「读者收不到回收」。补录无正文旧章或确为「暗回收」时传 `force:true` 豁免（记审计）。纯函数 `foreshadowPayoffVerified` 落 `lib/ledger.js`。
+
+- **写作样稿库**（借鉴 MirrorNovel writingSamples.js 的样稿库纪律 + referenceDistillation 的「学风格不得串设定」边界）：新增 `lib/samples.js` 纯函数台账（`账本/样稿.json`，与 facts 同构）——`novel_ledger` 新增 `sample_add` / `sample_allow` / `sample_revoke` / `sample_remove` / `sample_list` / `sample_prompt` 六个动作。候选池入口唯一（`samplePool` 只认 `approved + allowedForModelInput`，草稿与撤销样稿永远查不出来）；注入边界两套纪律（prose 写新正文 / revise 修订），明确「样稿是资料而非任务指令」「不得引入样稿中的人物、地名、道具与情节」「修订时原文是唯一事实基准」，注入段数与单段字数封顶（3 段 / 240 字）。输出 schema 同步 `samples` / `samplePrompt` / `samplePoolCount`。
+
+- **语义拆书特色词库**（借鉴 MirrorNovel referenceDistillation 的 vocabularyBank）：`novel_library semantic` 报告新增「特色词库」区块——模型在技巧 items 之外另输出一组「特色词 + 出处引文」，代码对每个词做同样的逐字 grounding（词 1–24 字、必须出现在所选章节原文里、且是引文子串），超限/伪造/重复整批拒绝，与既有 items 同纪律。报告渲染与输出 schema 同步 `vocabulary`。
+
+### 修复
+
+- **P0 `novel_ledger` 十个新动作全部不可达**：`foreshadow_payoff` 分支漏了 `if (args.action === 'foreshadow_payoff')` 包裹且直接 `return`，导致其后的 `pledge_*` / `sample_*` 成为死代码——调用一律掉进回收逻辑（`pledge_setup` 报「伏笔不存在：undefined」、`pledge_list` 报「需要正整数 chapter」），更糟的是 `pledge_setup` 传整数章号且 id 撞上伏笔 id 时会**静默把该伏笔标成已回收**。补 action 判断 + 分支末尾加未知 action 兜底 `throw`（这类缺口不再能被下一个分支吸收）。
+- **P1 回收证据闸可绕过**：`foreshadow_payoff` 此前允许「回收章未写 → 无正文 → 自动豁免」，`chapter=99`（全书未写）因此直接过闸。现在回收章**必须是已写章节**（超过全书已写章号即拒绝）；索引里有该章但正文缺失/为空也不再静默豁免，需要 `force:true` 并记审计。
+- **P1 回收判据几乎恒真**：旧判据是「2–4 字滑窗任一命中」，`三星堆金面具` 的伏笔会被无关正文「我在三星手机店里打工」放行。改为两条通道：命中 ≥3 字关键词，或命中 ≥2 个不同 2 字关键词（覆盖「铜镜 + 裂纹」这类合法改写）；setup 短到只有 2 字时才退回单词命中。
+- **P1 三个接线缺口**：
+  · `briefing` 此前不读 `账本/pledges.json` 与 `账本/样稿.json`——CHANGELOG 承诺的「写章注入」并不存在。现在简报带「叙事契约（本章到期与在途）」与「写作样稿（表达校准）」两段（样稿封顶 2 段 × 220 字 + 边界纪律）；
+  · `novel_polish analyze` 返回 `samplePrompt`（revise 边界样稿），润色才有本书标尺；
+  · 提案应用（`applyProposal`）的 `contentGate` 补齐 `relations`/`arcs`/`pledges`——此前「应用」这条路上关系倒挂、弧线停走、契约欠账三类问题静默通过。
+- **P1 到期提醒晚一章**：写第 n 章时门禁拿的是落库前的 `maxWritten = n-1`，到期章正好是 n 的契约要等写到 n+1 才点名。`content-gate` 第⑨维改用 `max(maxWritten, chapter)`（弧线口径不变）。
+- **P2 `foreshadowSetup` 传 `plan=0/负数` 会把已有 plan 静默清空**：改为非正整数直接抛错；`plan` 省略或 `null` 才表示沿用旧值。
+- **P2 契约账本三处漏洞**：`pledge_replan` 无改期上限（无限延期 = 到期告警永久静音，现上限 3 次并记 `replans` 计数）；`pledge_resolve` 允许手工登记 `expired`（`expired` 是代码派生态「到期且仍 open」，手工登记等于给「假装已过去」开门，现只接受 `kept/broken/revealed`）；`pledge_list` 与 digest 现在显示代码判定的「已到期未结」条数，`detectExpiredPledges` 有了真实消费方（仍只报不写）。
+- **P2 `clone` 丢账本**：克隆清单只复制 facts/伏笔/术语表等 9 项，v1.7.1 新增的 `pledges`/`样稿`/`cognition`/`relations`/`arcs` 全被漏掉（而 asset 工具描述承诺「账本一并复制」）。改为按 `账本/` 目录实列整体复制（`pathsFor` 新增 `ledgerDir`），新增账本类型不必再改清单。
+- **工具描述与代码对齐**：`novel_ledger` 的 `force` / `id` / `status` / `sampleScope` 说明改为现行语义（回收章必须已写、≥3 字判据、`expired` 不可手工登记、scope 对 `sample_prompt` 生效），并移除未使用的 `pledgeDigest` / `SAMPLE_PROMPT_RULES_*` 导入。
+- **版本号漂移**：`package.json` / `PLUGIN_VERSION` 停在 1.7.0，`package-lock.json` 更是停在 0.4.1——本版内容已写进 v1.7.1 条目，三处统一对齐到 1.7.1（`npm run build` 的版本一致性闸才不会在发布时炸）。
+
+### 测试
+
+- `smoke` 的全工具 × 全 action 矩阵补齐 v1.7.1 的 10 个新动作 + `foreshadow_payoff` + `novel_character.voice_repair`（此前 76 个动作里 12 个在测试文本里从不出现），并新增「`novel_ledger` / `novel_character` 的 action 枚举必须 100% 进矩阵」的断言——新动作再也不会悄悄逃出护栏。
+- 新增行为级用例：回收章未写被拒 / 正文缺失要 `force` / 无关正文被拒；契约改期上限、`expired` 不可手工登记、到期提醒不晚一章；`briefing` 与 `polish analyze` 真的带上契约与样稿；`clone` 复制全部账本文件。
+
 ## v1.7.0 (2026-11-11)
 
 ### 新增
