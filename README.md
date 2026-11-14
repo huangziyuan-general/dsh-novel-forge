@@ -93,7 +93,7 @@ dsh plugin --profile web add link:/path/to/dsh-novel-forge
 
 **第 2 步 · 重启 DSH web，然后浏览器硬刷新**（客户端 bundle 在进程启动时快照，不重启等于没装）。
 
-**第 3 步 · 验证安装**：右侧栏出现「🔨 锻炉」独立 tab；在会话里让模型「列出小说工具」，应能看到 20 个 `novel_*` 工具。同时 agent 预设「小说锻炉」已自动部署到 `~/.dsh/.agent-presets/novel-forge/`（已存在则跳过，永不覆盖；`DSH_NOVEL_FORGE_REDEPLOY=1` 强制重铺，`DSH_NOVEL_FORGE_SKIP_DEPLOY=1` 关闭）。
+**第 3 步 · 验证安装**：右侧栏出现「🔨 锻炉」独立 tab；在会话里让模型「列出小说工具」，应能看到 24 个 `novel_*` 工具。同时 agent 预设「小说锻炉」已自动部署到 `~/.dsh/.agent-presets/novel-forge/`（已存在则跳过，永不覆盖；`DSH_NOVEL_FORGE_REDEPLOY=1` 强制重铺，`DSH_NOVEL_FORGE_SKIP_DEPLOY=1` 关闭）。
 
 **第 4 步 · 建第一本书**：在会话里直接对模型说，例如：
 
@@ -137,10 +137,10 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 | 一键润色 / 机械校对 | 章节 | 「☑ 审稿项」可勾选本次处理项并填写作者指导，未选意见不进提示词；走旁路引擎，产物是**提案**，不直接改正文；校对守卫更严（篇幅上限 1.06） |
 | 持久批注 | 审稿项 | 引文、段落哈希与邻近上下文共同锚定；正文改版后精确或唯一邻近重定位，不可靠时标失效，不静默猜位置；解决/重开均保留记录 |
 | 档案抽取提案 | 详情页提案区 | `novel_extract` 从旧稿提出人物/世界书候选，每项带已核验原文证据；面板逐项编辑、勾选后应用，未选项保留，人工改档冲突不覆盖 |
-| 全书体检 | 详情页 | 死人复活/账本矛盾/伏笔超期/章号断档/人物卡缺失，零 token |
+| 全书体检 | 详情页 | 死人复活/账本矛盾/伏笔超期/叙事契约违约/章号断档/人物卡缺失，零 token |
 | 黄金三章诊断 | 基本信息卡 | 钩子/开场/冲突/灌输四维数字 + 总评，纯词表零 token |
 | 批量起草 | 详情页 | 并发生成、串行提交；逐章成败、失败阶段/原因、路由、调用次数、耗时与 tokens 写入断点，重开面板仍可查；并发上限 4、默认 1；中断后从断点续跑；上下文超限只降可选材料并重建一次 |
-| 失败正文恢复 | 批量起草卡 | 生成失败或门禁驳回的可用正文留作恢复候选；取回只进编辑器，不直接落章，也不覆盖未保存草稿，仍须显式保存并过门禁 |
+| 失败正文恢复 | 批量起草卡 | 生成失败或门禁驳回的可用正文留作恢复候选；取回只进编辑器，不直接落章，也不覆盖未保存草稿，仍须显式保存并过门禁；候选按保留策略自动清理（最近 20 个 / 30 天） |
 | 前章影响 | 章节 | 按写章时记录的来源指纹列出直接、传递及不可判定的后章；只提示复核，不自动重写或定稿 |
 | 会话疲劳与交接 | 详情页横幅 | 会话内首稿趋势退化 / 首稿均值低于其它会话 70% / 连写 ≥8 章即警示（写章进度卡带会话状态行，文案标清「首稿＝门禁驳回前的初稿」）；「创建新会话并交接」一键建新会话+归档旧会话，交接摘要自动进剪贴板，粘到新会话即可无缝续写 |
 | 提案审批 | 详情页 | 查看提案全文 → 应用 / 丢弃；也可按原稿、提案、当前稿逐段三路合并，冲突默认保留当前稿，版本或哈希变化即拒绝；旧版永不覆盖 |
@@ -154,9 +154,9 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 | `novel_character` | 人物卡 + **语言基因卡**（voice：句长/逻辑/口头禅/绝不说/小动作/语域，结构化存储） | 写章单独注入成区块；audit voice:true 核对禁忌词 |
 | `novel_worldbook` | 世界书条目（add/update/list/remove + import/export） | 设定只认这里；update 保 id；缺触发词不再报错——先抽本书已知实体名，抽不到转常驻并给可见警告 |
 | `novel_scene` | 场景契约（save/get/list/delete）：本章场景/出场人物/**隐藏人物**/世界书白名单/禁项 | 隐藏人物档案不进上下文且正文不许出现其名；契约外人物不注入（省 token） |
-| `novel_briefing` | 写前上下文包（细纲→承诺书→**场景契约**→人物卡→**语言基因卡**→账本→伏笔→世界书→上章结尾→锚段） | 一致性供给侧；按契约裁剪 cast 与世界书 |
+| `novel_briefing` | 写前上下文包（细纲→承诺书→**场景契约**→人物卡→**语言基因卡**→账本→**叙事契约**→伏笔→世界书→上章结尾→锚段→**写作样稿**（表达校准）） | 一致性供给侧；按契约裁剪 cast 与世界书 |
 | `novel_write_chapter` | 写章落盘 | 门禁→机审→账本→**内容门禁（六维）**→**细纲契约指标**→版本化；与同章细纲长段逐字重合只告警并记 minor 债，场景摘要和显式原话段豁免 |
-| `novel_ledger` | 事实账本（含 note）+ **时点推演**（`status_at` 第 n 章快照 / `timeline` 演化线）+ 伏笔埋/收/改期 + 认知账本 | 同章改值拒绝；章号超前拒绝；超期伏笔告警；补录不改历史；认知倒退显形 |
+| `novel_ledger` | 事实账本（含 note）+ **时点推演**（`status_at` 第 n 章快照 / `timeline` 演化线）+ 伏笔埋/收/改期 + **回收证据校验** + 认知账本 + **叙事契约**（pledge/deadline/secret）+ **写作样稿库**（sample_* 六动作） | 同章改值拒绝；章号超前拒绝；超期伏笔告警；回收章必须已写且正文命中关键词（force 记审计）；契约到期未兑现写章时点名，broken 且仍有到期伏笔未还 → 拒绝落盘；补录不改历史；认知倒退显形 |
 | `novel_relation` | 关系账本：人物/组织**之间**的关系状态线（盟友/仇敌/师徒/信任度…）：`update` 登记推进 / `query` 当前值 / `status_at` 时点推演 / `timeline` 演化线 | (A,B) 与 (B,A) 自动归一同一对；同章同对同维度改值=冲突拒绝；正文仍按旧值写 → 内容门禁每章 warning |
 | `novel_arc` | 弧线账本：单人物**维度**随章推进（成长/无畏/信任度/嫌疑度…）：`update` 登记推进 / `query` 当前读数 / `status_at` 时点 / `diagnose` 全书停走诊断 | `stalled`（≥15 章未推进）命中时写章链自动落 major 质量债；`no-move`（全书≥20章只推进过一次）warning；零 token 纯函数 |
 | `novel_quality` | 书级质量债：`view` 看欠了多少账 / 最重是哪章 / 现在该不该继续写；`settle` 结清某章的债 | 三级口径（minor 质量债 / major 需重规划 / hard 硬门禁放行）；局部瑕疵不阻塞全书，硬门禁放行必须回头核对 |
@@ -169,10 +169,10 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 | `novel_diagnose` | 黄金三章四维诊断（钩子/开场/冲突/灌输） | 确定性数字，机审与模型审分离 |
 | `novel_polish` | 段落级病灶定位 + 润色提案提交 + 审稿引文 grounding（`review_quotes`） | 润色也走提案制，永不覆盖旧稿；引文必须逐字（忽略空白）在原文里找到，太短/找不到即整章拒收 |
 | `novel_search` | 长篇检索（build / query / annotate / status）：返回章号+摘录+命中比例；query 弱结果时**自动查询扩写**（改写多路候选重查合并），写章落盘后**新块自动补语义标签** | 索引是**派生物**（`书/.novel/index.db`），删了重跑即得；无 sqlite 自动退化 |
-| `novel_library` | **书库饲料**（import/list/read/analyze/semantic/delete）：`analyze` 拆章长曲线/对话密度/段落节奏/章末钩子率/高频意象；`semantic` 按七个维度提炼技巧与可迁移做法，每条带章节原文证据 | `analyze` 零 token；`semantic` 复用现有 `annotate` 模型路由（无需新增 key），默认前 3 章、单次最多 5 章/30000 字；JSON 仅做一次保守语法修复且不改证据，修复后仍逐字核对引文，报告写入 `书库/<id>/语义拆书-第N-M章.md`；不参与本书一致性判定 |
+| `novel_library` | **书库饲料**（import/list/read/analyze/semantic/delete）：`analyze` 拆章长曲线/对话密度/段落节奏/章末钩子率/高频意象；`semantic` 按七个维度提炼技巧与可迁移做法，每条带章节原文证据，另出**特色词库**（特色词 + 出处引文，逐字 grounding） | `analyze` 零 token；`semantic` 复用现有 `annotate` 模型路由（无需新增 key），默认前 3 章、单次最多 5 章/30000 字；JSON 仅做一次保守语法修复且不改证据，修复后仍逐字核对引文，报告写入 `书库/<id>/语义拆书-第N-M章.md`；不参与本书一致性判定 |
 | `novel_extract` | 从本书旧稿抽取人物卡、别名与世界书候选（all / character / worldbook） | 复用 `annotate`；每条候选必须有含候选名或别名的逐字原文证据；只创建待批提案，模型不能应用，用户编辑勾选后才写入正式档案 |
 | `novel_glossary` | 术语表（add/remove/list） | 随上下文包注入，防专有名词乱译 |
-| `novel_clone_project` | 整书克隆为模板 | 阶段重置、批注/提案与熔断计数清空；人物卡/世界书/账本/伏笔/术语表/场景契约/语言基因/承诺书/本书偏好一并带走 |
+| `novel_clone_project` | 整书克隆为模板 | 阶段重置、批注/提案与熔断计数清空；人物卡/世界书/账本目录整体（facts/伏笔/认知/关系/弧线/契约/样稿）/术语表/场景契约/语言基因/承诺书/本书偏好一并带走 |
 
 > **参数约定**：工具参数刻意只用了标量（字符串/整数/布尔），结构化数据用分隔行表达
 > （如账本更新 `实体|键|值[|备注]`）——对量化小模型也友好。
@@ -193,10 +193,17 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 ├─ 正文/第3章-雨夜来客-v2.md   # 版本化，永不覆盖
 ├─ 账本/facts.json        # [{entity, key, value, chapter, note}]
 ├─ 账本/伏笔.json          # [{id, setup, chapter, plan, payoffChapter}]
+├─ 账本/relations.json     # 人物/组织间关系状态线（盟友/仇敌/师徒/信任度…）
+├─ 账本/arcs.json          # 单人物维度随章推进（成长/信任度/嫌疑度…）
+├─ 账本/cognition.json     # 认知账本：谁知道什么 / 不知道什么 / 读者已知
+├─ 账本/pledges.json       # 叙事契约：pledge/deadline/secret，带到期章号
+├─ 账本/样稿.json          # 写作样稿库：认可样稿与注入批准位
 └─ .novel/
    ├─ audit.jsonl         # 全动作审计（谁在哪章做了什么、何时被拒）
    ├─ batch-checkpoint.json # 批量断点 + records 逐章状态/错误/调用指标（status: running→done|partial）
    ├─ index.db            # 检索索引（派生物：删了重跑 novel_search build 即得）
+   ├─ invocations/         # 幂等回执（重复请求识别；保留最近 200 个 / 30 天）
+   ├─ recovery-pruned.json # 已清理恢复候选的有界索引（404 区分已清理与不存在）
    ├─ annotations.json    # 可重定位审稿批注（open / resolved / stale）
    ├─ extraction-proposals.json # 待人工编辑、选择和应用的档案候选
    ├─ preferences.json    # 仅由用户明确确认的本书长期偏好
@@ -224,6 +231,8 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 | engine.channels.\*.maxTokens | 0 | 0＝不传，继承宿主按模型校准的上限（推荐保持默认）；显式设小会被推理模型的思考+整章重写烧穿（报 `OUTPUT_TRUNCATED`） |
 | engine.retries | 2 | 旁路调用的指数退避重试次数 |
 | engine.attachSession | false | 旁路流是否写进会话记录；默认不写（这才是"不占主对话"） |
+| allowedHosts | [] | 面板 API 的额外本机白名单：裸主机名数组（不带端口，大小写不敏感，Origin 共用同一集合）；默认空 = 只许 localhost/127.0.0.1/[::1]，与未配置逐字相同；拒通配符 |
+| autoOpenPanel | true | 打开 DSH web 时自动展开锻炉 tab；false 只关自动弹出，tab 仍常驻 |
 | search.autoAnnotate | true | 写章落盘后自动给本章新块补语义标签（后台执行，封顶 4 块）；false 整体关掉 |
 
 > `engine` 整块都可省略——省略即「用当前路由、重试 2 次、不写会话」，最省心的默认。

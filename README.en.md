@@ -80,7 +80,7 @@ dsh plugin --profile web add link:/path/to/dsh-novel-forge
 
 **Step 2 · Restart DSH web, then hard-refresh the browser** (the client bundle is snapshotted at process start; without a restart it's as if you never installed it).
 
-**Step 3 · Verify the install**: a standalone "🔨 Forge" tab appears in the right sidebar; in a session, ask the model to "list the novel tools" — you should see 20 `novel_*` tools. The agent preset "Novel Forge" is also auto-deployed to `~/.dsh/.agent-presets/novel-forge/` (skipped if already present, never overwritten; `DSH_NOVEL_FORGE_REDEPLOY=1` forces a redeploy, `DSH_NOVEL_FORGE_SKIP_DEPLOY=1` disables it).
+**Step 3 · Verify the install**: a standalone "🔨 Forge" tab appears in the right sidebar; in a session, ask the model to "list the novel tools" — you should see 24 `novel_*` tools. The agent preset "Novel Forge" is also auto-deployed to `~/.dsh/.agent-presets/novel-forge/` (skipped if already present, never overwritten; `DSH_NOVEL_FORGE_REDEPLOY=1` forces a redeploy, `DSH_NOVEL_FORGE_SKIP_DEPLOY=1` disables it).
 
 **Step 4 · Create your first book**: just tell the model in a session, e.g.:
 
@@ -124,10 +124,10 @@ novel_project init → novel_project phase (see the nine-stage board, fill entry
 | One-click polish / mechanical proofread | chapter | selectable review issues plus author guidance; unselected issues never enter the prompt; runs through the side-channel engine, output is a **proposal**, doesn't touch the body directly; proofread guard is stricter (length cap 1.06) |
 | Persistent annotations | review issues | quotes, paragraph hashes, and neighboring context re-anchor after saves; only exact or unique-context matches move, otherwise the item becomes stale; resolve/reopen preserves history |
 | Archive extraction proposals | detail-page proposal area | `novel_extract` creates evidence-backed character/worldbook candidates; edit and select items before applying, while unselected items remain pending and later manual edits are never overwritten |
-| Full-book health check | detail page | dead-character revival / ledger contradictions / overdue foreshadowing / chapter-number gaps / missing character cards, zero token |
+| Full-book health check | detail page | dead-character revival / ledger contradictions / overdue foreshadowing / broken narrative pledges / chapter-number gaps / missing character cards, zero token |
 | Golden-three-chapter diagnosis | overview card | four-axis numbers (hook / opening / conflict / infodump) + overall verdict, pure wordlist, zero token |
 | Batch drafting | detail page | concurrent generation, serial commit; persisted per-chapter diagnostics and token usage; concurrency cap 4, default 1; checkpoint resume; context overflow retries once with optional context reduced, never the outline or hard constraints |
-| Failed-draft recovery | batch card | failed or gate-rejected usable text remains a recovery candidate; restoring only fills the editor, never commits directly or overwrites an unsaved draft |
+| Failed-draft recovery | batch card | failed or gate-rejected usable text remains a recovery candidate; restoring only fills the editor, never commits directly or overwrites an unsaved draft; candidates are auto-pruned by retention (latest 20 / 30 days) |
 | Previous-chapter impact | chapter | source fingerprints identify direct, transitive, and undeterminable later chapters; review notice only, never automatic rewriting or finalization |
 | Session fatigue & handoff | detail-page banner | within-session first-draft decline / session average under 70% of other sessions' first drafts / ≥8 consecutive chapters triggers a warning (the write-progress card carries a session-status line, labelled "first draft = pre-gate draft"); "create new session and hand off" builds + archives a new session in one click, handoff summary auto-copies to clipboard, paste into the new session to continue seamlessly |
 | Proposal approval | detail page | apply / discard, or merge base, proposal, and current text paragraph by paragraph; conflicts default to current text and stale version/hash checks reject the write; old versions are never overwritten |
@@ -141,9 +141,9 @@ novel_project init → novel_project phase (see the nine-stage board, fill entry
 | `novel_character` | character cards + **voice-gene cards** (voice: sentence length / logic / catchphrases / never-says / small gestures / register, structured storage) | injected as a block when writing; audit voice:true checks taboo words |
 | `novel_worldbook` | worldbook entries (add/update/list/remove + import/export) | settings only recognized here; update preserves id; a missing trigger no longer errors — known entity names are derived from the content, otherwise the entry becomes always-on with a visible warning |
 | `novel_scene` | scene contract (save/get/list/delete): this-chapter scenes / cast / **hidden characters** / worldbook whitelist / forbidden items | hidden-character dossiers never enter context and their names are forbidden in the body; off-contract characters aren't injected (saves tokens) |
-| `novel_briefing` | pre-write context pack (outline → pledge → **scene contract** → character cards → **voice-gene cards** → ledger → foreshadowing → worldbook → previous chapter ending → anchor segments) | consistency supply side; trims cast and worldbook by contract |
+| `novel_briefing` | pre-write context pack (outline → pledge → **scene contract** → character cards → **voice-gene cards** → ledger → **narrative pledges** → foreshadowing → worldbook → previous chapter ending → anchor segments → **writing samples** (style calibration)) | consistency supply side; trims cast and worldbook by contract |
 | `novel_write_chapter` | write & commit chapter | gate → mechanical check → ledger → **content gate (six dims)** → **outline-contract metrics** → versioning; long verbatim overlap with the chapter outline only warns as minor debt, with scene summaries and declared quotes exempt |
-| `novel_ledger` | fact ledger (with notes) + **point-in-time simulation** (`status_at` snapshot of chapter n / `timeline` evolution) + foreshadowing plant / payoff / reschedule + cognition ledger | same-chapter value change rejected; chapter-number-ahead rejected; overdue foreshadowing warned; backfill doesn't alter history; cognition regressions surfaced |
+| `novel_ledger` | fact ledger (with notes) + **point-in-time simulation** (`status_at` snapshot of chapter n / `timeline` evolution) + foreshadowing plant / payoff / reschedule + **payoff evidence check** + cognition ledger + **narrative pledges** (pledge/deadline/secret) + **writing-sample library** (six sample_* actions) | same-chapter value change rejected; chapter-number-ahead rejected; overdue foreshadowing warned; payoff chapter must already exist and the body must hit keywords (force is audited); due-but-unfulfilled pledges are named at each write, broken pledge with an overdue foreshadowing blocks the commit; backfill doesn't alter history; cognition regressions surfaced |
 | `novel_relation` | relation ledger: **between-entity** state lines (ally/enemy/mentor/trust…): `update` / `query` / `status_at` / `timeline` | (A,B) and (B,A) auto-normalised to same pair; same-chapter same-pair same-dimension change rejected; body still using old value → content gate warning every chapter |
 | `novel_arc` | arc ledger: per-character **dimension** progression (growth/confidence/suspicion…): `update` / `query` / `status_at` / `diagnose` | `stalled` (≥15 chapters without progress) auto-logs a **major** quality debt; `no-move` (single entry, ≥20 chapters) warning; zero-token |
 | `novel_quality` | book-level quality debt: `view` / `settle` | three-tier (minor / major / hard); local defects don't block the book; force-passed hard gates must be re-checked |
@@ -154,12 +154,12 @@ novel_project init → novel_project phase (see the nine-stage board, fill entry
 | `novel_import` | local book import (preview/import/**backfill gate replay**; file supports `.md`/`.txt`/`.docx` — docx split by Word heading styles and "Chapter N" rules) | pure-function chapter split; create book + versioned commit; docx uses `readBytes` byte channel (text channel corrupts binary), rejects zip64, 48MB decompress cap |
 | `novel_export` | export whole book (md/txt + stats) | assembled in version order, written to `导出/` |
 | `novel_diagnose` | golden-three-chapter four-axis diagnosis (hook / opening / conflict / infodump) | deterministic numbers, mechanical and model review separated |
-| `novel_polish` | paragraph-level lesion localization + polish proposal submission | polish also uses proposals, never overwrites old text |
+| `novel_polish` | paragraph-level lesion localization + polish proposal submission + review-quote grounding (`review_quotes`) | polish also uses proposals, never overwrites old text; quotes must be found verbatim (whitespace-insensitive) in the body, too-short or missing quotes reject the whole chapter |
 | `novel_search` | long-work search (build / query / annotate / status): returns chapter number + excerpt + hit ratio | index is a **derivative** (`book/.novel/index.db`), re-runnable after deletion; degrades without sqlite |
-| `novel_library` | **book-library feed** (import/list/read/analyze/semantic/delete): `analyze` profiles chapter length / dialogue / paragraph rhythm / hooks / imagery; `semantic` extracts transferable techniques across seven dimensions, each backed by chapter evidence | `analyze` is zero-token; `semantic` reuses the existing `annotate` model route (no extra key), defaults to 3 chapters and caps each run at 5 chapters / 30,000 chars; one conservative JSON syntax repair never changes evidence, and every quote is still verified before writing `书库/<id>/语义拆书-第N-M章.md`; never joins book consistency judgments |
+| `novel_library` | **book-library feed** (import/list/read/analyze/semantic/delete): `analyze` profiles chapter length / dialogue / paragraph rhythm / hooks / imagery; `semantic` extracts transferable techniques across seven dimensions, each backed by chapter evidence, plus a **vocabulary bank** (distinctive words + source quotes, verbatim-grounded) | `analyze` is zero-token; `semantic` reuses the existing `annotate` model route (no extra key), defaults to 3 chapters and caps each run at 5 chapters / 30,000 chars; one conservative JSON syntax repair never changes evidence, and every quote is still verified before writing `书库/<id>/语义拆书-第N-M章.md`; never joins book consistency judgments |
 | `novel_extract` | proposes character cards, aliases, and worldbook entries from existing chapters | reuses `annotate`; every item needs verbatim evidence containing its name or alias; creates proposals only—users edit, select, and apply them in the panel, with conflict protection for later manual edits |
 | `novel_glossary` | glossary (add/remove/list) | injected with context pack, prevents proper-noun mistranslation |
-| `novel_clone_project` | clone whole book as template | stage reset, proposal and circuit-breaker counters cleared; character cards / worldbook / ledger / foreshadowing / glossary / scene contracts / voice genes all carried along |
+| `novel_clone_project` | clone whole book as template | stage reset, proposal and circuit-breaker counters cleared; character cards / worldbook / the whole ledger directory (facts / foreshadowing / cognition / relations / arcs / pledges / samples) / glossary / scene contracts / voice genes all carried along |
 
 > **Parameter convention**: tool parameters deliberately use only scalars (string / integer / boolean); structured data is expressed with delimiter rows
 > (e.g. ledger update `entity|key|value[|note]`) — friendly even to small quantized models.
@@ -180,10 +180,17 @@ novel_project init → novel_project phase (see the nine-stage board, fill entry
 ├─ 正文/第3章-雨夜来客-v2.md   # versioned, never overwritten
 ├─ 账本/facts.json        # [{entity, key, value, chapter, note}]
 ├─ 账本/伏笔.json          # [{id, setup, chapter, plan, payoffChapter}]
+├─ 账本/relations.json     # between-entity relation state lines (ally/enemy/mentor/trust…)
+├─ 账本/arcs.json          # per-character dimension progression (growth/confidence/suspicion…)
+├─ 账本/cognition.json     # cognition ledger: who knows what / doesn't know / reader-known
+├─ 账本/pledges.json       # narrative pledges: pledge/deadline/secret with due chapter
+├─ 账本/样稿.json          # writing-sample library: approved samples and injection opt-ins
 └─ .novel/
    ├─ audit.jsonl         # full action audit (who did what in which chapter, when rejected)
    ├─ batch-checkpoint.json # batch checkpoint + per-chapter records for status/errors/model metrics (running→done|partial)
    ├─ index.db            # search index (derivative: re-run novel_search build after deletion)
+   ├─ invocations/         # idempotency receipts (duplicate-request detection; latest 200 / 30 days kept)
+   ├─ recovery-pruned.json # bounded index of pruned recovery candidates (404 distinguishes pruned vs missing)
    ├─ annotations.json    # re-anchorable review annotations (open / resolved / stale)
    ├─ extraction-proposals.json # candidates awaiting user edit, selection, and approval
    ├─ preferences.json    # explicitly confirmed book-scoped author preferences
@@ -207,10 +214,13 @@ Uninstalling the plugin does not affect any book data.
 | scanTopK | 8 | max problems listed per dimension in scan report |
 | repetitionWindow | 10 | sliding window for cross-chapter repetition detection (compare against previous N chapters) |
 | skipPresetDeploy | false | skip preset deploy |
-| engine.channels.\* | inherit current route | side channels (polish/proofread/annotate/draft) override per channel; long-text channels (polish/proofread/draft) `timeoutMs` default 600000 |
+| engine.channels.\* | inherit current route | side channels (polish/proofread/annotate/expand/draft) override per channel; long-text channels (polish/proofread/draft) `timeoutMs` default 600000, short tasks (annotate/expand) default 512 tok / 60s |
 | engine.channels.\*.maxTokens | 0 | 0 = not passed, inherits host's model-calibrated cap (keep default recommended); setting small explicitly gets burned through by the reasoning model's thinking + full rewrite (reports `OUTPUT_TRUNCATED`) |
 | engine.retries | 2 | exponential backoff retries for side-channel calls |
 | engine.attachSession | false | whether the side-channel flow writes to the session log; default off (that's what "doesn't occupy the main chat" means) |
+| allowedHosts | [] | extra allowlist for the panel API: array of bare hostnames (no port, case-insensitive, Origin shares the same set); default empty = localhost/127.0.0.1/[::1] only, byte-identical to unconfigured; wildcards rejected |
+| autoOpenPanel | true | auto-open the Forge tab when DSH web loads; false only stops the auto-open, the tab stays persistent |
+| search.autoAnnotate | true | auto-tag new index chunks after chapter commit (background, capped at 4 chunks); false turns it off entirely |
 
 > The entire `engine` block can be omitted — omitting means "use the current route, retry 2×, don't write session", the most worry-free default.
 > The plugin still loads when the host has no model service; only when a side channel is actually called does it return a readable error.
