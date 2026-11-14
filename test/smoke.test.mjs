@@ -1838,6 +1838,8 @@ test('★ 全工具×全 action：真校验器验证输出 + render 冒烟', asy
         ['novel_outline', 'approve', { action: 'approve', book: A, chapter: 1 }],
         ['novel_character', 'save', { action: 'save', book: A, name: '测者甲', card: '外在底色：自检用人物卡' }],
         ['novel_character', 'list', { action: 'list', book: A }],
+        // v1.7.1 的 voice_repair 从没进过任何测试（12 个「测试文本里从不出现」的动作之一）
+        ['novel_character', 'voice_repair', { action: 'voice_repair', book: A }],
         ['novel_glossary', 'add', { action: 'add', book: A, term: '自检词', definition: '自检定义' }],
         ['novel_glossary', 'list', { action: 'list', book: A }],
         ['novel_glossary', 'remove', { action: 'remove', book: A, term: '自检词' }],
@@ -1854,7 +1856,23 @@ test('★ 全工具×全 action：真校验器验证输出 + render 冒烟', asy
         ['novel_ledger', 'status_at', { action: 'status_at', book: A, at: 1 }],
         ['novel_ledger', 'timeline', { action: 'timeline', book: A, entity: '测者甲' }],
         ['novel_ledger', 'foreshadow_setup', { action: 'foreshadow_setup', book: A, chapter: 1, setup: '自检伏笔', plan: 2 }],
+        ['novel_ledger', 'list', { action: 'list', book: A }],
+        ['novel_ledger', 'cognition', { action: 'cognition', book: A }],
+        // v1.7.1 新动作（10 个）此前全部不可达：payoff 分支漏了 action 判断，后面整段成了死代码
+        ['novel_ledger', 'pledge_setup', { action: 'pledge_setup', book: A, chapter: 1, kind: 'deadline', statement: '三天内交出族谱', deadlineChapter: 3, subject: '测者甲' }],
+        ['novel_ledger', 'pledge_replan', { action: 'pledge_replan', book: A, id: 'P1', deadlineChapter: 5 }],
+        ['novel_ledger', 'pledge_resolve', { action: 'pledge_resolve', book: A, id: 'P1', status: 'kept' }],
+        ['novel_ledger', 'pledge_list', { action: 'pledge_list', book: A }],
+        ['novel_ledger', 'sample_add', { action: 'sample_add', book: A, sampleContent: '他把灯芯拨亮一点，火苗在铜罩里晃了晃，影子也跟着摇。这一段是自检用的样稿正文，长度足够过掉四十字的下限。' }],
+        ['novel_ledger', 'sample_allow', { action: 'sample_allow', book: A, sampleId: 'S1' }],
+        ['novel_ledger', 'sample_list', { action: 'sample_list', book: A }],
+        ['novel_ledger', 'sample_prompt', { action: 'sample_prompt', book: A, samplePurpose: 'revise' }],
+        ['novel_ledger', 'sample_revoke', { action: 'sample_revoke', book: A, sampleId: 'S1' }],
+        ['novel_ledger', 'sample_remove', { action: 'sample_remove', book: A, sampleId: 'S1' }],
         ['novel_write_chapter', null, { book: A, chapter: 1, title: '自检第一章', content: GOOD_CHAPTER, cast: '测者甲', summary: '自检用一章' }],
+        // 回收证据校验：自检正文不含「自检伏笔」——非 force 必须被拒（下面单测覆盖），
+        // 这里用 force 走通 schema/render 通道
+        ['novel_ledger', 'foreshadow_payoff', { action: 'foreshadow_payoff', book: A, chapter: 1, id: 'F1', force: true }],
         ['novel_style', 'build', { action: 'build', book: A }],
         ['novel_style', 'check', { action: 'check', book: A, chapter: 1 }],
         ['novel_search', 'build', { action: 'build', book: A }],
@@ -1876,6 +1894,8 @@ test('★ 全工具×全 action：真校验器验证输出 + render 冒烟', asy
     ];
 
     const validated = [], skipped = [];
+    // 声明了 action 的工具的全部枚举值 → 矩阵覆盖集（供末尾的「无遗漏」断言用）
+    const coveredSet = new Set(matrix.filter(([, a]) => a !== null).map(([n, a]) => `${n}.${a}`));
     for (const [name, action, args] of matrix) {
         const t = tool(name);
         assert.ok(t.output?.schema, `${name} 缺 output.schema 声明`);
@@ -1898,6 +1918,99 @@ test('★ 全工具×全 action：真校验器验证输出 + render 冒烟', asy
     // 护栏不能静默退化成全 skip：一旦大面积跳过说明夹具坏了，必须当场报出来
     assert.ok(validated.length >= 35, `覆盖塌方：只验证了 ${validated.length} 个 action（skip ${skipped.length}）——检查夹具状态`);
     assert.ok(!skipped.some((s) => s.startsWith('novel_propose.list')), `novel_propose list 不允许 skip——它是 S1 事故的当事 action`);
+
+    // 矩阵与「工具参数里声明的 action 枚举」必须严丝合缝：漏一个 action 就等于漏一条输出
+    // 契约（v1.7.1 的 10 个新动作 + foreshadow_payoff 就是这样从测试里消失的）。
+    // 只对**本模块全量要求**的工具做硬断言：其余工具的历史缺口另案清（见 OPEN 清单），
+    // 但绝不允许这里点名的两个工具再漏。
+    const MUST_COVER = ['novel_ledger', 'novel_character'];
+    const missing = [];
+    for (const t of ctx._registered) {
+        if (!MUST_COVER.includes(t.name)) continue;
+        const actions = t.parameters?.properties?.action?.enum ?? [];
+        for (const a of actions) {
+            if (!coveredSet.has(`${t.name}.${a}`)) missing.push(`${t.name}.${a}`);
+        }
+    }
+    assert.deepEqual(missing, [], `这些 action 声明了却从未进入矩阵（输出契约无人守护）：${missing.join('、')}`);
+});
+
+// ── 伏笔回收证据链（v1.7.1）：章号闸 / 正文缺失 / 判据强度 ────────────────
+
+test('★ foreshadow_payoff 证据链：未写章节被拒、正文缺失要 force、无关正文被拒', async () => {
+    const book = '证据链书';
+    await tool('novel_project').execute({ action: 'init', book, title: book, genre: '悬疑' }, exec);
+    await setOutlineContract(book, 'warn');
+    await tool('novel_outline').execute({ action: 'save_chapter', book, chapter: 1, outline: '第1章：夜巡义庄。出场：守夜人。' }, exec);
+    await tool('novel_outline').execute({ action: 'approve', book, chapter: 1 }, exec);
+    // 正文里真的出现了「青铜灯」，供回收证据命中
+    const content = `他把青铜灯的灯芯拨亮，灯罩上积了一层灰。\n\n${NO_HOOK_CHAPTER}`;
+    await tool('novel_write_chapter').execute({ book, chapter: 1, title: '夜巡', content, summary: '夜巡义庄。', cast: '守夜人' }, exec);
+    const ledger = tool('novel_ledger');
+    await ledger.execute({ action: 'foreshadow_setup', book, chapter: 1, setup: '青铜灯的灯芯', plan: 2 }, exec); // F1
+    await ledger.execute({ action: 'foreshadow_setup', book, chapter: 1, setup: '阴沉木匣' }, exec);            // F2
+    await ledger.execute({ action: 'foreshadow_setup', book, chapter: 1, setup: '阴沉木匣' }, exec);            // F3
+    await ledger.execute({ action: 'foreshadow_setup', book, chapter: 1, setup: '青铜灯的灯芯' }, exec);        // F4
+
+    // ① 章号闸：指向全书还没写到的第 2 章 → 拒绝（旧实现无正文即豁免，等于整道闸可绕）
+    await assert.rejects(
+        () => ledger.execute({ action: 'foreshadow_payoff', book, chapter: 2, id: 'F3' }, exec),
+        /尚未写/,
+        '回收章没写就必须拒绝',
+    );
+    // ② 正文里真写了伏笔 → 放行
+    const ok = await ledger.execute({ action: 'foreshadow_payoff', book, chapter: 1, id: 'F1' }, exec);
+    assert.equal(ok.changed.payoffChapter, 1);
+    // ③ 无关正文（不含「阴沉木匣」的任何 ≥3 字/双 2 字证据）→ 拒绝
+    await assert.rejects(
+        () => ledger.execute({ action: 'foreshadow_payoff', book, chapter: 1, id: 'F2' }, exec),
+        /关键词证据/,
+    );
+    // ④ 索引里有第 1 章但正文文件被删 → 不再静默豁免，必须 force
+    const meta = JSON.parse(fs.readFileSync(path.join(root, book, 'novel.json'), 'utf8'));
+    fs.unlinkSync(path.join(root, book, '正文', path.basename(meta.chapters['1'].path)));
+    await assert.rejects(
+        () => ledger.execute({ action: 'foreshadow_payoff', book, chapter: 1, id: 'F4' }, exec),
+        /没有正文/,
+    );
+    const forced = await ledger.execute({ action: 'foreshadow_payoff', book, chapter: 1, id: 'F4', force: true }, exec);
+    assert.equal(forced.changed.payoffChapter, 1, 'force 放行（纯补录/暗回收）');
+});
+
+// ── v1.7.1 接线：简报读 pledges/samples，润色 analyze 带样稿 ──────────────
+
+test('★ 接线：写章简报注入契约到期提醒与样稿；润色 analyze 注入 revise 样稿', async () => {
+    const book = '接线书';
+    await tool('novel_project').execute({ action: 'init', book, title: book, genre: '悬疑' }, exec);
+    await setOutlineContract(book, 'warn');
+    await tool('novel_outline').execute({ action: 'save_book', book, outline: '# 全书大纲\n自检用大纲' }, exec);
+    await tool('novel_outline').execute({ action: 'save_chapter', book, chapter: 1, outline: '第1章：夜巡义庄。出场：守夜人。' }, exec);
+    await tool('novel_outline').execute({ action: 'approve', book, chapter: 1 }, exec);
+    await tool('novel_write_chapter').execute({
+        book, chapter: 1, title: '夜巡', content: NO_HOOK_CHAPTER, summary: '夜巡义庄。', cast: '守夜人',
+    }, exec);
+    await tool('novel_ledger').execute({
+        action: 'pledge_setup', book, chapter: 1, kind: 'deadline', statement: '天亮前交出账册', deadlineChapter: 2, subject: '守夜人',
+    }, exec);
+    await tool('novel_ledger').execute({
+        action: 'sample_add', book, sampleContent: '他把灯芯拨亮一点，火苗在铜罩里晃了晃，影子也跟着摇。屋子静得能听见灰落下来的声音。',
+    }, exec);
+    await tool('novel_ledger').execute({ action: 'sample_allow', book, sampleId: 'S1' }, exec);
+
+    // 写第 2 章前的简报：契约「第2章到期」必须在动笔前就点名
+    const briefing = await tool('novel_briefing').execute({ book, chapter: 2 }, exec);
+    const sec = briefing.sections.find((s) => s.name.includes('叙事契约'));
+    assert.ok(sec, `简报缺契约段：${briefing.sections.map((s) => s.name).join('/')}`);
+    assert.ok(sec.content.includes('P1') && sec.content.includes('天亮前交出账册'), '契约正文要进简报');
+    assert.ok(/到期/.test(sec.content), '本章到期必须在动笔前可见');
+    const sampleSec = briefing.sections.find((s) => s.name.includes('样稿'));
+    assert.ok(sampleSec, '样稿段必须进简报（否则 sample_allow 等于没接上）');
+    assert.ok(sampleSec.content.includes('火苗在铜罩里晃了晃'), '样稿正文要进注入段');
+    assert.ok(/不得引入样稿/.test(sampleSec.content), '边界纪律必须同段给出');
+
+    // 润色侧：analyze 返回 revise 边界样稿，模型改写时才有本书标尺
+    const pz = await tool('novel_polish').execute({ action: 'analyze', book, chapter: 1 }, exec);
+    assert.ok(typeof pz.samplePrompt === 'string' && pz.samplePrompt.includes('火苗在铜罩里晃了晃'), '润色 analyze 必须带样稿');
 });
 
 // ── P4a：落盘后的审计写失败不得拖垂整章 ────────────────────────────────

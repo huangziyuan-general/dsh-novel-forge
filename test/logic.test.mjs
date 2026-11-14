@@ -12,7 +12,7 @@ import { detectVolumePlan } from '../lib/phase-io.js';
 import { breakerState, recordRejection, recordSuccess, clearBreaker, breakerDigest } from '../lib/circuit-breaker.js';
 import { reviewForPlatform, longestSufferingRun, sentenceCv } from '../lib/platform-review.js';
 import { scanSensitive, CENSOR_KEYS } from '../lib/censor.js';
-import { applyFactUpdates, queryFacts, factsDigest, assertLedgerChapter, factsAt, statusTimeline, foreshadowSetup, foreshadowPayoff, openForeshadows, foreshadowDigest, overdueForeshadows } from '../lib/ledger.js';
+import { applyFactUpdates, queryFacts, factsDigest, assertLedgerChapter, factsAt, statusTimeline, foreshadowSetup, foreshadowPayoff, foreshadowPayoffVerified, openForeshadows, foreshadowDigest, overdueForeshadows } from '../lib/ledger.js';
 import { computeAudit, auditVerdict, paragraphCharProfile, chapterCharTarget, thickenQuota } from '../lib/audit.js';
 import { detectHookKind, stripEmphasis } from '../lib/hook.js';
 import { outlineCapacityEstimate, sceneCharBudget, countSceneBeats, SCENE_BASE_CHARS, SCENE_BEAT_CHARS, SCENE_BEATS_CAP } from '../lib/gate-metrics.js';
@@ -184,6 +184,73 @@ test('ledger: 伏笔埋设/回收/重复回收拒绝', () => {
     assert.throws(() => foreshadowPayoff(list, 'F1', 21), /已.*回收/);
     assert.throws(() => foreshadowPayoff(list, 'F9', 21), /不存在/);
     assert.ok(foreshadowDigest(list)[0].includes('F2'));
+});
+
+// ② 回收证据硬校验（借鉴 MirrorNovel semanticMemory 的「回收必须带正文证据」纪律）：
+// 回收章正文未出现该伏笔 setup 的任何关键词 → 拒绝登记（读者收不到回收）；
+// 命中则放行；content 为空（补录无正文旧章）走无正文豁免。
+test('foreshadowPayoffVerified：回收章正文零命中伏笔关键词 → 拒绝', () => {
+    const list = foreshadowSetup([], { setup: '铜镜的裂纹', chapter: 5 });
+    // 回收章正文完全没提铜镜/裂纹 → 读者收不到这个回收
+    assert.throws(
+        () => foreshadowPayoffVerified(list, 'F1', 20, '他转身离开，没有人回头。'),
+        /未出现该伏笔任何关键词|正文未出现/,
+    );
+});
+
+test('foreshadowPayoffVerified：回收章正文命中伏笔关键词 → 放行', () => {
+    const list = foreshadowSetup([], { setup: '铜镜的裂纹', chapter: 5 });
+    // 正文里提到了「铜镜」与「裂纹」→ 证据成立
+    const out = foreshadowPayoffVerified(list, 'F1', 20, '他拿起那面铜镜，裂纹在灯下泛出冷光。');
+    assert.equal(out[0].payoffChapter, 20);
+    assert.equal(openForeshadows(out).length, 0);
+});
+
+test('foreshadowPayoffVerified：无正文（null/空串）→ 豁免，直接登记', () => {
+    const list = foreshadowSetup([], { setup: '师尊的沉默', chapter: 3 });
+    // 补录更早章节且该章无正文文件 → content 为 null → 走豁免
+    assert.equal(foreshadowPayoffVerified(list, 'F1', 10, null)[0].payoffChapter, 10);
+    assert.equal(foreshadowPayoffVerified(foreshadowSetup([], { setup: '铜镜', chapter: 1 }), 'F1', 5, '')[0].payoffChapter, 5);
+});
+
+test('foreshadowPayoffVerified：已回收 / 不存在 → 拒绝（与 foreshadowPayoff 同纪律）', () => {
+    const list = foreshadowSetup([], { setup: '铜镜的裂纹', chapter: 5 });
+    const paid = foreshadowPayoff(list, 'F1', 20);
+    assert.throws(() => foreshadowPayoffVerified(paid, 'F1', 21, '铜镜。'), /已.*回收/);
+    assert.throws(() => foreshadowPayoffVerified(list, 'F9', 20, '铜镜。'), /不存在/);
+});
+
+test('★ foreshadowPayoffVerified：无关正文不能靠 2 字巧合过闸（证据强度）', () => {
+    // setup「三星堆金面具」的 2 字窗口里有「三星」——旧判据「任一 2 字词命中」等于恒真，
+    // 正文写「三星手机」就能把这条伏笔标成已回收。新判据要求 ≥3 字命中或 2 字命中 ≥2 个。
+    const list = foreshadowSetup([], { setup: '三星堆金面具', chapter: 5 });
+    assert.throws(
+        () => foreshadowPayoffVerified(list, 'F1', 20, '我在三星手机店里打工，一天站十个小时。'),
+        /关键词证据/,
+        '只撞上「三星」两字 → 拒绝',
+    );
+    // 真的写到了伏笔本身（≥3 字「三星堆」或「金面具」）→ 放行
+    assert.equal(
+        foreshadowPayoffVerified(list, 'F1', 20, '他把那副三星堆金面具扣在脸上。')[0].payoffChapter,
+        20,
+    );
+    // 分散命中两个不同的 2 字词（合法改写/复述）→ 放行
+    assert.equal(
+        foreshadowPayoffVerified(list, 'F1', 20, '面具的边沿泛着金光，像三星堆出土的那类东西。')[0].payoffChapter,
+        20,
+    );
+});
+
+test('★ foreshadowSetup：plan 传 0/负数/非整数 → 抛错（不许静默抹掉原 plan）', () => {
+    let list = foreshadowSetup([], { setup: '铜镜的裂纹', chapter: 2, plan: 9 });
+    for (const bad of [0, -3, 2.5, 'abc']) {
+        assert.throws(() => foreshadowSetup(list, { id: 'F1', setup: '铜镜的裂纹', chapter: 2, plan: bad }), /正整数章号/, `plan=${bad} 必须拒绝`);
+    }
+    // 不传 / 传 null = 沿用旧值（不是「清空」）
+    list = foreshadowSetup(list, { id: 'F1', setup: '铜镜的裂纹', chapter: 2 });
+    assert.equal(list[0].plan, 9, '不传 plan 保留原值');
+    list = foreshadowSetup(list, { id: 'F1', setup: '铜镜的裂纹', chapter: 2, plan: null });
+    assert.equal(list[0].plan, 9, 'plan=null 也保留原值');
 });
 
 test('ledger: 伏笔 plan 预计回收与超期告警', () => {
@@ -2440,6 +2507,12 @@ test('★ cloneProject（lib/clone.js 共享核心）：章节资产全带走、
     files.set('源书/大纲/细纲/第1章.md', '细纲1');
     files.set('源书/设定/世界书.json', '[]');
     files.set('源书/账本/facts.json', '{}');
+    // v1.7.1 新增账本：手工清单时代这五个全被漏掉（克隆出来的书等于没有契约/样稿/认知账本）。
+    files.set('源书/账本/pledges.json', '[{"id":"P1"}]');
+    files.set('源书/账本/样稿.json', '[{"id":"S1"}]');
+    files.set('源书/账本/relations.json', '[]');
+    files.set('源书/账本/cognition.json', '[]');
+    files.set('源书/账本/arcs.json', '[]');
     files.set('源书/人物/主角.md', '人物卡');
     files.set('源书/设定/故事承诺书.md', '承诺');
     files.set('源书/.novel/reader-promises.json', '{"schemaVersion":1,"items":[]}');
@@ -2463,6 +2536,10 @@ test('★ cloneProject（lib/clone.js 共享核心）：章节资产全带走、
     assert.ok(files.get('新书/大纲/细纲/第1章.md')?.includes('细纲1'), '细纲按目录实列复制');
     assert.ok(files.get('新书/设定/世界书.json') !== undefined, '世界书复制');
     assert.ok(files.get('新书/账本/facts.json') !== undefined, '账本复制');
+    // 账本按目录整体复制：目录里有什么就带什么（新增一种账本不用再改克隆清单）
+    for (const name of ['pledges.json', '样稿.json', 'relations.json', 'cognition.json', 'arcs.json']) {
+        assert.ok(files.get(`新书/账本/${name}`) !== undefined, `账本/${name} 复制（目录实列，不靠手工清单）`);
+    }
     assert.ok(files.get('新书/人物/主角.md')?.includes('人物卡'), '人物卡复制');
     assert.equal(files.get('新书/设定/故事承诺书.md'), '承诺', '故事承诺书属于设定，应随模板复制');
     assert.ok(files.get('新书/.novel/reader-promises.json') !== undefined, '结构化承诺清单与承诺书一起复制');

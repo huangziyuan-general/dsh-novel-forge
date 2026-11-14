@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
     SEMANTIC_LIMITS, parseSemanticDimensions, selectSemanticChapters, buildSemanticPrompt,
-    parseSemanticResponse, renderSemanticReport, semanticReportPath,
+    parseSemanticResponse, parseSemanticDetails, renderSemanticReport, semanticReportPath,
 } from '../lib/library-semantic.js';
 import { bootPlugin } from './helpers/plugin.mjs';
 
@@ -144,4 +144,55 @@ test('semantic: JSON 只做一次保守语法修复，标量与引文证据不�
 
     const forged = raw.replace(JSON.stringify(QUOTE), JSON.stringify('这段伪造引文长度足够，但是从未在原文出现。'));
     assert.throws(() => parseSemanticDetails(forged, { chapters: selectedFixture(), dimensions: ['narrative'] }), /逐字找不到/);
+});
+
+// ③ 特色词库（vocabularyBank，借鉴 MirrorNovel referenceDistillation）：
+// 词必须 1–24 字、出现在所选章节原文里（逐字 grounding）、且是引文子串。
+test('vocabulary：合法词库 + 报告渲染', () => {
+    const raw = JSON.stringify({
+        items: [validItem()],
+        vocabulary: [
+            { word: '遮雨棚', chapter: 1, quote: QUOTE },
+            { word: '灯', chapter: 1, quote: '她没有催，只把另一盏灯移到桌角。' },
+        ],
+    });
+    const parsed = parseSemanticDetails(raw, { chapters: selectedFixture(), dimensions: ['narrative'] });
+    assert.equal(parsed.vocabulary.length, 2);
+    assert.equal(parsed.vocabulary[0].word, '遮雨棚');
+    const md = renderSemanticReport({ title: '样本', from: 1, to: 2, dimensions: ['narrative'], items: parsed.items, vocabulary: parsed.vocabulary, generatedAt: 'x', attempts: 1 });
+    assert.match(md, /特色词库/);
+    assert.match(md, /遮雨棚/);
+});
+
+test('vocabulary：词未在引文中出现 → 拒绝', () => {
+    const raw = JSON.stringify({
+        items: [validItem()],
+        vocabulary: [
+            { word: '不存在的词', chapter: 1, quote: QUOTE },  // 词不在引文里
+        ],
+    });
+    assert.throws(() => parseSemanticDetails(raw, { chapters: selectedFixture(), dimensions: ['narrative'] }), /未出现在其引文/);
+});
+
+test('vocabulary：词引文不在原文里（伪造）→ 拒绝', () => {
+    const raw = JSON.stringify({
+        items: [validItem()],
+        vocabulary: [
+            { word: '遮雨棚', chapter: 1, quote: '这段伪造的引文里确实有遮雨棚，但原文没有。' },
+        ],
+    });
+    assert.throws(() => parseSemanticDetails(raw, { chapters: selectedFixture(), dimensions: ['narrative'] }), /逐字找不到/);
+});
+
+test('vocabulary：超过 24 个上限 → 拒绝', () => {
+    const items = [validItem()];
+    const vocab = Array.from({ length: 25 }, (_, i) => ({ word: '词' + i, chapter: 1, quote: QUOTE }));
+    const raw = JSON.stringify({ items, vocabulary: vocab });
+    assert.throws(() => parseSemanticDetails(raw, { chapters: selectedFixture(), dimensions: ['narrative'] }), /超过 24/);
+});
+
+test('vocabulary：省略 vocabulary 字段 → 空数组（向后兼容）', () => {
+    const raw = JSON.stringify({ items: [validItem()] });
+    const parsed = parseSemanticDetails(raw, { chapters: selectedFixture(), dimensions: ['narrative'] });
+    assert.deepEqual(parsed.vocabulary, []);
 });
