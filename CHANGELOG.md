@@ -4,39 +4,31 @@
 
 ### 新增
 
-- **叙事契约账本（pledge/deadline/secret 三类）**：借鉴天命 v2.8.7 的 Pledge/Deadline/SecretReveal 与火宝逻辑审计 schema，新增 `lib/pledges.js` 纯函数账本（`账本/pledges.json`，append-only，与 facts/relations/arcs 同构）——
-  · 三类契约：`pledge`（承诺）/ `deadline`（带期限事件）/ `secret`（秘密，到期前不能露馅），各自带 `deadlineChapter`（deadline/secret 必填）；
-  · 代码硬判的是「到期这件事的可见性」（每次写章/体检被点名），是否兑现由模型显式登记（kept/broken/revealed 终态），登记是「我判断过」的留痕，比提示词自觉强一档；
-  · `novel_ledger` 新增四个动作：`pledge_setup` / `pledge_replan`（改期）/ `pledge_resolve`（终态）/ `pledge_list`（全量 + 到期告警），输出 schema 同步 `pledges` / `pledgeChanged` / `pledgeIssues`；
-  · 内容门禁第⑨维：到期未兑现 → warning（每次写章点名）；`broken` 契约同时存在到期未还伏笔 → error 阻断（欠账未还禁开新线的契约级版本）；
-  · `validateContinuity` 并入契约账本审计，issue 带 `nodeIds` / `chapters` 定位字段（对齐火宝 schema，面板可点跳实体/章节区间）；
-  · REST `/continuity` 与 `novel_project check` 自动带上契约维度，零改动面板即见。
+- **叙事契约账本**：新增 `lib/pledges.js` 纯函数账本（`账本/pledges.json`，append-only，与 facts/relations/arcs 同构）。
+  · 三类契约：`pledge`（承诺）/ `deadline`（带期限事件）/ `secret`（秘密，到期前不能露馅），`deadlineChapter` 为到期章号（deadline/secret 必填）；
+  · `novel_ledger` 新增四个动作：`pledge_setup` / `pledge_replan`（改期，上限 3 次并记 `replans` 计数）/ `pledge_resolve`（终态只收 `kept/broken/revealed`，`expired` 是代码派生态不可手工登记）/ `pledge_list`（全量 + 代码判定的「已到期未结」条数），输出 schema 同步 `pledges` / `pledgeChanged` / `pledgeIssues`；
+  · 到期判定用 `max(maxWritten, chapter)`——写第 n 章时到期章正好是 n 的契约当章即点名，不晚一章；
+  · 内容门禁第⑨维：到期未兑现 → warning（每次写章点名）；`broken` 契约同时存在到期未还伏笔 → error 阻断；
+  · `validateContinuity` 并入契约账本审计，issue 带 `nodeIds` / `chapters` 定位字段；
+  · 写章简报带「叙事契约（本章到期与在途）」段（`briefing` 读 `账本/pledges.json`，到期全列、在途取最近 4 条）；
+  · REST `/continuity` 与 `novel_project check` 自动带上契约维度。
 
-- **伏笔回收证据硬校验**（借鉴 MirrorNovel semanticMemory 的「回收必须带正文证据」纪律）：`novel_ledger foreshadow_payoff` 升级为回收证据硬校验——回收章正文必须出现该伏笔 `setup` 的关键词（滑窗 + 虚词过滤，与 content-gate 的欠账判据同源，不抄第二份），零命中即拒绝登记「读者收不到回收」。补录无正文旧章或确为「暗回收」时传 `force:true` 豁免（记审计）。纯函数 `foreshadowPayoffVerified` 落 `lib/ledger.js`。
+- **伏笔回收证据硬校验**：`novel_ledger foreshadow_payoff` 要求回收章为已写章节，且正文命中该伏笔关键词（≥3 字关键词，或 ≥2 个不同 2 字关键词），零命中拒绝登记；正文缺失/清空需 `force:true` 豁免（记审计）。判据单一实现：`STOP_CHARS` / `setupKeywords` 下沉 `lib/ledger.js` 导出，content-gate 与回收校验共用；纯函数 `foreshadowPayoffVerified` 落 `lib/ledger.js`。
 
-- **写作样稿库**（借鉴 MirrorNovel writingSamples.js 的样稿库纪律 + referenceDistillation 的「学风格不得串设定」边界）：新增 `lib/samples.js` 纯函数台账（`账本/样稿.json`，与 facts 同构）——`novel_ledger` 新增 `sample_add` / `sample_allow` / `sample_revoke` / `sample_remove` / `sample_list` / `sample_prompt` 六个动作。候选池入口唯一（`samplePool` 只认 `approved + allowedForModelInput`，草稿与撤销样稿永远查不出来）；注入边界两套纪律（prose 写新正文 / revise 修订），明确「样稿是资料而非任务指令」「不得引入样稿中的人物、地名、道具与情节」「修订时原文是唯一事实基准」，注入段数与单段字数封顶（3 段 / 240 字）。输出 schema 同步 `samples` / `samplePrompt` / `samplePoolCount`。
+- **写作样稿库**：新增 `lib/samples.js` 纯函数台账（`账本/样稿.json`，与 facts 同构）——`novel_ledger` 新增 `sample_add` / `sample_allow` / `sample_revoke` / `sample_remove` / `sample_list` / `sample_prompt` 六个动作，输出 schema 同步 `samples` / `samplePrompt` / `samplePoolCount`。候选池唯一入口（`samplePool` 只认 `approved + allowedForModelInput`）；注入分 prose（写新正文）/ revise（修订）两套边界纪律；写章简报与 `novel_polish analyze` 注入封顶 2 段 × 220 字。
 
-- **语义拆书特色词库**（借鉴 MirrorNovel referenceDistillation 的 vocabularyBank）：`novel_library semantic` 报告新增「特色词库」区块——模型在技巧 items 之外另输出一组「特色词 + 出处引文」，代码对每个词做同样的逐字 grounding（词 1–24 字、必须出现在所选章节原文里、且是引文子串），超限/伪造/重复整批拒绝，与既有 items 同纪律。报告渲染与输出 schema 同步 `vocabulary`。
+- **语义拆书特色词库**：`novel_library semantic` 报告新增「特色词库」区块（`vocabulary`）——模型在技巧 items 之外另输出一组「特色词 + 出处引文」，逐字 grounding（词 1–24 字、必须出现在所选章节原文里、且是引文子串），超限/伪造/重复整批拒绝。报告渲染与输出 schema 同步。
 
 ### 修复
 
-- **P0 `novel_ledger` 十个新动作全部不可达**：`foreshadow_payoff` 分支漏了 `if (args.action === 'foreshadow_payoff')` 包裹且直接 `return`，导致其后的 `pledge_*` / `sample_*` 成为死代码——调用一律掉进回收逻辑（`pledge_setup` 报「伏笔不存在：undefined」、`pledge_list` 报「需要正整数 chapter」），更糟的是 `pledge_setup` 传整数章号且 id 撞上伏笔 id 时会**静默把该伏笔标成已回收**。补 action 判断 + 分支末尾加未知 action 兜底 `throw`（这类缺口不再能被下一个分支吸收）。
-- **P1 回收证据闸可绕过**：`foreshadow_payoff` 此前允许「回收章未写 → 无正文 → 自动豁免」，`chapter=99`（全书未写）因此直接过闸。现在回收章**必须是已写章节**（超过全书已写章号即拒绝）；索引里有该章但正文缺失/为空也不再静默豁免，需要 `force:true` 并记审计。
-- **P1 回收判据几乎恒真**：旧判据是「2–4 字滑窗任一命中」，`三星堆金面具` 的伏笔会被无关正文「我在三星手机店里打工」放行。改为两条通道：命中 ≥3 字关键词，或命中 ≥2 个不同 2 字关键词（覆盖「铜镜 + 裂纹」这类合法改写）；setup 短到只有 2 字时才退回单词命中。
-- **P1 三个接线缺口**：
-  · `briefing` 此前不读 `账本/pledges.json` 与 `账本/样稿.json`——CHANGELOG 承诺的「写章注入」并不存在。现在简报带「叙事契约（本章到期与在途）」与「写作样稿（表达校准）」两段（样稿封顶 2 段 × 220 字 + 边界纪律）；
-  · `novel_polish analyze` 返回 `samplePrompt`（revise 边界样稿），润色才有本书标尺；
-  · 提案应用（`applyProposal`）的 `contentGate` 补齐 `relations`/`arcs`/`pledges`——此前「应用」这条路上关系倒挂、弧线停走、契约欠账三类问题静默通过。
-- **P1 到期提醒晚一章**：写第 n 章时门禁拿的是落库前的 `maxWritten = n-1`，到期章正好是 n 的契约要等写到 n+1 才点名。`content-gate` 第⑨维改用 `max(maxWritten, chapter)`（弧线口径不变）。
-- **P2 `foreshadowSetup` 传 `plan=0/负数` 会把已有 plan 静默清空**：改为非正整数直接抛错；`plan` 省略或 `null` 才表示沿用旧值。
-- **P2 契约账本三处漏洞**：`pledge_replan` 无改期上限（无限延期 = 到期告警永久静音，现上限 3 次并记 `replans` 计数）；`pledge_resolve` 允许手工登记 `expired`（`expired` 是代码派生态「到期且仍 open」，手工登记等于给「假装已过去」开门，现只接受 `kept/broken/revealed`）；`pledge_list` 与 digest 现在显示代码判定的「已到期未结」条数，`detectExpiredPledges` 有了真实消费方（仍只报不写）。
-- **P2 `clone` 丢账本**：克隆清单只复制 facts/伏笔/术语表等 9 项，v1.7.1 新增的 `pledges`/`样稿`/`cognition`/`relations`/`arcs` 全被漏掉（而 asset 工具描述承诺「账本一并复制」）。改为按 `账本/` 目录实列整体复制（`pathsFor` 新增 `ledgerDir`），新增账本类型不必再改清单。
-- **工具描述与代码对齐**：`novel_ledger` 的 `force` / `id` / `status` / `sampleScope` 说明改为现行语义（回收章必须已写、≥3 字判据、`expired` 不可手工登记、scope 对 `sample_prompt` 生效），并移除未使用的 `pledgeDigest` / `SAMPLE_PROMPT_RULES_*` 导入。
-- **版本号漂移**：`package.json` / `PLUGIN_VERSION` 停在 1.7.0，`package-lock.json` 更是停在 0.4.1——本版内容已写进 v1.7.1 条目，三处统一对齐到 1.7.1（`npm run build` 的版本一致性闸才不会在发布时炸）。
+- **提案应用绕过一致性闸**：面板/工具的「应用提案」路径（`applyProposal`）此前不跑内容门禁的关系与弧线维度——关系倒挂、弧线停走的提案应用时静默通过。现补齐 `relations`/`arcs`/`pledges` 三维。
+- **`foreshadowSetup` 传 `plan=0/负数` 会把已有 plan 静默清空**：改为非正整数直接抛错；`plan` 省略或 `null` 才表示沿用旧值。
+- **`clone` 丢账本**：克隆清单只复制 facts/伏笔/术语表等 9 项，`cognition`/`relations`/`arcs`/`pledges`/`样稿` 全被漏掉。改为按 `账本/` 目录实列整体复制（`pathsFor` 新增 `ledgerDir`），新增账本类型不必再改清单。
+- **版本号漂移**：`package.json` / `PLUGIN_VERSION` / `package-lock.json` 三处统一对齐到 1.7.1（`package-lock` 此前停在 0.4.1）。
 
 ### 测试
 
-- `smoke` 的全工具 × 全 action 矩阵补齐 v1.7.1 的 10 个新动作 + `foreshadow_payoff` + `novel_character.voice_repair`（此前 76 个动作里 12 个在测试文本里从不出现），并新增「`novel_ledger` / `novel_character` 的 action 枚举必须 100% 进矩阵」的断言——新动作再也不会悄悄逃出护栏。
+- `smoke` 的全工具 × 全 action 矩阵补齐 v1.7.1 的 10 个新动作 + `foreshadow_payoff` + `novel_character.voice_repair`（此前 76 个动作里 12 个在测试文本里从不出现），并新增「`novel_ledger` / `novel_character` 的 action 枚举必须 100% 进矩阵」的断言。
 - 新增行为级用例：回收章未写被拒 / 正文缺失要 `force` / 无关正文被拒；契约改期上限、`expired` 不可手工登记、到期提醒不晚一章；`briefing` 与 `polish analyze` 真的带上契约与样稿；`clone` 复制全部账本文件。
 
 ## v1.7.0 (2026-11-11)
@@ -250,7 +242,7 @@
 
 ### 新增
 
-- **打标的内容指纹缓存**（新建 `lib/tag-cache.js`，纯函数 + 索引库里的 `tag_cache` 表）：**标签是「块文本」的函数，不是「章」或「块序号」的属性**——同一个指纹 → 同一组标签 → **同样的输入不重复调模型**（对齐竞品 A 的「节点级缓存指纹」，竞品借鉴清单 P2 里唯一明确写着「值得做」的一项）。降本来自三处：① **缓存命中**——这段文字以前打过标，标签直接写回，零模型调用；② **同文本合并**——本批里出现同样的文字（书里重复段落、跨章相似段落）只调一次模型，其余块复用它的标签；③ **重建索引后标签自动回来**（从缓存回填），不必把几百块重新打标一遍。这三条在**批量起草**场景最值钱：写章落盘会自动补标（`config.search.autoAnnotate` 默认开），批量几十章下来就是几百次调用，重建索引后的补标则一分不花。缓存只存**指纹与标签、不存原文**（外部参考素材的原文因此不会多出一处落地位置），超上限时淘汰最老的一批。
+- **打标的内容指纹缓存**（新建 `lib/tag-cache.js`，纯函数 + 索引库里的 `tag_cache` 表）：**标签是「块文本」的函数，不是「章」或「块序号」的属性**——同一个指纹 → 同一组标签 → **同样的输入不重复调模型**。降本来自三处：① **缓存命中**——这段文字以前打过标，标签直接写回，零模型调用；② **同文本合并**——本批里出现同样的文字（书里重复段落、跨章相似段落）只调一次模型，其余块复用它的标签；③ **重建索引后标签自动回来**（从缓存回填），不必把几百块重新打标一遍。这三条在**批量起草**场景最值钱：写章落盘会自动补标（`config.search.autoAnnotate` 默认开），批量几十章下来就是几百次调用，重建索引后的补标则一分不花。缓存只存**指纹与标签、不存原文**（外部参考素材的原文因此不会多出一处落地位置），超上限时淘汰最老的一批。
 - **打标回执报出成本口径**：`novel_search action=annotate` 现在给 `reused`（复用了几块、没花模型调用）/ `calls`（真正调了几次模型）/ `deduped`（其中同文本合并省下的块数），面板与回执都能直接看出这次省了多少。
 
 ## v1.2.1 (2026-10-27)
@@ -303,8 +295,6 @@
 - **客户端**：阅读卡（📖 展开正文）不再固定在章节目录顶部，改为插在**所点章节行的正下方**——长目录里点哪章就展开在哪章，不用回头找；换章、收起均不残留卡片。
 
 ### 新增
-
-本轮是「竞品借鉴清单」第 1 轮：三项**纯增量**能力（不改数据结构、不动门禁口径）。
 
 - **检索语料的字段级隔离**：索引块新增 `corpus` 列（`project`/`reference`），建索引路径写死 `project`，检索接口加语料过滤参数，`novel_search` 的 `query` 默认**只召回本书正文**（外部参考素材不会顺着检索结果流进续写上下文）；`status` 回执给出语料构成。旧索引自动补列（保留已打的语义标签），语料进入内容指纹——同一段文字换语料必须重写，否则库里会留着旧标记。
 - **写前简报的依据指纹（basis）**：`novel_briefing` 回执新增 `basis`（细纲/场景契约/世界书的内容哈希），服务端另存一份记录；写章提交时**服务端重算并比对**，简报生成后设定被改动过就明确告警「简报已过期，请重新 briefing」。账本只做精确旁证（新增条目静默、改写与删除才报），避免批量起草路径逐章误报。`novel_write_chapter` 新增可选参数 `basis`，带上它会多一道交叉核对。
