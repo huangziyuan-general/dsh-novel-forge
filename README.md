@@ -10,7 +10,7 @@ DeepSeek Harness（DSH）的中文长篇写作插件。它不是「提示词合�
 
 **一句话卖点：** 关键约束全部代码化——同章改值=冲突拒绝、隐藏人物不进上下文、细纲漏写场景=拒稿、旧版永不覆盖、长篇检索零依赖本地跑。
 
-[快速开始](#快速开始约-5-分钟) ｜ [界面一览](#界面一览) ｜ [功能硬约束表](#ai-写作通病与硬约束) ｜ [24 个工具](#24-个工具)
+[安装方式](#安装方式) ｜ [界面一览](#界面一览) ｜ [功能硬约束表](#ai-写作通病与硬约束) ｜ [24 个工具](#24-个工具)
 
 ## 为什么不是又一个「提示词合集」
 
@@ -72,7 +72,16 @@ AI 长篇写作的通病不是玄学，每一个都有对应的工程解法。�
 | 同一会话连写越写越短 | 会话疲劳检测（同口径）：本会话**首稿逐章变短**（后半 < 前半 75%）、或首稿均值低于其它会话首稿 70%、或连写 ≥8 章即警示；「创建新会话并交接」一键建新会话（有归档能力就建+归档一次完成），交接摘要自动进剪贴板 | 面板疲劳横幅 |
 | 写到百章后"看不见前文" | 本地检索索引：按**记忆碎片**把段落找回来（中文手工二元切分，零依赖） | `novel_search` |
 
-## 快速开始（约 5 分钟）
+## 安装方式
+
+### 方式 A：DSH 插件安装
+
+小说锻炉支持两种接入方式：
+
+- **DSH 用户**：作为 DeepSeek Harness 插件安装，获得完整写作面板。
+- **Claude Desktop / Cursor / 任意 MCP 客户端**：无需 DSH，直接挂载 MCP Server，在对话中调用 `novel_*` 工具。
+
+如果你只是想在 Cursor 或 Claude Desktop 里让 AI 写长篇时受约束，走第二条即可。
 
 **前提**：已安装 [DeepSeek Harness](https://github.com/deepseek-ai)（DSH）并跑通模型；Node ≥ 22（22.19+ / 24+ 可启用检索索引，否则自动降级，不影响其他功能）。
 
@@ -104,6 +113,28 @@ dsh plugin --profile web add link:/path/to/dsh-novel-forge
 **第 6 步 · 到面板收结果**：右侧栏「锻炉」tab 里阅读/听书、点润色/校对（产物是**提案**，你在面板点「应用」才生效）、跑全书体检、导出整本。
 
 宿主版本要求与依赖面清单见 [COMPATIBILITY.md](./COMPATIBILITY.md)。
+
+### 方式 B：MCP 客户端安装
+
+无需安装 DSH（Node ≥ 20）。把下面配置放进客户端的 MCP 设置，即可在对话中调用全部 `novel_*` 工具：
+
+```json
+{
+  "mcpServers": {
+    "novel-forge": {
+      "command": "npx",
+      "args": ["-y", "dsh-novel-forge"],
+      "env": { "NOVEL_FORGE_ROOT": "/你的小说工作区" }
+    }
+  }
+}
+```
+
+- **Claude Desktop**：写入 `~/Library/Application Support/Claude/claude_desktop_config.json`（Windows：`%APPDATA%\Claude\claude_desktop_config.json`）后重启。
+- **Cursor**：写入 `~/.cursor/mcp.json` 后重启。
+- **Claude Code**：一行接入——`claude mcp add novel-forge -e NOVEL_FORGE_ROOT=/你的小说工作区 -- npx -y dsh-novel-forge`（加 `-s user` 所有项目可用）。
+
+`NOVEL_FORGE_ROOT` = 小说工作区根目录（一本小说 = 工作区里的一个目录），GUI 客户端的 cwd 不可控，务必显式设置。Codex / 任意 stdio 客户端的接入、全局安装与源码路径变体、能力边界见 **[docs/INSTALL-MCP.md](docs/INSTALL-MCP.md)**。
 
 ## 会话与面板的分工
 
@@ -238,27 +269,6 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 > `engine` 整块都可省略——省略即「用当前路由、重试 2 次、不写会话」，最省心的默认。
 > 宿主没有模型服务时插件照常装载，只有真正调用旁路通道时才返回可读错误。
 
-## MCP 双通道（宿主外复用）
-
-同一套 `novel_*` 工具（门禁/账本/审计/基线全在工具层）也可通过 stdio MCP 暴露给
-**Claude / Cursor / 任意 MCP 客户端**——无需 DSH，`npx` 直跑零安装：
-
-```json
-{
-  "mcpServers": {
-    "novel-forge": {
-      "command": "npx",
-      "args": ["-y", "dsh-novel-forge"],
-      "env": { "NOVEL_FORGE_ROOT": "/你的小说工作区" }
-    }
-  }
-}
-```
-
-工作区根取 `NOVEL_FORGE_ROOT`（一本小说 = 工作区里的一个目录）。零依赖实现（原生
-JSON-RPC 2.0 over stdio；宿主 peer 包缺席也能启动）；fs 后端带与宿主相同的 containment
-与版本守卫语义（`.docx` 导入同样可用）。**Claude Code / Claude Desktop / Cursor /
-Codex 的逐步接入、全局安装与源码路径变体、能力边界见 [docs/INSTALL-MCP.md](docs/INSTALL-MCP.md)。**
 ## 排障 FAQ
 
 | 症状 | 处理 |

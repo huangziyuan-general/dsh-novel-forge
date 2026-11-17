@@ -58,7 +58,16 @@ The failure modes of AI long-form writing aren't magic — each has an engineeri
 | Same session keeps getting shorter | Session-fatigue detection: first drafts declining within the session (second half < 75% of the first half), or a session average under 70% of other sessions' first drafts, or ≥8 consecutive chapters in one session, triggers a warning; "create new session and hand off" builds a new session in one click (with archiving if available), and the handoff summary auto-copies to clipboard | Panel fatigue banner |
 | "Can't see prior text" after 100 chapters | Local search index: retrieves paragraphs by memory fragments (manual Chinese bigram segmentation, zero dependencies) | `novel_search` |
 
-## Quick Start (~5 minutes)
+## Installation
+
+### Option A: DSH plugin install
+
+The Forge supports two ways to get in:
+
+- **DSH users**: install as a DeepSeek Harness plugin and get the full writing panel.
+- **Claude Desktop / Cursor / any MCP client**: no DSH needed — mount the MCP server directly and call `novel_*` tools in conversation.
+
+If you just want constrained AI long-form writing inside Cursor or Claude Desktop, take option B.
 
 **Prerequisites**: [DeepSeek Harness](https://github.com/deepseek-ai) (DSH) installed with a working model; Node ≥ 22 (22.19+ / 24+ enables the search index, otherwise it auto-degrades without affecting other features).
 
@@ -91,6 +100,28 @@ dsh plugin --profile web add link:/path/to/dsh-novel-forge
 **Step 6 · Collect results in the panel**: in the right-sidebar "Forge" tab you can read / listen, click polish / proofread (outputs are **proposals** — you click "apply" in the panel to make them take effect), run the full-book health check, and export the whole book.
 
 Host version requirements and the dependency surface are in [COMPATIBILITY.md](./COMPATIBILITY.md).
+
+### Option B: MCP client install
+
+No DSH required (Node ≥ 20). Put the following config into your client's MCP settings and all `novel_*` tools become available in conversation:
+
+```json
+{
+  "mcpServers": {
+    "novel-forge": {
+      "command": "npx",
+      "args": ["-y", "dsh-novel-forge"],
+      "env": { "NOVEL_FORGE_ROOT": "/your/novel/workspace" }
+    }
+  }
+}
+```
+
+- **Claude Desktop**: write it into `~/Library/Application Support/Claude/claude_desktop_config.json` (Windows: `%APPDATA%\Claude\claude_desktop_config.json`), then restart.
+- **Cursor**: write it into `~/.cursor/mcp.json`, then restart.
+- **Claude Code**: one line — `claude mcp add novel-forge -e NOVEL_FORGE_ROOT=/your/novel/workspace -- npx -y dsh-novel-forge` (add `-s user` for all projects).
+
+`NOVEL_FORGE_ROOT` is the novel workspace root (one novel = one directory in the workspace); GUI clients have an uncontrollable cwd, so always set it explicitly. Codex / any stdio client setup, global-install and source-path variants, and capability boundaries: see **[docs/INSTALL-MCP.md](docs/INSTALL-MCP.md)**.
 
 ## Division of labor: session vs. panel
 
@@ -225,27 +256,6 @@ Uninstalling the plugin does not affect any book data.
 > The entire `engine` block can be omitted — omitting means "use the current route, retry 2×, don't write session", the most worry-free default.
 > The plugin still loads when the host has no model service; only when a side channel is actually called does it return a readable error.
 
-## Dual MCP channel (reuse outside the host)
-
-The same set of `novel_*` tools (gates / ledger / audit / baselines all live at the tool layer) can also be exposed via stdio MCP to
-**Claude / Cursor / any MCP client** — no DSH required, zero-install via `npx`:
-
-```json
-{
-  "mcpServers": {
-    "novel-forge": {
-      "command": "npx",
-      "args": ["-y", "dsh-novel-forge"],
-      "env": { "NOVEL_FORGE_ROOT": "/your/novel/workspace" }
-    }
-  }
-}
-```
-
-The workspace root takes `NOVEL_FORGE_ROOT` (one novel = one directory in the workspace). Zero-dependency implementation
-(native JSON-RPC 2.0 over stdio); the fs backend outside the host carries the same containment and version-guard semantics
-(`.docx` import works too). **Step-by-step setup for Claude Code / Claude Desktop / Cursor / Codex, global-install and
-source-path variants, and capability boundaries: see [docs/INSTALL-MCP.md](docs/INSTALL-MCP.md).**
 ## Troubleshooting FAQ
 
 | Symptom | Fix |
