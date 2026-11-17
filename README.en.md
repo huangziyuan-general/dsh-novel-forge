@@ -60,14 +60,14 @@ The failure modes of AI long-form writing aren't magic — each has an engineeri
 
 ## Installation
 
-### Option A: DSH plugin install
+The Forge supports two ways in. Pick your route, then follow the matching section:
 
-The Forge supports two ways to get in:
-
-- **DSH users**: install as a DeepSeek Harness plugin and get the full writing panel.
-- **Claude Desktop / Cursor / any MCP client**: no DSH needed — mount the MCP server directly and call `novel_*` tools in conversation.
+- **DSH users**: install as a DeepSeek Harness plugin and get the full writing panel → [Option A](#option-a-dsh-plugin-install)
+- **Claude Desktop / Cursor / any MCP client**: no DSH needed — mount the MCP server directly and call `novel_*` tools in conversation → [Option B](#option-b-mcp-client-install)
 
 If you just want constrained AI long-form writing inside Cursor or Claude Desktop, take option B.
+
+### Option A: DSH plugin install
 
 **Prerequisites**: [DeepSeek Harness](https://github.com/deepseek-ai) (DSH) installed with a working model; Node ≥ 22 (22.19+ / 24+ enables the search index, otherwise it auto-degrades without affecting other features).
 
@@ -121,7 +121,7 @@ No DSH required (Node ≥ 20). Put the following config into your client's MCP s
 - **Cursor**: write it into `~/.cursor/mcp.json`, then restart.
 - **Claude Code**: one line — `claude mcp add novel-forge -e NOVEL_FORGE_ROOT=/your/novel/workspace -- npx -y dsh-novel-forge` (add `-s user` for all projects).
 
-`NOVEL_FORGE_ROOT` is the novel workspace root (one novel = one directory in the workspace); GUI clients have an uncontrollable cwd, so always set it explicitly. Codex / any stdio client setup, global-install and source-path variants, and capability boundaries: see **[docs/INSTALL-MCP.md](docs/INSTALL-MCP.md)**.
+`NOVEL_FORGE_ROOT` is the novel workspace root (one novel = one directory in the workspace); GUI clients have an uncontrollable cwd, so always set it explicitly. For Codex / any stdio client setup, global-install and source-path variants, the environment variables and troubleshooting: see **[docs/INSTALL-MCP.md](docs/INSTALL-MCP.md)**.
 
 ## Division of labor: session vs. panel
 

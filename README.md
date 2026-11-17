@@ -74,14 +74,14 @@ AI 长篇写作的通病不是玄学，每一个都有对应的工程解法。�
 
 ## 安装方式
 
+小说锻炉支持两种接入方式，先选路线再看对应小节：
+
+- **DSH 用户**：作为 DeepSeek Harness 插件安装，获得完整写作面板 → [方式 A](#方式-a-dsh-插件安装)
+- **Claude Desktop / Cursor / 任意 MCP 客户端**：无需 DSH，直接挂载 MCP Server，在对话中调用 `novel_*` 工具 → [方式 B](#方式-b-mcp-客户端安装)
+
+如果你只是想在 Cursor 或 Claude Desktop 里让 AI 写长篇时受约束，走方式 B 即可。
+
 ### 方式 A：DSH 插件安装
-
-小说锻炉支持两种接入方式：
-
-- **DSH 用户**：作为 DeepSeek Harness 插件安装，获得完整写作面板。
-- **Claude Desktop / Cursor / 任意 MCP 客户端**：无需 DSH，直接挂载 MCP Server，在对话中调用 `novel_*` 工具。
-
-如果你只是想在 Cursor 或 Claude Desktop 里让 AI 写长篇时受约束，走第二条即可。
 
 **前提**：已安装 [DeepSeek Harness](https://github.com/deepseek-ai)（DSH）并跑通模型；Node ≥ 22（22.19+ / 24+ 可启用检索索引，否则自动降级，不影响其他功能）。
 
@@ -134,7 +134,7 @@ dsh plugin --profile web add link:/path/to/dsh-novel-forge
 - **Cursor**：写入 `~/.cursor/mcp.json` 后重启。
 - **Claude Code**：一行接入——`claude mcp add novel-forge -e NOVEL_FORGE_ROOT=/你的小说工作区 -- npx -y dsh-novel-forge`（加 `-s user` 所有项目可用）。
 
-`NOVEL_FORGE_ROOT` = 小说工作区根目录（一本小说 = 工作区里的一个目录），GUI 客户端的 cwd 不可控，务必显式设置。Codex / 任意 stdio 客户端的接入、全局安装与源码路径变体、能力边界见 **[docs/INSTALL-MCP.md](docs/INSTALL-MCP.md)**。
+`NOVEL_FORGE_ROOT` = 小说工作区根目录（一本小说 = 工作区里的一个目录），GUI 客户端的 cwd 不可控，务必显式设置。Codex / 任意 stdio 客户端的接入、全局安装与源码路径变体、环境变量说明与常见问题见 **[docs/INSTALL-MCP.md](docs/INSTALL-MCP.md)**。
 
 ## 会话与面板的分工
 
