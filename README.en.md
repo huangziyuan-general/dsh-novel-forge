@@ -62,12 +62,13 @@ The failure modes of AI long-form writing aren't magic — each has an engineeri
 
 The Forge supports two ways in. Pick your route, then follow the matching section:
 
-- **DSH users**: install as a DeepSeek Harness plugin and get the full writing panel → [Option A](#option-a-dsh-plugin-install)
-- **Claude Desktop / Cursor / any MCP client**: no DSH needed — mount the MCP server directly and call `novel_*` tools in conversation → [Option B](#option-b-mcp-client-install)
+- **DSH users**: install as a DeepSeek Harness plugin and get the full writing panel → [Option A](#option-a)
+- **Claude Desktop / Cursor / any MCP client**: no DSH needed — mount the MCP server directly and call `novel_*` tools in conversation → [Option B](#option-b)
 
 If you just want constrained AI long-form writing inside Cursor or Claude Desktop, take option B.
 
 ### Option A: DSH plugin install
+<a id="option-a"></a>
 
 **Prerequisites**: [DeepSeek Harness](https://github.com/deepseek-ai) (DSH) installed with a working model; Node ≥ 22 (22.19+ / 24+ enables the search index, otherwise it auto-degrades without affecting other features).
 
@@ -102,6 +103,7 @@ dsh plugin --profile web add link:/path/to/dsh-novel-forge
 Host version requirements and the dependency surface are in [COMPATIBILITY.md](./COMPATIBILITY.md).
 
 ### Option B: MCP client install
+<a id="option-b"></a>
 
 No DSH required (Node ≥ 20). Put the following config into your client's MCP settings and all `novel_*` tools become available in conversation:
 

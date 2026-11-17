@@ -76,12 +76,13 @@ AI 长篇写作的通病不是玄学，每一个都有对应的工程解法。�
 
 小说锻炉支持两种接入方式，先选路线再看对应小节：
 
-- **DSH 用户**：作为 DeepSeek Harness 插件安装，获得完整写作面板 → [方式 A](#方式-a-dsh-插件安装)
-- **Claude Desktop / Cursor / 任意 MCP 客户端**：无需 DSH，直接挂载 MCP Server，在对话中调用 `novel_*` 工具 → [方式 B](#方式-b-mcp-客户端安装)
+- **DSH 用户**：作为 DeepSeek Harness 插件安装，获得完整写作面板 → [方式 A](#方式-a)
+- **Claude Desktop / Cursor / 任意 MCP 客户端**：无需 DSH，直接挂载 MCP Server，在对话中调用 `novel_*` 工具 → [方式 B](#方式-b)
 
 如果你只是想在 Cursor 或 Claude Desktop 里让 AI 写长篇时受约束，走方式 B 即可。
 
 ### 方式 A：DSH 插件安装
+<a id="方式-a"></a>
 
 **前提**：已安装 [DeepSeek Harness](https://github.com/deepseek-ai)（DSH）并跑通模型；Node ≥ 22（22.19+ / 24+ 可启用检索索引，否则自动降级，不影响其他功能）。
 
@@ -115,6 +116,7 @@ dsh plugin --profile web add link:/path/to/dsh-novel-forge
 宿主版本要求与依赖面清单见 [COMPATIBILITY.md](./COMPATIBILITY.md)。
 
 ### 方式 B：MCP 客户端安装
+<a id="方式-b"></a>
 
 无需安装 DSH（Node ≥ 20）。把下面配置放进客户端的 MCP 设置，即可在对话中调用全部 `novel_*` 工具：
 
