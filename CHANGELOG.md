@@ -1,6 +1,10 @@
 # Changelog
 
-## 未发布
+## v1.7.2 (2026-11-17)
+
+### 新增
+
+- **MCP 落地文档** `docs/INSTALL-MCP.md`：无需 DSH 的宿主外使用指南——npx 直跑 / 全局安装 / 源码路径三种形态，Claude Code / Claude Desktop / Cursor / Codex 逐步接入，`NOVEL_FORGE_ROOT` 说明与能力边界；README 双语 MCP 段精简并指向该页。
 
 ### 修复
 
