@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "novel-forge": {
+      "command": "npx",
+      "args": ["-y", "dsh-novel-forge@latest"]
+    }
+  }
+}

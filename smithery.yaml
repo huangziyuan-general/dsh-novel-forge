@@ -1,0 +1,19 @@
+# Smithery.ai configuration https://smithery.ai/docs/config#smitheryyaml
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      workspaceRoot:
+        type: string
+        title: Novel workspace root
+        description: 小说工作区根目录（一本小说 = 工作区里的一个目录）。GUI 客户端的 cwd 不可控，务必显式设置。
+    required:
+      - workspaceRoot
+  commandFunction:
+    |-
+    (config) => ({
+      "command": "npx",
+      "args": ["-y", "dsh-novel-forge@latest"],
+      "env": { "NOVEL_FORGE_ROOT": config.workspaceRoot }
+    })
