@@ -1,0 +1,30 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.huangziyuan-general/dsh-novel-forge",
+  "title": "dsh-novel-forge",
+  "description": "中文长篇写作 MCP Server：24 个工具，用硬门禁治理 AI 写长篇的失忆、设定崩坏与 AI 味",
+  "repository": {
+    "url": "https://github.com/huangziyuan-general/dsh-novel-forge",
+    "source": "github"
+  },
+  "version": "1.7.3",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "dsh-novel-forge",
+      "version": "1.7.3",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "NOVEL_FORGE_ROOT",
+          "description": "小说工作区根目录（一本小说 = 工作区里的一个目录）；GUI 客户端 cwd 不可控，务必显式设置",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}

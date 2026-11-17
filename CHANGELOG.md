@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.7.3 (2026-11-17)
+
+- 新增：MCP Registry 元数据（server.json + package.json mcpName）与 tag 触发的自动发布工作流
+- 新增：Smithery 与 Open Plugins 目录检测配置（smithery.yaml / .mcp.json）
+
 ## v1.7.2 (2026-11-17)
 
 ### 新增
