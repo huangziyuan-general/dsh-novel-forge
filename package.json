@@ -41,7 +41,8 @@
     "cordis.patch.yml",
     "lib",
     "mcp",
-    "skills"
+    "skills",
+    "docs/INSTALL-MCP.md"
   ],
   "peerDependencies": {
     "@deepseek-ai/dsh-fs": "*",

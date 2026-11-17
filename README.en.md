@@ -228,24 +228,24 @@ Uninstalling the plugin does not affect any book data.
 ## Dual MCP channel (reuse outside the host)
 
 The same set of `novel_*` tools (gates / ledger / audit / baselines all live at the tool layer) can also be exposed via stdio MCP to
-any MCP client such as Claude Desktop / Cursor — the workspace root takes `NOVEL_FORGE_ROOT`
-(defaults to the process cwd), and one novel = one directory in the workspace:
+**Claude / Cursor / any MCP client** — no DSH required, zero-install via `npx`:
 
 ```json
 {
   "mcpServers": {
     "novel-forge": {
-      "command": "node",
-      "args": ["/path/to/dsh-novel-forge/mcp/server.mjs"],
+      "command": "npx",
+      "args": ["-y", "dsh-novel-forge"],
       "env": { "NOVEL_FORGE_ROOT": "/your/novel/workspace" }
     }
   }
 }
 ```
 
-Zero-dependency implementation (native JSON-RPC 2.0 over stdio); the fs backend outside the host carries the same
-containment and version-guard semantics (including the `readBytes` byte primitive — `.docx` import works over the MCP channel too).
-
+The workspace root takes `NOVEL_FORGE_ROOT` (one novel = one directory in the workspace). Zero-dependency implementation
+(native JSON-RPC 2.0 over stdio); the fs backend outside the host carries the same containment and version-guard semantics
+(`.docx` import works too). **Step-by-step setup for Claude Code / Claude Desktop / Cursor / Codex, global-install and
+source-path variants, and capability boundaries: see [docs/INSTALL-MCP.md](docs/INSTALL-MCP.md).**
 ## Troubleshooting FAQ
 
 | Symptom | Fix |

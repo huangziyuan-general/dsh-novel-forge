@@ -181,6 +181,26 @@ test('standalone: inputSchema 直通不再二次包裹（外部缺陷回归）',
     assert.ok(outline.required.includes('book') && outline.required.includes('action'), 'novel_outline 必填项缺失');
 });
 
+test('standalone: lib/index.js 构造壳支持面 = z 调用全集（宿主外模块求值不崩的静态守卫）', () => {
+    // 这条不受 hasSdk 门控：壳只在 @deepseek-ai/schemastery 缺席时生效（宿主内是死代码），
+    // 任何测试环境都走不到——所以只能对源码做静态对账。v1.6.0 加 allowedHosts 用
+    // z.array 漏补壳，npx 直跑 1.7.1 实崩 `z.array is not a function`，此测试防再犯。
+    const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'lib', 'index.js'), 'utf8');
+    // 剥注释再提取，防注释里的示例调用（z.xxx(）混进支持面。
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    const used = [...code.matchAll(/\bz\.([a-zA-Z_]+)\(/g)].map((m) => m[1]);
+    const usedSet = [...new Set(used)].sort();
+    const shell = src.match(/z = \{([\s\S]*?)\};/);
+    assert.ok(shell, '未找到 z 构造壳字面量');
+    const provided = [...shell[1].matchAll(/([a-zA-Z_]+): \(\) => node\(\)/g)].map((m) => m[1]).sort();
+    assert.deepEqual(
+        usedSet,
+        provided,
+        `构造壳支持面漂移：源码用到 ${JSON.stringify(usedSet)}，壳只提供 ${JSON.stringify(provided)}——给 Config 新增字段用了新 API 时必须同步补壳`,
+    );
+    assert.ok(provided.length > 0, '壳为空');
+});
+
 test('standalone: toInputSchema 兼容旧「参数名 → spec」形状（宿主包缺席时垫片直通的形状）', async () => {
     if (!hasSdk) return;
     const { toInputSchema } = await import('../lib/mcp-standalone.js');

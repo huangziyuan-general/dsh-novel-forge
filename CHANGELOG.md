@@ -1,5 +1,12 @@
 # Changelog
 
+## 未发布
+
+### 修复
+
+- **MCP 通道（宿主外 / `npx` 直跑）启动崩溃**：Config 构造壳缺 `array` 支持（v1.6.0 的 `allowedHosts` 引入），宿主 peer 包缺席时模块求值即抛 `z.array is not a function`；补壳并新增「壳支持面 = z 调用全集」静态守卫测试。
+
+
 ## v1.7.1 (2026-11-14)
 
 ### 新增

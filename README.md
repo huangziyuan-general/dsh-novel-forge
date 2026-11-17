@@ -241,25 +241,24 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 ## MCP 双通道（宿主外复用）
 
 同一套 `novel_*` 工具（门禁/账本/审计/基线全在工具层）也可通过 stdio MCP 暴露给
-Claude Desktop / Cursor 等任意 MCP 客户端——工作区根取 `NOVEL_FORGE_ROOT`
-（缺省为进程 cwd），一本小说 = 工作区里的一个目录：
+**Claude / Cursor / 任意 MCP 客户端**——无需 DSH，`npx` 直跑零安装：
 
 ```json
 {
   "mcpServers": {
     "novel-forge": {
-      "command": "node",
-      "args": ["/path/to/dsh-novel-forge/mcp/server.mjs"],
+      "command": "npx",
+      "args": ["-y", "dsh-novel-forge"],
       "env": { "NOVEL_FORGE_ROOT": "/你的小说工作区" }
     }
   }
 }
 ```
 
-零依赖实现（原生 JSON-RPC 2.0 over stdio；宿主 peer 包缺席也能启动——输出校验
-退化为不校验、工具本体照常）；宿主外的 fs 后端带同样的
-containment 与版本守卫语义（含 `readBytes` 字节原语——`.docx` 导入在 MCP 通道同样可用）。
-
+工作区根取 `NOVEL_FORGE_ROOT`（一本小说 = 工作区里的一个目录）。零依赖实现（原生
+JSON-RPC 2.0 over stdio；宿主 peer 包缺席也能启动）；fs 后端带与宿主相同的 containment
+与版本守卫语义（`.docx` 导入同样可用）。**Claude Code / Claude Desktop / Cursor /
+Codex 的逐步接入、全局安装与源码路径变体、能力边界见 [docs/INSTALL-MCP.md](docs/INSTALL-MCP.md)。**
 ## 排障 FAQ
 
 | 症状 | 处理 |
