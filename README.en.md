@@ -9,13 +9,48 @@ A novel-writing plugin for DeepSeek Harness (DSH). It has exactly one design spi
 > **Code enforcement beats prompt discipline.** Any constraint that relies on the model "behaving itself" will eventually fail —
 > consistency, gating, and auditing must be hard constraints at the tool/data layer.
 
+**What it blocks for you** (all in code, verifiable against the source):
+
+- Same-chapter value change → conflict rejection, never silent overwrite
+- Hidden character → dossier stays out of context; if the name appears in the body, the content gate rejects it
+- Missing outline scene → rejected; old versions → never overwritten
+- Long-form search → zero-dependency local; even past 100 chapters you can still retrieve prior text
+
+[Installation](#installation) ｜ [UI Tour](#ui-tour) ｜ [Hard-constraint table](#ai-writing-failure-modes) ｜ [24 tools](#24-tools)
+
+## What it does (30 seconds)
+
+- **Create a book**: `novel_project init` from one sentence; a nine-stage state machine guides premise → setting → characters → outline → volumes → chapter outlines → body, listing exactly what's missing at each stage.
+- **Write a chapter**: `novel_write_chapter` passes multi-stage commit gates (mechanical check / ledger / content gate / outline contract / circuit breaker) — bad or drifting writes are blocked before they hit disk.
+- **Full-book health check**: `novel_audit` produces deterministic numbers at zero token cost — resurrected characters, ledger contradictions, overdue foreshadowing, and chapter-number gaps all listed at once.
+- **Platform review**: `novel_audit platform` covers five platform tables (Qidian / Fanqie / Jinjiang / Qimao / Feilu); the seven-category sensitivity self-check returns line numbers and fixes.
+- **Batch drafting**: concurrent generation, serial gating, checkpoint resume; a single-chapter failure never rolls back the batch.
+- **Chapter TTS / polish / proofread**: side-channel engine in the panel; outputs are **proposals** you click "apply" to take effect.
+- **Long-form search**: `novel_search` retrieves paragraphs by memory fragment — no more "can't see prior text" after 100 chapters.
+
+If this is useful, star it so more long-form authors find it: [github.com/huangziyuan-general/dsh-novel-forge](https://github.com/huangziyuan-general/dsh-novel-forge)
+
 ## Why this isn't another "prompt collection"
 
-Most writing plugins put their constraints in system prompts — the model obeys when it feels like it and routes around them under deadline pressure. This plugin puts the constraints in code. Three verifiable facts (each checkable against the source in this repo):
+Most writing plugins put their constraints in system prompts — the model obeys when it feels like it and routes around them under deadline pressure. This plugin encodes the parts with a clear right/wrong into code. Its single design spine:
+
+Three verifiable facts (each checkable against the source in this repo):
 
 1. **One judgment chain behind all three entrances**: the panel "💾 Save", `novel_write_chapter`, and REST writes all run the same gating code (mechanical check / ledger conflicts / content gate / outline contract) — no bypass; the single override switch is explicitly audited.
 2. **The model cannot self-approve proposals**: for revisions, the model can only register a proposal, never apply it — "Apply" is the user's sovereign action in the panel (there is no apply tool on the model side); outline approvals record their channel, and the dashboard tracks the "tool self-approval ratio" (real-machine evidence: a serialized book once hit 168/168 self-approvals — the first gap that let its outline drift).
 3. **Zero-token auditing**: mechanical checks, the AI-smell scan, platform reviews, consistency checks, and point-in-time ledger simulation are all pure local computation — per-chapter audit cost is 0, and the numbers never pass through the model's hands.
+
+## Proof of results (verifiable in this repo)
+
+No adjectives — three facts you can check against source and data:
+
+| Evidence | What it means | Where to verify |
+| --- | --- | --- |
+| A serialized book ran all 151 chapters through the outline "scene count + beats" calibration | The word-count / scene estimation isn't guessed — it's fitted to real data | `lib/outline-overlap.js` calibration notes + `novel_outline` contract sections |
+| A serialized book once hit 168/168 outline self-approvals | This is exactly the outline-drift gap the "tool self-approval ratio" dashboard is built to catch — at 100% self-approval the plugin raises the alarm | Dashboard "tool self-approval ratio" + `novel_project` audit section |
+| 3 consecutive rejections on the same chapter triggers a write-block | The circuit breaker is a code behavior (not a reminder); it clears automatically once the outline/contract is fixed | `lib/gate.js` circuit-breaker logic |
+
+> All examples use neutral placeholders ("a serialized book", "a finished book") — no book titles, character names, or model names. That's the privacy rule for release-facing docs.
 
 ## UI Tour
 
@@ -29,22 +64,30 @@ The right-sidebar "Forge" panel, rendered from the real `lib/client.js` (these a
 
 > The screenshots above are **real renders** of `lib/client.js` (not hand-drawn mocks): run `npm run preview` to generate the preview page, then `assets/mockups/shoot-real.cjs` to reproduce — both light and dark themes track the host.
 
-The failure modes of AI long-form writing aren't magic — each has an engineering answer. This plugin encodes the parts with a clear right/wrong into code:
+## AI writing failure modes
+
+The failure modes of AI long-form writing aren't magic — each has an engineering answer. Here are the five that hurt most; the full 23-row table is in the collapsible section below:
+
+| Most painful | Hard constraint | Entry point |
+| --- | --- | --- |
+| Setting / power-scaling collapse | Fact ledger: same-chapter value change = conflict rejection | `novel_ledger` |
+| Model can't see prior text | Pre-write briefing assembles the context pack within budget; even past 100 chapters you can still retrieve paragraphs | `novel_briefing` / `novel_search` |
+| Spoiling the suspense early | Hidden-character dossiers stay out of context; if the name appears in the body, the content gate rejects it | `novel_scene` |
+| AI smell | Eight-dimension structural scan (fully local, zero model cost) | `novel_noai_scan` |
+| Every character sounds the same | Voice-gene cards injected structurally; review checks against taboo words | `novel_character voice` |
+
+<details>
+<summary>Full 23-row hard-constraint table (incl. word count, platform review, batch drafting, session fatigue, etc.)</summary>
 
 | AI writing failure mode | This plugin's hard constraint | Entry point |
 | --- | --- | --- |
-| Setting / power-scaling collapse | Fact ledger: same-chapter value change = conflict rejection; worldbook keywords auto-injected | `novel_ledger` / `novel_worldbook` |
-| Model "can't see prior text" | Pre-write briefing assembles a context pack within budget (outline → character cards → ledger → foreshadowing → worldbook → previous chapter ending) | `novel_briefing` |
 | Skipping stages verbally | Stage gate: if the chapter outline isn't approved, `novel_write_chapter` rejects outright | `novel_outline approve` |
 | Cross-chapter repetition / padding | 8-character shingle overlap detection against prior text; beyond threshold, save is rejected | `novel_write_chapter` mechanical check |
 | Uncontrolled chapter length | Mechanical-check threshold defaults to 2000–4000 chars (serial-web novel standard, target 3000); the pre-write briefing carries a "target chapter length" section | `novel_write_chapter` / `novel_briefing` |
 | No hook at chapter end | Chapter-end hook heuristic (question / suspense / ellipsis / exclamation); missing one raises a warning | `novel_audit` |
-| AI smell | Eight-dimension structural scan: template sentences / stock-phrase density / emotional directness / sentence-pattern templates / paragraph-rhythm variance / information dilution / chapter-end formula / AI default words (fully local, zero model cost) | `novel_noai_scan` |
 | Silent overwriting of text | Proposal system: edits go through a proposal → user confirms → new version is generated; old versions are never overwritten | `novel_propose` |
 | Lax reviewing | Mechanical and model review are separated: the audit produces deterministic numbers, and model review must cite evidence | `novel_audit` |
-| Spoiling the suspense early | Scene contract: hidden-character dossiers never enter context (traces erased even from ledger/summaries); if the name appears in the body, the content gate rejects it | `novel_scene` |
 | Drifting from / missing the outline | Outline contract sections (must-write scenes / forbidden deviations) are scored by code for coverage and deviation; hitting a forbidden item rejects the commit | `novel_write_chapter` |
-| Every character sounds the same | Voice-gene cards are injected structurally (sentence length / logic / catchphrases / never-says / small gestures / register); review checks against taboo words | `novel_character voice` |
 | Context explosion in long works | When a contract is present, only cards of characters appearing in this chapter are injected; worldbook is fetched by whitelist | `novel_briefing` |
 | Wanting to outline before settings are set | Nine-stage state machine: each stage's entry condition is judged by code, and what's missing is listed directly | `novel_project phase` |
 | Chapter one comes out too short | The outline is scored on scene count + beats (calibrated on 151 real chapters); if it can't reach the floor it is rejected, naming which scene has only one beat; the pre-write briefing then gives a per-scene word budget |
@@ -53,6 +96,8 @@ The failure modes of AI long-form writing aren't magic — each has an engineeri
 | Doesn't fit platform taste | Five platform review tables: Qidian checks structure / chapter-end hook; Fanqie checks the first 1000 chars for payoffs; Jinjiang checks chapter-length floor and a no-suffering opening; Qimao checks strong emotion and the chapter-end hook; Feilu checks ultra-fast pacing / an early golden finger / payoff density | `novel_audit platform` |
 | Crossing platform red lines | Seven-category sensitivity self-check; hits return line numbers and fixes | `novel_audit censor` |
 | Internal chores flood the main chat | Side-channel direct calls: polish / proofread / annotate / draft run on independent flows — no main-chat occupation, no session-log writing; results surface only as proposals | `lib/engine.js` |
+
+</details>
 | Batch drafting bypassing gates | Concurrent generation, serial commit: every chapter still passes the same gate; a single-chapter failure doesn't roll back the whole batch | `draft-batch` |
 | Batch drafting interrupted midway | Checkpoint: after each chapter commits, `.novel/batch-checkpoint.json` is written; `resume:true` continues from the checkpoint — committed chapters are skipped automatically, only unfinished ones retry | `draft-batch resume` |
 | Same session keeps getting shorter | Session-fatigue detection: first drafts declining within the session (second half < 75% of the first half), or a session average under 70% of other sessions' first drafts, or ≥8 consecutive chapters in one session, triggers a warning; "create new session and hand off" builds a new session in one click (with archiving if available), and the handoff summary auto-copies to clipboard | Panel fatigue banner |
@@ -92,6 +137,11 @@ dsh plugin --profile web add link:/path/to/dsh-novel-forge
 
 **Step 3 · Verify the install**: a standalone "🔨 Forge" tab appears in the right sidebar; in a session, ask the model to "list the novel tools" — you should see 24 `novel_*` tools. The agent preset "Novel Forge" is also auto-deployed to `~/.dsh/.agent-presets/novel-forge/` (skipped if already present, never overwritten; `DSH_NOVEL_FORGE_REDEPLOY=1` forces a redeploy, `DSH_NOVEL_FORGE_SKIP_DEPLOY=1` disables it).
 
+Installed and want to start writing? Three steps:
+
+<details>
+<summary>Steps 4–6 · Create a book → nine stages → collect results in the panel</summary>
+
 **Step 4 · Create your first book**: just tell the model in a session, e.g.:
 
 > Use novel_project init to create a fantasy book titled "Example Title", with the one-line premise "a good-for-nothing awakens a power that was never meant to be his".
@@ -99,6 +149,8 @@ dsh plugin --profile web add link:/path/to/dsh-novel-forge
 **Step 5 · Follow the nine stages**: the model guides you through premise → setting → characters → outline → volumes → chapter outlines → body, in order; at each stage it directly lists what's missing. You must `novel_outline approve` the chapter outline before writing it — that's by design, not a bug.
 
 **Step 6 · Collect results in the panel**: in the right-sidebar "Forge" tab you can read / listen, click polish / proofread (outputs are **proposals** — you click "apply" in the panel to make them take effect), run the full-book health check, and export the whole book.
+
+</details>
 
 Host version requirements and the dependency surface are in [COMPATIBILITY.md](./COMPATIBILITY.md).
 
