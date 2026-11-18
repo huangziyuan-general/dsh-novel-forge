@@ -47,6 +47,7 @@ const FENCE = 'x-dsh-novel-forge';
 const ROUTES = [
     { name: 'GET /projects（列表）', method: 'GET', url: `${PREFIX}/projects` },
     { name: 'GET /panel-config（面板引导配置，issue #8）', method: 'GET', url: `${PREFIX}/panel-config` },
+    { name: 'GET /engine-diag（引擎服务面自诊断，issue #10）', method: 'GET', url: `${PREFIX}/engine-diag` },
     { name: 'GET /projects/:id/recovery-candidates', method: 'GET', url: `${PREFIX}/projects/护栏本/recovery-candidates` },
     { name: 'GET /projects/:id/recovery-candidates/:rid', method: 'GET', url: `${PREFIX}/projects/护栏本/recovery-candidates/R1` },
     { name: 'POST /projects/claim', method: 'POST', url: `${PREFIX}/projects/claim` },
@@ -2458,6 +2459,30 @@ test('S-6 (#8) GET /panel-config：主 harness 未配置 → autoOpenPanel:true�
     assert.deepEqual(ok.json.value, { autoOpenPanel: true }, '缺省（未配置键）= true');
     const fenced = await drive({ method: 'GET', url: `${PREFIX}/panel-config`, headers: { host: 'localhost:3080' }, fence: false });
     assert.equal(fenced.statusCode, 403, 'panel-config 走同一 fence，不带 fence 头拒绝');
+});
+
+test('S-8 (#10) GET /engine-diag：服务面探测形状 + fence 收口', async () => {
+    const ok = await drive({ method: 'GET', url: `${PREFIX}/engine-diag` });
+    assert.equal(ok.statusCode, 200);
+    const v = ok.json.value;
+    assert.equal(typeof v.node, 'string');
+    assert.equal(typeof v.platform, 'string');
+    // 主 harness ctx 有 fs（真实 backend）：direct 命中，方法名集合里含 readText/writeText 同类
+    assert.ok(v.services.fs?.direct === true, 'fs 走属性直取应命中');
+    assert.ok(Array.isArray(v.services.fs?.value?.methods), '命中服务应给出方法名数组');
+    assert.ok(v.services.fs.value.methods.includes('writeText'), 'fs 方法名应含 writeText');
+    // harness ctx 没有 llm/subagents/agents：三项都空（与真机 44.x 症状同形状——本测试只钉形状）
+    for (const name of ['llm', 'subagents', 'agents']) {
+        assert.ok(v.services[name], `services.${name} 键必须存在`);
+        assert.equal(v.services[name].value, undefined, `${name} 未注册时不得给出 value`);
+    }
+    // 只收集方法名、绝不输出属性值：命中服务的 value 只能是 {type, methods} 两个键
+    const desc = v.services.fs.value;
+    assert.deepEqual(Object.keys(desc).sort(), ['methods', 'type'], 'value 只带 type 与 methods 两个键——无属性值泄漏面');
+    assert.ok(Array.isArray(v.ctxKeys), 'ctxKeys 应为键名数组');
+    assert.ok(v.ctxKeys.includes('fs'), 'harness ctx 的 fs 键应在 ctxKeys 里');
+    const fenced = await drive({ method: 'GET', url: `${PREFIX}/engine-diag`, headers: { host: 'localhost:3080' }, fence: false });
+    assert.equal(fenced.statusCode, 403, 'engine-diag 走同一 fence，不带 fence 头拒绝');
 });
 
 test('S-7 (#7) validatePanelSecurityConfig：合法形状放行，坏形状 fail-fast', async () => {

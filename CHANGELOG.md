@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.7.4 (2026-11-18)
+
+- 新增：引擎自诊断端点 `GET /api/novel-forge/engine-diag`——输出模型服务面探测细节（llm/subagents/agents 等的存在性与方法名集合，不含属性值）与引擎实时可用状态，用于定位宿主发行面漂移。
+- 修复：desktop profile 下面板旁路引擎恒 503「宿主未提供模型服务」（issue #10）——两处服务解析缺陷：
+  - `readService` 单 try 包双路（属性访问 + `ctx.get`）：cordis 在「服务已注册但未列入本 fiber inject」时属性访问**抛错**，旧写法抛错即短路，`ctx.get` 兜底分支永不执行 → llm 服务在 desktop profile 上整体探测成缺失；拆成两个独立 try，direct 抛错后仍走 get。
+  - subagents 备用通道特征 `typeof s.start === 'function'` 在 0.2.x 服务面上恒 false（公开面是 `startActivation`）：特征改为 `start || startActivation` 双认；调用面仍要求 `start`，`startActivation`-only 且 llm 缺席时返回点名 0.2.x 服务面的可读错误而非「两个都不可用」的误导文案。
+
 ## v1.7.3 (2026-11-17)
 
 - 新增：MCP Registry 元数据（server.json + package.json mcpName）与 tag 触发的自动发布工作流
@@ -602,8 +609,8 @@
 
 ### 某连载本 105 章审校驱动的六个 guardrail（外部审校报告 → 插件侧归因 → 补闸）
 
-外部审校报告给出 P0 结论：剧情从第 25-26 章起彻底脱离全书大纲（卷二应写的「青岚兵院」
-整段未发生）、伏笔台账止于第 33 章后约 15 钩零登记、100+ 章「一句宣言+叹号」断章公式、
+外部审校报告给出严重结论：剧情从第 25-26 章起彻底脱离全书大纲（卷二规划的
+整段场景未发生）、伏笔台账止于第 33 章后约 15 钩零登记、100+ 章「一句宣言+叹号」断章公式、
 50 章残留英文单词、账本「十年/十一载」两套并行。本机审计流水还原了机制：168 次
 `outline/approve` 全部工具自批（批准人=作者本人）、拐线章正是驳回重写压力最大的位置
 （ch24 一小时三驳两轮细纲重写）、写前简报只认伏笔.json 所以未登记的钩子对后续所有章节

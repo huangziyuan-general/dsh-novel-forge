@@ -168,7 +168,7 @@ dsh plugin --profile web add link:/path/to/dsh-novel-forge
   "mcpServers": {
     "novel-forge": {
       "command": "npx",
-      "args": ["-y", "dsh-novel-forge"],
+      "args": ["-y", "dsh-novel-forge@latest"],
       "env": { "NOVEL_FORGE_ROOT": "/你的小说工作区" }
     }
   }
@@ -177,7 +177,7 @@ dsh plugin --profile web add link:/path/to/dsh-novel-forge
 
 - **Claude Desktop**：写入 `~/Library/Application Support/Claude/claude_desktop_config.json`（Windows：`%APPDATA%\Claude\claude_desktop_config.json`）后重启。
 - **Cursor**：写入 `~/.cursor/mcp.json` 后重启。
-- **Claude Code**：一行接入——`claude mcp add novel-forge -e NOVEL_FORGE_ROOT=/你的小说工作区 -- npx -y dsh-novel-forge`（加 `-s user` 所有项目可用）。
+- **Claude Code**：一行接入——`claude mcp add novel-forge -e NOVEL_FORGE_ROOT=/你的小说工作区 -- npx -y dsh-novel-forge@latest`（加 `-s user` 所有项目可用；命令里必须带 `@latest`——npm 11 对裸包名的直跑解析有缺陷，会报 command not found / 连接关闭）。
 
 `NOVEL_FORGE_ROOT` = 小说工作区根目录（一本小说 = 工作区里的一个目录），GUI 客户端的 cwd 不可控，务必显式设置。Codex / 任意 stdio 客户端的接入、全局安装与源码路径变体、环境变量说明与常见问题见 **[docs/INSTALL-MCP.md](docs/INSTALL-MCP.md)**。
 

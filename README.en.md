@@ -164,7 +164,7 @@ No DSH required (Node ≥ 20). Put the following config into your client's MCP s
   "mcpServers": {
     "novel-forge": {
       "command": "npx",
-      "args": ["-y", "dsh-novel-forge"],
+      "args": ["-y", "dsh-novel-forge@latest"],
       "env": { "NOVEL_FORGE_ROOT": "/your/novel/workspace" }
     }
   }
@@ -173,7 +173,7 @@ No DSH required (Node ≥ 20). Put the following config into your client's MCP s
 
 - **Claude Desktop**: write it into `~/Library/Application Support/Claude/claude_desktop_config.json` (Windows: `%APPDATA%\Claude\claude_desktop_config.json`), then restart.
 - **Cursor**: write it into `~/.cursor/mcp.json`, then restart.
-- **Claude Code**: one line — `claude mcp add novel-forge -e NOVEL_FORGE_ROOT=/your/novel/workspace -- npx -y dsh-novel-forge` (add `-s user` for all projects).
+- **Claude Code**: one line — `claude mcp add novel-forge -e NOVEL_FORGE_ROOT=/your/novel/workspace -- npx -y dsh-novel-forge@latest` (add `-s user` for all projects; keep the explicit `@latest` — npm 11 mis-resolves the bare package name on direct run, failing with command not found / connection closed).
 
 `NOVEL_FORGE_ROOT` is the novel workspace root (one novel = one directory in the workspace); GUI clients have an uncontrollable cwd, so always set it explicitly. For Codex / any stdio client setup, global-install and source-path variants, the environment variables and troubleshooting: see **[docs/INSTALL-MCP.md](docs/INSTALL-MCP.md)**.
 

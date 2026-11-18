@@ -24,7 +24,7 @@
   "mcpServers": {
     "novel-forge": {
       "command": "npx",
-      "args": ["-y", "dsh-novel-forge"],
+      "args": ["-y", "dsh-novel-forge@latest"],
       "env": { "NOVEL_FORGE_ROOT": "/你的小说工作区" }
     }
   }
@@ -74,8 +74,10 @@ git clone https://github.com/huangziyuan-general/dsh-novel-forge.git
 一行命令接入（默认只进当前项目；加 `-s user` 让所有项目可用）：
 
 ```bash
-claude mcp add novel-forge -e NOVEL_FORGE_ROOT=/你的小说工作区 -- npx -y dsh-novel-forge
+claude mcp add novel-forge -e NOVEL_FORGE_ROOT=/你的小说工作区 -- npx -y dsh-novel-forge@latest
 ```
+
+命令里必须带 `@latest`：npm 11 对裸包名（`npx -y dsh-novel-forge`）的直跑解析有缺陷，实测报 `command not found`、客户端侧表现为连接关闭。
 
 ### Claude Desktop
 
@@ -95,7 +97,7 @@ claude mcp add novel-forge -e NOVEL_FORGE_ROOT=/你的小说工作区 -- npx -y 
 ```toml
 [mcp_servers.novel-forge]
 command = "npx"
-args = ["-y", "dsh-novel-forge"]
+args = ["-y", "dsh-novel-forge@latest"]
 env = { NOVEL_FORGE_ROOT = "/你的小说工作区" }
 ```
 
@@ -123,7 +125,7 @@ stdio，零第三方依赖——宿主 peer 包缺席也能启动（输出校验
 
 ## 常见问题
 
-- **启动失败（server 起不来 / 立刻退出）**：多半是 Node 版本不够（需 ≥ 20；≥ 22 才能启用检索索引，缺 `node:sqlite` 时自动降级为关键词匹配，不影响其他工具）；或装到的是 1.7.2 之前的旧版本（在宿主外启动有缺陷）——`npx -y dsh-novel-forge` 会拉最新，全局安装先 `npm view dsh-novel-forge version` 确认。
+- **启动失败（server 起不来 / 立刻退出）**：多半是 Node 版本不够（需 ≥ 20；≥ 22 才能启用检索索引，缺 `node:sqlite` 时自动降级为关键词匹配，不影响其他工具）；或装到的是 1.7.2 之前的旧版本（在宿主外启动有缺陷）——`npx -y dsh-novel-forge@latest` 会拉最新，全局安装先 `npm view dsh-novel-forge version` 确认。
 - **工具不显示（客户端里看不到 24 个 `novel_*`）**：改完配置必须**重启客户端**才生效；确认 server 进程在客户端的 MCP 面板/日志里是 connected；再确认 `NOVEL_FORGE_ROOT` 填了——路径不存在或不可写时 server 启动即报错，工具自然一个都列不出来。
 - **路径错误（找不到书 / 找不到工作区）**：`NOVEL_FORGE_ROOT` 缺省取进程 cwd；GUI 客户端的 cwd 不可控，务必用绝对路径显式设置。确认该目录存在且当前用户对它有读写权限（权限不足时同样表现为「找不到书」）。
 - **权限问题（写不了）**：书稿只落在 `NOVEL_FORGE_ROOT` 下（containment 与宿主同语义），该目录不可写时全部写入类工具报错；把路径指到你有写权限的目录即可，别用 `/` 或系统目录。

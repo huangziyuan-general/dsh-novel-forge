@@ -1221,22 +1221,22 @@ import { normalizeVoice, renderVoiceCard, voiceConsistency, isEmptyVoice } from 
 import { parseScenes, parseBanRules, computeGateMetrics, sceneMatched } from '../lib/gate-metrics.js';
 
 test('B3 契约归一：中文别名、清单容错、字段补齐', () => {
-    const c = normalizeContract({ chapter: 3, 场景: '雨夜断刃', 出场: '测试角色、赵擎,陆寒', 隐藏: ['陆寒'], 禁项: '储物戒指' });
+    const c = normalizeContract({ chapter: 3, 场景: '雨夜断刃', 出场: '测试角色、赵擎,李四', 隐藏: ['李四'], 禁项: '储物戒指' });
     assert.equal(c.chapter, 3);
     assert.equal(c.scene, '雨夜断刃');
-    assert.deepEqual(c.participants, ['测试角色', '赵擎', '陆寒']);
-    assert.deepEqual(c.hidden, ['陆寒']);
+    assert.deepEqual(c.participants, ['测试角色', '赵擎', '李四']);
+    assert.deepEqual(c.hidden, ['李四']);
     assert.deepEqual(c.forbidden, ['储物戒指']);
     assert.deepEqual(c.settings, [], '缺省字段补空数组，输出契约才稳定');
 });
 
 test('B3 契约裁剪：hidden 绝不进注入名单；无契约退回 cast 全员', () => {
-    const c = normalizeContract({ chapter: 3, participants: '测试角色,陆寒', hidden: '陆寒' });
-    const r = resolveSceneCast({ contract: c, cast: ['测试角色', '陆寒', '小满'] });
+    const c = normalizeContract({ chapter: 3, participants: '测试角色,李四', hidden: '李四' });
+    const r = resolveSceneCast({ contract: c, cast: ['测试角色', '李四', '小满'] });
     assert.deepEqual(r.inject, ['测试角色'], '★ 隐藏人物不得进注入名单');
-    assert.deepEqual(r.hidden, ['陆寒']);
+    assert.deepEqual(r.hidden, ['李四']);
     assert.ok(r.dropped.includes('小满'), '契约外的人被剔出（省 token）');
-    assert.deepEqual(r.contradictions, ['陆寒'], '出场∩隐藏 要报矛盾（保护优先）');
+    assert.deepEqual(r.contradictions, ['李四'], '出场∩隐藏 要报矛盾（保护优先）');
     assert.equal(r.source, 'contract');
 
     const fb = resolveSceneCast({ contract: null, cast: ['测试角色', '赵擎'] });
@@ -1245,17 +1245,17 @@ test('B3 契约裁剪：hidden 绝不进注入名单；无契约退回 cast 全�
 });
 
 test('B3 悬念保护：注入区块绝不出现隐藏人物名（本模块存在的全部意义）', () => {
-    const c = normalizeContract({ chapter: 3, scene: '雨夜', participants: '测试角色、陆寒', hidden: '陆寒' });
+    const c = normalizeContract({ chapter: 3, scene: '雨夜', participants: '测试角色、李四', hidden: '李四' });
     const block = renderContractSection(c);
-    assert.ok(!block.includes('陆寒'), '★ 隐藏人物的名字不得出现在模型可见的任何文本里');
+    assert.ok(!block.includes('李四'), '★ 隐藏人物的名字不得出现在模型可见的任何文本里');
     assert.ok(block.includes('测试角色'), '出场人物要在场');
     assert.ok(block.includes('未登场'), '要告诉模型「有人身份未揭晓」，但不给名字');
     assert.equal(renderContractSection(null), '', '无契约不给空区块');
 });
 
 test('B3 泄漏检查 + 契约表不可变', () => {
-    assert.deepEqual(hiddenLeakCheck({ content: '测试角色看见陆寒站在雨里。', hidden: ['陆寒'] }), ['陆寒']);
-    assert.deepEqual(hiddenLeakCheck({ content: '只有雨声。', hidden: ['陆寒'] }), []);
+    assert.deepEqual(hiddenLeakCheck({ content: '测试角色看见李四站在雨里。', hidden: ['李四'] }), ['李四']);
+    assert.deepEqual(hiddenLeakCheck({ content: '只有雨声。', hidden: ['李四'] }), []);
 
     const t0 = {};
     const t1 = setContract(t0, { chapter: 2, participants: '测试角色' });
@@ -1320,10 +1320,10 @@ test('A3/A4 细纲解析：序号/加粗/列表/复选框都要认（格式漂�
 });
 
 test('A3/A4 禁项分流：排除型算偏离度，需求型/条件型不算（彼踩过的坑）', () => {
-    const r = parseBanRules('- 不得让陆寒出场\n- 禁止使用「储物戒指」\n- 不得省略「断刃」\n- 不得无铺垫引入「密信」');
+    const r = parseBanRules('- 不得让李四出场\n- 禁止使用「储物戒指」\n- 不得省略「断刃」\n- 不得无铺垫引入「密信」');
     // 0.19.1（E12）：「不得让X出场」是登场禁令不是提及禁令——X 降条件型，
     // 字面 includes 分不出在场与回忆性提及，误禁拦章的代价大于漏禁
-    assert.ok(r.conditional.includes('陆寒'));
+    assert.ok(r.conditional.includes('李四'));
     assert.ok(r.banned.includes('储物戒指'));
     assert.ok(!r.banned.includes('断刃'), '★ 需求型（不得省略）不是禁词——写到了才是对的');
     assert.ok(r.requirements.includes('断刃'));
@@ -1368,8 +1368,8 @@ test('★ 禁项解析：「不得让沈无咎说出…」禁的是那句话，�
     assert.ok(!r.banned.includes('沈无咎') && !r.banned.includes('裴昭'), '★ 行为人名归条件型（人物必然出现在正文，进禁词表=必命中）');
     assert.ok(r.conditional.includes('沈无咎') && r.conditional.includes('裴昭'), '人名提示人工复核');
     assert.ok(r.banned.includes('拓印有半枚'), '真正想禁的引号宾语照收禁词');
-    const appear = parseBanRules('- 不得让陆寒出场');
-    assert.ok(!appear.banned.includes('陆寒') && appear.conditional.includes('陆寒'),
+    const appear = parseBanRules('- 不得让李四出场');
+    assert.ok(!appear.banned.includes('李四') && appear.conditional.includes('李四'),
         '0.19.1（E12）：登场禁令的人名降条件型——在场性人工复核，提及不算命中');
 });
 
@@ -1390,9 +1390,9 @@ test('★ 禁项解析：裸词表行逐项生效（禁项段最朴素写法；�
 });
 
 test('A3/A4 契约指标：覆盖率/漏写/偏离度/场景豁免', () => {
-    // drift 源用真禁词（「禁止使用X」——排除型）；登场禁令（不得让陆寒出场）经 E12
+    // drift 源用真禁词（「禁止使用X」——排除型）；登场禁令（不得让李四出场）经 E12
     // 降条件型，不计偏离度——下方专设断言钉住这个行为
-    const outline = '## 本章必写场景\n1. 雨夜相遇：测试角色在码头遇见赵擎\n2. 断刃现世：断刃从江底浮起\n\n## 本章禁止偏离项\n- 禁止使用「储物戒指」\n- 不得让陆寒出场\n';
+    const outline = '## 本章必写场景\n1. 雨夜相遇：测试角色在码头遇见赵擎\n2. 断刃现世：断刃从江底浮起\n\n## 本章禁止偏离项\n- 禁止使用「储物戒指」\n- 不得让李四出场\n';
     const full = computeGateMetrics({ content: '雨夜，测试角色在码头遇见赵擎。断刃从江底浮起。', outline });
     assert.equal(full.available, true);
     assert.equal(full.coverage, 100);
@@ -1404,13 +1404,13 @@ test('A3/A4 契约指标：覆盖率/漏写/偏离度/场景豁免', () => {
     assert.deepEqual(partial.missedScenes, ['断刃现世']);
     assert.equal(partial.passed, false, '漏场景＝不通过');
 
-    const hit = computeGateMetrics({ content: '陆寒从雾里走出来，断刃从江底浮起。储物戒指也亮了一下。', outline });
+    const hit = computeGateMetrics({ content: '李四从雾里走出来，断刃从江底浮起。储物戒指也亮了一下。', outline });
     assert.deepEqual(hit.bannedHits, ['储物戒指']);
     assert.equal(hit.drift, 100);
     assert.equal(hit.passed, false);
     // E12 回归钉：登场禁令人名出现在正文（提及/在场）不算命中禁项
-    const mention = computeGateMetrics({ content: '雨夜，测试角色在码头遇见赵擎。断刃从江底浮起。她想起陆寒说过的话。', outline });
-    assert.ok(!mention.bannedHits.includes('陆寒'), '登场禁令的人名命中不进 bannedHits（条件型人工复核）');
+    const mention = computeGateMetrics({ content: '雨夜，测试角色在码头遇见赵擎。断刃从江底浮起。她想起李四说过的话。', outline });
+    assert.ok(!mention.bannedHits.includes('李四'), '登场禁令的人名命中不进 bannedHits（条件型人工复核）');
     assert.equal(mention.passed, true);
 
     const none = computeGateMetrics({ content: '随便一段。', outline: '没有契约段的大纲' });
@@ -1418,7 +1418,7 @@ test('A3/A4 契约指标：覆盖率/漏写/偏离度/场景豁免', () => {
     assert.equal(none.passed, null);
     assert.deepEqual(none.missedScenes, [], '不可用时也要给空数组，输出契约才稳定');
 
-    const broken = computeGateMetrics({ content: '随便一段。', outline: '## 本章必写场景\n\n## 本章禁止偏离项\n- 不得让陆寒出场\n' });
+    const broken = computeGateMetrics({ content: '随便一段。', outline: '## 本章必写场景\n\n## 本章禁止偏离项\n- 不得让李四出场\n' });
     assert.equal(broken.available, false);
     assert.match(broken.note, /解析不出/, '段存在但解析不出要给提示（不阻断，写不了章的代价更大）');
 });
@@ -1546,13 +1546,13 @@ test('★ 关键词分词：—— / · 自然断开，用 —— 连接的场�
     // 旧实现只枚举常见中文标点，—— 与 · 不断句 → 整句粘成超长 token → 假阴性。
     const outline = '## 本章必写场景\n'
         + '- 井的账：井欠的七条命一座封——苗在还——“命账等到什么时候”\n'
-        + '- 第一枪：孙宇算三笔——“今夜不打”\n'
+        + '- 第一枪：张三算三笔——“今夜不打”\n'
         + '- 对笔迹：掌灯人认纸不认笔迹——“纸认账·不认人”\n'
-        + '- 暗巷：孙宇潜入后巷——“有人在等他”\n\n'
-        + '## 本章禁止偏离项\n- 不得让陆寒出场\n';
+        + '- 暗巷：张三潜入后巷——“有人在等他”\n\n'
+        + '## 本章禁止偏离项\n- 不得让李四出场\n';
     const content = '井欠的：七条命，一座封。井醒了，苗在还。'
         + '“命账等到什么时候？”'
-        + '孙宇说：“今夜不打。”'
+        + '张三说：“今夜不打。”'
         + '掌灯人摇头：“纸认账，不认人。”';
     const g = computeGateMetrics({ content, outline });
     // 前三个场景正文确实写了（—— 断开后每个短句都能在正文命中）

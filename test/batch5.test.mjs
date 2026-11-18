@@ -231,6 +231,46 @@ test('engine: 默认继承会话路由，通道可覆写；带 sessionId 的归�
     assert.equal(llm.last.sessionId, 'sess-1');
 });
 
+test('engine: cordis 未 inject 的属性访问抛错时，readService 必须落到 ctx.get（desktop profile 实证场景）', async () => {
+    // cordis 真机语义：服务已注册但未列入本 fiber 的 inject 时，ctx[prop] 访问**抛错**
+    // （"cannot get property X without inject"），ctx.get(prop) 才是正确解析路径。
+    // 旧 readService 单 try 包双路——第一路抛错短路，get 永不执行 → desktop profile
+    // 上引擎恒 503（issue #10）。本用例用 Proxy 精确复刻该语义。
+    const llm = fakeLlm(textChunks('结果'));
+    const throwingCtx = new Proxy({}, {
+        get(target, prop) {
+            if (prop === 'llm') throw new Error('cannot get property "llm" without inject');
+            if (prop === 'get') return (name) => (name === 'llm' ? llm : undefined);
+            if (prop === 'agentDefaultModel') return { provider: 'test-provider', model: 'test-model' };
+            return target[prop];
+        },
+    });
+    const engine = createEngine({ ctx: throwingCtx, config: {}, sleep: noSleep });
+    assert.equal(engine.isAvailable(), true, 'llm 在 ctx.get 上可达，引擎应视为可用');
+    const r = await engine.run('polish', { prompt: 'p' });
+    assert.equal(r.ok, true, '读取应成功（旧实现此处 ENGINE_UNAVAILABLE）');
+    assert.match(r.text, /结果/);
+});
+
+test('engine: subagents 服务特征按 0.2.x 校准（startActivation 在场即视为服务存在）', () => {
+    // 0.2.x SubagentService 公开面没有 start（engine-diag 方法表实证）——旧特征恒 false。
+    const legacy = createEngine({ ctx: { subagents: { start: () => {} } }, config: {} });
+    assert.equal(legacy.isAvailable(), true, '旧宿主 start 特征保留');
+    const modern = createEngine({ ctx: { subagents: { startActivation: () => {} } }, config: {} });
+    assert.equal(modern.isAvailable(), true, '0.2.x startActivation 特征命中');
+});
+
+test('engine: startActivation-only 的 subagents + llm 缺席 → run 返回可读错误（不 TypeError）', async () => {
+    const engine = createEngine({
+        ctx: { subagents: { startActivation: () => {} } },
+        config: {}, sleep: noSleep,
+    });
+    const r = await engine.run('polish', {});
+    assert.equal(r.ok, false);
+    assert.equal(r.error.code, 'ENGINE_UNAVAILABLE');
+    assert.match(r.error.message, /startActivation/, '文案应点名 0.2.x 服务面而非谎报「两个都不可用」');
+});
+
 test('engine: 无宿主 llm / 无路由 / 预先取消 各自返回可读错误，不抛', async () => {
     const noHost = createEngine({ ctx: {}, config: {} });
     const r1 = await noHost.run('polish', {});
