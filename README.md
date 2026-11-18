@@ -51,7 +51,6 @@ DeepSeek Harness（DSH）的中文长篇写作插件。它不是「提示词合�
 | 某连载本曾 168/168 细纲全自批 | 正是「工具自批占比」看板捕捉到的大纲漂移第一缺口——自批率 100% 时插件报警 | 看板「工具自批占比」+ `novel_project` 审计段 |
 | 同章连续驳回 3 次即拒写 | 熔断是代码行为（不是提醒），改完细纲/契约自动解除 | `lib/gate.js` 熔断逻辑 |
 
-> 以上均用中性指代（「某连载本」「某完结本」），不出现书名/人物/模型名——这是发行面文档的隐私铁律。
 
 [![Star History Chart](https://api.star-history.com/svg?repos=huangziyuan-general/dsh-novel-forge&type=Date)](https://star-history.com/#huangziyuan-general/dsh-novel-forge&Date)
 
