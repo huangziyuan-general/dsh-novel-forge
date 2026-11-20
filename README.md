@@ -224,7 +224,7 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 
 | 工具 | 职责 | 硬约束 |
 | --- | --- | --- |
-| `novel_project` | init / status / **phase（九阶段看板与入场判定）** / set_stage / repair / check / promise / promise_template / promise_review / preference / platform / chars | 题材模板与偏好存储零 token；`promise_review` 复用 `annotate`，默认复核最近三章、引文逐字核验，只给建议不进门禁；偏好必须经用户明确确认，不能削弱硬约束 |
+| `novel_project` | init / status / **phase（九阶段看板与入场判定）** / set_stage / repair / check（含**派生面漂移对账**：已写章未进检索索引 / 风格基线落后 / 台账脏行，只报不修） / promise / promise_template / promise_review / preference / platform / chars | 题材模板与偏好存储零 token；`promise_review` 复用 `annotate`，默认复核最近三章、引文逐字核验，只给建议不进门禁；偏好必须经用户明确确认，不能削弱硬约束 |
 | `novel_outline` | 全书大纲 / 第N章细纲 / **批准** | 写章门禁的钥匙 |
 | `novel_character` | 人物卡 + **语言基因卡**（voice：句长/逻辑/口头禅/绝不说/小动作/语域，结构化存储） | 写章单独注入成区块；audit voice:true 核对禁忌词 |
 | `novel_worldbook` | 世界书条目（add/update/list/remove + import/export） | 设定只认这里；update 保 id；缺触发词不再报错——先抽本书已知实体名，抽不到转常驻并给可见警告 |
@@ -234,10 +234,10 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 | `novel_ledger` | 事实账本（含 note）+ **时点推演**（`status_at` 第 n 章快照 / `timeline` 演化线）+ 伏笔埋/收/改期 + **回收证据校验** + 认知账本 + **叙事契约**（pledge/deadline/secret）+ **写作样稿库**（sample_* 六动作） | 同章改值拒绝；章号超前拒绝；超期伏笔告警；回收章必须已写且正文命中关键词（force 记审计）；契约到期未兑现写章时点名，broken 且仍有到期伏笔未还 → 拒绝落盘；补录不改历史；认知倒退显形 |
 | `novel_relation` | 关系账本：人物/组织**之间**的关系状态线（盟友/仇敌/师徒/信任度…）：`update` 登记推进 / `query` 当前值 / `status_at` 时点推演 / `timeline` 演化线 | (A,B) 与 (B,A) 自动归一同一对；同章同对同维度改值=冲突拒绝；正文仍按旧值写 → 内容门禁每章 warning |
 | `novel_arc` | 弧线账本：单人物**维度**随章推进（成长/无畏/信任度/嫌疑度…）：`update` 登记推进 / `query` 当前读数 / `status_at` 时点 / `diagnose` 全书停走诊断 | `stalled`（≥15 章未推进）命中时写章链自动落 major 质量债；`no-move`（全书≥20章只推进过一次）warning；零 token 纯函数 |
-| `novel_quality` | 书级质量债：`view` 看欠了多少账 / 最重是哪章 / 现在该不该继续写；`settle` 结清某章的债 | 三级口径（minor 质量债 / major 需重规划 / hard 硬门禁放行）；局部瑕疵不阻塞全书，硬门禁放行必须回头核对 |
-| `novel_noai_scan` | 八维去 AI 味扫描 | 纯本地零费用 |
+| `novel_quality` | 书级质量债：`view` 看欠了多少账 / 最重是哪章 / 现在该不该继续写，并给**质量趋势**（逐章 noai 分/覆盖率/债档序列 + 方向与风险旗标——这本书在变好还是变差）；`settle` 结清某章的债 | 三级口径（minor 质量债 / major 需重规划 / hard 硬门禁放行）；局部瑕疵不阻塞全书，硬门禁放行必须回头核对；趋势零 token 现算（审计/索引/债表既有数据，不新写盘） |
+| `novel_noai_scan` | 八维去 AI 味扫描 + **句式腔调判据**（微动作补语成片/音量反差腔/否定排比/预告式收尾，report-only 不进八维分） | 纯本地零费用；扫描前自动应用本书文风白名单（`novel_style whitelist` 登记的「这是我，别拦」写法） |
 | `novel_audit` | 确定性章节审计 + 契约指标 + `continuity` 全书一致性 + `voice` 语言基因核对 + `platform` **起点/番茄/晋江/七猫/飞卢五平台审稿** + `censor` **敏感自查七类** | 机审证据；平台体检表给出可执行改法 |
-| `novel_style` | 文笔六维基线（μ±σ 带）+ **氛围光谱 12 轴**：build 建基线 / check 对照（含主导氛围漂移） | 纯本地零费用；只报数不贴标签 |
+| `novel_style` | 文笔六维基线（μ±σ 带）+ **氛围光谱 12 轴**：build 建基线 / check 对照（含主导氛围漂移）；`whitelist` / `whitelist_add` / `whitelist_remove` 管理**本书文风白名单**（作者登记的「这是我，别拦」字面串，去 AI 味扫描前掩码） | 纯本地零费用；只报数不贴标签；白名单按书隔离、逐字匹配，只影响 AI 味证据面不影响其它门禁 |
 | `novel_propose` | 提案 / 列表 | 修订走提案，用户在面板应用；旧版永不覆盖 |
 | `novel_import` | 本地书籍导入（preview/import/**backfill 门禁回补**；file 支持 `.md`/`.txt`/`.docx`——docx 按 Word 标题样式与「第N章」规则切分） | 纯函数切分章节；建书+版本化落盘；docx 走 `readBytes` 字节通道（文本通道会解坏二进制），拒 zip64、48MB 解压上限 |
 | `novel_export` | 导出整本（md/txt + stats） | 按版本顺序拼装，写 `导出/` |

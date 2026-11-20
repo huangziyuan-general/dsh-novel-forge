@@ -84,12 +84,18 @@ export async function bootPlugin(opts = {}) {
     const { apply } = await import('../../lib/index.js');
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-forge-plugin-'));
     const registered = [];
+    const guards = [];
     const sections = [];
     const ctx = {
         fs: makeBackend(root),
         emit() {},
         logger: { info() {} },
-        tools: { register: (t) => registered.push(t) },
+        // 镜像宿主真机（宿主 ToolsService，index.d.ts）：register + guard（guard 是单调
+        // 拒认层，登记后返回卸载 disposer——真机契约，替身不能比真机窄）。
+        tools: {
+            register: (t) => registered.push(t),
+            guard: (g) => { guards.push(g); return () => { const i = guards.indexOf(g); if (i >= 0) guards.splice(i, 1); }; },
+        },
         systemPrompt: { section: (s) => sections.push(s) },
         inject: (deps, fn) => fn(ctx),
         effect: (fn) => { const cleanup = fn(); return typeof cleanup === 'function' ? cleanup : () => {}; },
@@ -107,6 +113,9 @@ export async function bootPlugin(opts = {}) {
         ctx,
         exec,
         sections,
+        /** 宿主 guard 通道登记的拒认函数（apply 经 ctx.effect 挂上的那一份；宿主无 guard
+         *  通道时为空——缺席宿主降级为事后漂移检测，mount 不受牵连）。 */
+        guards,
         /** 直连 lib 层函数（apply/discard 这些**不进工具面**的用户主权动作）要用的 io。 */
         io: () => createFsio(ctx, exec, sessionCwd(exec)),
         tool: (name) => {

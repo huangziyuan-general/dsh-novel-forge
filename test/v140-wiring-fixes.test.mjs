@@ -47,10 +47,15 @@ test('★ novel_project check fullscan：return 形状必须逐字段守 schema�
         const r = await tool('novel_project').execute({ action: 'check', book: '体检书', fullscan: true }, exec);
         assert.deepEqual(
             Object.keys(r).sort(),
-            ['action', 'book', 'continuity', 'fullscan', 'next'],
+            ['action', 'book', 'continuity', 'drift', 'fullscan', 'next'],
             `return 键集必须与 output.schema 一致：${Object.keys(r).join(',')}`,
         );
         assert.equal(r.fullscan.ok, true, '空书 fullscan 应该是干净的');
+        // ④ 派生面漂移：空书三处都无漂移 → drift.ok 恒 true，键集稳定
+        assert.equal(r.drift.ok, true, '空书无漂移');
+        assert.deepEqual(r.drift.indexMissing, []);
+        assert.equal(r.drift.baselineLag, 0);
+        assert.equal(r.drift.ledgerIssues, 0);
         assert.match(r.next, /全书深扫（线程自洽）通过/, '深扫结论必须进 next 提示，不许散成数字键');
     } finally {
         cleanup();

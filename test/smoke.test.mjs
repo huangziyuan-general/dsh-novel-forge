@@ -1875,6 +1875,10 @@ test('★ 全工具×全 action：真校验器验证输出 + render 冒烟', asy
         ['novel_ledger', 'foreshadow_payoff', { action: 'foreshadow_payoff', book: A, chapter: 1, id: 'F1', force: true }],
         ['novel_style', 'build', { action: 'build', book: A }],
         ['novel_style', 'check', { action: 'check', book: A, chapter: 1 }],
+        // 文风白名单三动作（登记「这是我，别拦」的写法，去 AI 味扫描前掩码用）
+        ['novel_style', 'whitelist', { action: 'whitelist', book: A }],
+        ['novel_style', 'whitelist_add', { action: 'whitelist_add', book: A, text: '他抬了抬眼皮' }],
+        ['novel_style', 'whitelist_remove', { action: 'whitelist_remove', book: A, text: '他抬了抬眼皮' }],
         ['novel_search', 'build', { action: 'build', book: A }],
         ['novel_search', 'status', { action: 'status', book: A }],
         ['novel_search', 'query', { action: 'query', book: A, q: '自检' }],

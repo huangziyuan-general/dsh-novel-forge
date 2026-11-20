@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.8.0 (2026-11-20)
+
+- 新增：许可证由 MIT 变更为 Apache-2.0（仓库根 LICENSE / NOTICE 同步更新；已发布版本的 npm tarball 按 MIT 许可继续有效，新版本起按 Apache-2.0）。
+- 新增：去 AI 味**句式腔调判据**（`novel_noai_scan` 输出新增 `phrases` 段，report-only 不进八维分）——微动作补语成片（「了下/了一下/松了半圈」电报体指纹，≥5 处报）、音量反差腔（「声音/语气不大…却…」，≥3 处报）、否定排比（「没有X也没有Y / 不A也不B」，≥3 处报）、预告式收尾（章末「他不知道的是 / 才刚刚开始」，命中即报）。只在叙述行判（对话行豁免）、保守阈值宁漏勿刷屏；写章链回执与 `novel_noai_scan` 同口径可见。
+- 新增：**本书文风白名单**（`novel_style` 新增 `whitelist` / `whitelist_add` / `whitelist_remove` 三动作，`lib/style-whitelist.js` 等长掩码）——作者手登记「这是我，别拦」的字面串，去 AI 味扫描前全部维度（八维 + 句式腔调判据）都不再数它们，解决「改到没有 AI 味就改成不是我」的矛盾。逐字匹配、按书隔离（不跨书继承）；只影响 AI 味证据面，不影响字数/重复/内容门禁。
+- 新增：**派生面漂移对账**（`novel_project check` 输出新增 `drift` 段，纯本地零 token）——三处对不上就报：① 已写章未进检索索引（`indexMissing`，novel_search 召不回这些章）；② 风格基线落后已写章数（`baselineLag`，对照带在漂移该重建）；③ 各台账脏行（缺章号/非对象，被时间线守卫静默排除的账本行点名 `ledgerIssues`）。只报不修：修走 repair / build / novel_style build。
+- 新增：**质量趋势**（`novel_quality view` 输出新增 `trend` 段，零 token 现算）——把逐章 noai 分（审计行 `noaiScore`）、细纲覆盖率（章节索引 `gate.coverage`）、债档（`quality.debts`）拉成时间线，出方向判读（noai 分/覆盖率走高走低）与风险旗标（近 5 章有 hard 债未结 / 近 3 章覆盖率 <80 / noai 走高）；样本 <4 章不判方向（只报现状，统计噪声不硬判）。回答「这本书在变好还是变差」，与 `view` 的「现在欠多少债」互补。
+- 新增：**派生面直写守卫**（宿主工具执行管线的前置拒认层，`lib/derive-guard.js` + 宿主 tools 服务 guard 通道）——宿主写工具（`bash` 命令行 / `write` / `edit` 的 `file_path`）写入书数据面（`.novel/`、`账本/` 目录或 `novel.json` / `facts.json` / `伏笔.json`）时直接拒收，文案指回工具链（`novel_search build` / `novel_ledger` / `novel_project check·repair`）；`novel_*` 工具全豁免（工具链内部才带版本守卫/台账一致性/审计）。拒认是**单调**的（只有拒、没有放行结果，其他监听翻不回许可）；disposer 经 `ctx.effect` 登记为清理，插件卸载自动注销不留悬挂守卫；宿主无 guard 通道（MCP/旧宿主）时跳过注册、降级为 `check drift` 的事后显形，不牵连 mount。与派生面漂移对账（事前拦 + 事后验）合成闭环。
+
+
 ## v1.7.5 (2026-11-20)
 
 - 新增：`npm run version:set -- x.y.z` 发版版本号单一入口——一条命令同步 package.json / PLUGIN_VERSION / server.json 四落点，任何锚点缺失响亮失败不写盘；build 闸扩展为校验全部落点一致（此前 server.json 漏改导致 v1.7.4 的 MCP Registry 发布被拒）。
