@@ -21,17 +21,36 @@ const entryRel = 'src/client/index.js';
 const outRel = 'lib/client.js';
 
 // ── 守卫：版本号单一来源 ──
-// 源码里的 PLUGIN_VERSION 是运行时徽标，package.json 是发行版本；
-// 两者不一致会出现「面板显示 v0.4.1、npm 上是 0.4.2」这类幽灵问题。
+// 源码里的 PLUGIN_VERSION 是运行时徽标，package.json 是发行版本，server.json 是
+// MCP Registry 声明留痕；任何一处不一致都会出现「面板 v0.4.1、npm 0.4.2、Registry
+// 1.7.3」这类幽灵问题（v1.7.4 的 Registry 发布就是 server.json 漏改被拒）。
+// 发版一律走 `npm run version:set -- x.y.z`（一次同步全部落点）；这里是那道闸。
 const entrySrc = fs.readFileSync(path.join(root, entryRel), 'utf8');
 const versionMatch = entrySrc.match(/PLUGIN_VERSION\s*=\s*['"]([^'"]+)['"]/);
 if (!versionMatch) {
 	console.error(`✗ ${entryRel} 里找不到 PLUGIN_VERSION 字面量（构建需要一个可校验的版本号）`);
 	process.exit(1);
 }
+const drifts = [];
 if (versionMatch[1] !== pkg.version) {
-	console.error(`✗ 版本漂移：${entryRel} 是 ${versionMatch[1]}，package.json 是 ${pkg.version}`);
-	console.error('  改版本时两处必须同步（build 就是那道闸）。');
+	drifts.push(`${entryRel} 是 ${versionMatch[1]}`);
+}
+let serverJson = null;
+try {
+	serverJson = JSON.parse(fs.readFileSync(path.join(root, 'server.json'), 'utf8'));
+} catch {
+	console.error('✗ server.json 缺失或不是合法 JSON（版本闸需要它）');
+	process.exit(1);
+}
+for (const [where, got] of [
+	['server.json 顶层 version', serverJson.version],
+	['server.json packages[0].version', serverJson.packages?.[0]?.version],
+]) {
+	if (got !== pkg.version) drifts.push(`${where} 是 ${JSON.stringify(got)}`);
+}
+if (drifts.length > 0) {
+	console.error(`✗ 版本漂移：package.json 是 ${pkg.version}，但 ${drifts.join('；')}`);
+	console.error('  用 `npm run version:set -- ' + pkg.version + '` 一次同步（build 就是那道闸）。');
 	process.exit(1);
 }
 

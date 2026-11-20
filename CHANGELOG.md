@@ -1,5 +1,9 @@
 # Changelog
 
+## 未发布
+
+- 新增：`npm run version:set -- x.y.z` 发版版本号单一入口——一条命令同步 package.json / PLUGIN_VERSION / server.json 四落点，任何锚点缺失响亮失败不写盘；build 闸扩展为校验全部落点一致（此前 server.json 漏改导致 v1.7.4 的 MCP Registry 发布被拒）。
+
 ## v1.7.4 (2026-11-18)
 
 - 新增：引擎自诊断端点 `GET /api/novel-forge/engine-diag`——输出模型服务面探测细节（llm/subagents/agents 等的存在性与方法名集合，不含属性值）与引擎实时可用状态，用于定位宿主发行面漂移。

@@ -134,7 +134,7 @@ npm test            # node --test test/（纯逻辑单测 + 假 fs 冒烟 + head
 ## 发版流程（五步，固定顺序）
 
 ```bash
-# 1. bump：package.json + src/client/index.js PLUGIN_VERSION（两处必须一致，build 会校验）
+# 1. bump：npm run version:set -- x.y.z（一条命令同步 package.json / PLUGIN_VERSION / server.json 四落点；build 闸校验全部一致，漏改直接失败）
 # 2. npm run build && npm test && npm run audit（硬故障 0）
 # 3. git add -A（先核对暂存区：书稿/tmp/监控日志必须在 .gitignore）→ commit → tag → push
 # 4. gh release create vX.Y.Z --title "X.Y.Z" --notes-file <CHANGELOG 对应段>

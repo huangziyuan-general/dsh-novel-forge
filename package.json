@@ -62,6 +62,7 @@
     }
   },
   "scripts": {
+    "version:set": "node scripts/version-set.mjs",
     "build": "node scripts/build-client.mjs",
     "audit": "node scripts/audit-static.mjs && node scripts/audit-lib-calls.mjs",
     "preview": "npm run build && node scripts/preview-ui.mjs",
