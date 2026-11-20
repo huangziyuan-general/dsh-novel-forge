@@ -257,7 +257,7 @@ export function createEventsController(ctx) {
 				break;
 			case 'lore-delete-cancel': state.loreDeleteId = null; notify(); break;
 			default:
-				// 视图发了控制器不认的动作名 = 「按钮点了没反应」的静默病根（AGENTS.md 第三次学费）。
+				// 视图发了控制器不认的动作名 = 「按钮点了没反应」（字段名对不上不报错，须显式拒收）。
 				// 本项目不许可静默失败：报错可见 + 控制台留痕，client.test.mjs 的「动作契约对账」
 				// 用例据此把「视图发出但控制器没有对应 case」判成红灯。
 				state.error = `未处理的动作：${action}（界面按钮与控制器动作名不符，请报告）`;
@@ -287,7 +287,7 @@ export function createEventsController(ctx) {
 		else if (field === 'clone-value') { if (state.clone) state.clone.value = e.target.value; }
 		else if (field === 'chapterNo') {
 			const no = Number(e.target.value);
-			// 只收正整数（CodeBuddy 审计 2026-10-09 L1）：'1.5' 这类非整数此前会放行，
+			// 只收正整数（外部审计 L1）：'1.5' 这类非整数此前会放行，
 			// 服务端 400 兜底但编辑器已经先切过去了。注意 '2e3'（=2000）仍是整数、
 			// 此处照样放行——穷举写法不值当，不存在的章号由服务端 404 兜底。
 			if (Number.isInteger(no) && no >= 1) {

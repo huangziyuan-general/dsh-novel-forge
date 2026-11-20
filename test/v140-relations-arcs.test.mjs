@@ -9,7 +9,7 @@ import {
     diagnoseArcStall, applyArcUpdates, arcsAt, arcLastMove, ARC_STALL_CHAPTERS,
 } from '../lib/arcs.js';
 import { validateReviewQuotes, MIN_QUOTE_CHARS } from '../lib/polish.js';
-import { fullscanThreads } from '../lib/continuity.js';
+import { fullscanThreads, detectEntityFragments } from '../lib/continuity.js';
 
 const now = '2026-11-01T00:00:00Z';
 
@@ -167,4 +167,53 @@ test('fullscanThreads: all four detectors', () => {
     // clean case
     const clean = fullscanThreads({ relations: [], arcs: [], foreshadows: [], debts: {}, maxWritten: 5 });
     assert.equal(clean.length, 0);
+});
+
+// ── P3：实体名归一缺口（全名与派生称呼各占一条账本线 → 死人名录/未知补齐漏检）──
+test('★ P3 detectEntityFragments：全名与派生称呼并存成两条实体线才报', () => {
+    // 陈定山（全名）与 老陈、定山 都各自进了账本 → 同一人拆线，报
+    const split = detectEntityFragments({
+        cast: ['陈定山'],
+        facts: [
+            { entity: '陈定山', key: '境界', value: '筑基', chapter: 3 },
+            { entity: '老陈', key: '状态', value: '死', chapter: 9 },
+            { entity: '定山', key: '位置', value: '码头', chapter: 5 },
+        ],
+    });
+    assert.equal(split.length, 1);
+    assert.equal(split[0].code, 'entity-fragmented');
+    assert.equal(split[0].where, '陈定山');
+    assert.ok(split[0].message.includes('老陈') && split[0].message.includes('定山'), '派生称呼要点名');
+});
+
+test('★ P3 detectEntityFragments：只有全名 / 只有一个派生称呼都不报（宁漏勿误报）', () => {
+    // 全名自己没进账本 → 谈不上拆线
+    assert.equal(detectEntityFragments({
+        cast: ['陈定山'],
+        facts: [{ entity: '老陈', key: '状态', value: '死', chapter: 9 }],
+    }).length, 0, '全名缺席账本不报');
+    // 全名在账本、派生称呼「老陈」也各自是独立实体，但可能真就是另一个人 → 这是设计内的强信号，报
+    // 反过来：只有全名，没有任何派生称呼成线 → 不报
+    assert.equal(detectEntityFragments({
+        cast: ['陈定山'],
+        facts: [{ entity: '陈定山', key: '境界', value: '筑基', chapter: 3 }],
+    }).length, 0, '单条全名线不报');
+    // 非 cast 的人（账本里凭空冒出的人名）不锚定
+    assert.equal(detectEntityFragments({
+        cast: [],
+        facts: [{ entity: '陈定山', key: 'a', value: 'x', chapter: 1 }, { entity: '老陈', key: 'b', value: 'y', chapter: 2 }],
+    }).length, 0, 'cast 为空 → 不判');
+});
+
+test('★ P3 fullscanThreads 挂上 detectEntityFragments（facts/cast 默认空 → 行为不回归）', () => {
+    // 旧调用面（不传 facts/cast）不受影响
+    const legacy = fullscanThreads({ relations: [], arcs: [], foreshadows: [], debts: {}, maxWritten: 60 });
+    assert.equal(legacy.length, 0, '不传 facts/cast 时新增检测零命中，旧契约不破');
+    // 传了才报
+    const flagged = fullscanThreads({
+        relations: [], arcs: [], foreshadows: [], debts: {}, maxWritten: 60,
+        facts: [{ entity: '陈定山', key: 'a', value: 'x', chapter: 1 }, { entity: '老陈', key: 'b', value: 'y', chapter: 2 }],
+        cast: ['陈定山'],
+    });
+    assert.ok(flagged.some((i) => i.code === 'entity-fragmented'));
 });

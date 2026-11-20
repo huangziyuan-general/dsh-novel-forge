@@ -2,7 +2,7 @@
 //
 // 与 0.4.x 的差别：那时候是一个**自建 root 的全屏抽屉**（position:fixed + display 切换），
 // 0.5.0 起交给**右侧栏 slot 框架**渲染 —— 我们只返回 element，不再自己 createRoot，
-// 于是「点一次没反应 / 再点一次整屏空白」（createRoot 取错包）那类事故从根上消失。
+// 于是「点一次没反应 / 再点一次整屏空白」（createRoot 取错包）那类缺陷从根上消失。
 //
 // 分工：
 //   views/*              纯渲染，只读 state
@@ -79,7 +79,7 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 		try { onChange(); } catch (error) { console.error('[novel-forge] 面板重渲染失败：', error); }
 	};
 
-	/** 会话 id 校正：slot inject 的标识可能与真 agent 会话 id 不同源（0.13.2 真机实锤：
+	/** 会话 id 校正：slot inject 的标识可能与真 agent 会话 id 不同源（
 	 *  session-watch 用 sessions 服务的 id 能探到书，slot 的 id 过滤却是空、
 	 *  服务端 agents.get(slot id) 也找不到父会话）。sessions 服务的「当前会话」
 	 *  是已被证实能对上的来源 —— 发请求前对齐一次，过滤 / parent 锚定 / 认领 / 创建
@@ -153,7 +153,7 @@ export function createForgeController({ sessionId = null, resolveSessionId = nul
 		const id = next ?? null;
 		if (state.sessionId === id) return;
 		state.sessionId = id;
-		// 序号作废（CodeBuddy 审计 2026-10-09 L2）：切换瞬间在途的 loadChapter/
+		// 序号作废（外部审计 L2）：切换瞬间在途的 loadChapter/
 		// openProject 响应若仍算「有效」，会把旧会话旧书的正文写进 draft/baseline。
 		seq.open += 1; seq.chapter += 1;
 		player.stop();

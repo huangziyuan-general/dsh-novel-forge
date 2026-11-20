@@ -52,7 +52,7 @@ export function createProjectsController(ctx) {
 			const scopedUrl = state.sessionId && state.sessionScope !== 'all' ? withSession('/projects') : '/projects';
 			state.projects = await apiFetch(scopedUrl);
 			// 回落：会话过滤为空但全量有书 → 显示全部。宿主 slot inject 给的会话
-			// 标识与工具写入 novel.json 的 session id 可能不同源（0.13.2 真机实锤：
+			// 标识与工具写入 novel.json 的 session id 可能不同源（：
 			// session-watch 用 sessions 服务的 id 能探到书、slot 的 id 过滤却是空），
 			// 与其让用户对着「还没有项目」发呆，不如摊开全部书让他点开。
 			if (state.projects.length === 0 && state.sessionId) {
@@ -360,7 +360,7 @@ export function createProjectsController(ctx) {
 
 	const runRevision = async (mode) => {
 		if (!state.selected || state.revising) return;
-		// 跨书竞态守卫（CodeBuddy 审计 2026-10-09）：润色/校对请求最长可等数分钟，
+		// 跨书竞态守卫（外部审计 ）：润色/校对请求最长可等数分钟，
 		// 期间切书后迟到的写回会把 A 书的 notice / 提案队列挂到 B 书头上。
 		const bookId = state.selected;
 		const chapterNo = state.chapterNo;
@@ -382,7 +382,7 @@ export function createProjectsController(ctx) {
 				{
 					method: 'POST', timeoutMs: REVISION_TIMEOUT_MS,
 					// session = 面板锚定的会话 id：服务端拿它找活的父 agent 起子代理
-					// （SubagentStartRequest.parent 必填，缺了宿主直接炸进程——0.13.2 事故）。
+					// （SubagentStartRequest.parent 必填，缺了宿主直接炸进程——0.13.2 前的缺陷）。
 					body: JSON.stringify({
 						session: state.sessionId ?? undefined, invocationNonce,
 						...(filtered ? { selectedIssueIds, guidance, chapterVersion: state.reviewVersion } : {}),
@@ -468,7 +468,7 @@ export function createProjectsController(ctx) {
 
 	const runBatch = async (opts = {}) => {
 		if (!state.selected || state.batchBusy) return;
-		// 跨书竞态守卫（CodeBuddy 审计 2026-10-09）：批量最长 15 分钟，期间切书后
+		// 跨书竞态守卫（外部审计 ）：批量最长 15 分钟，期间切书后
 		// 迟到的写回会把 A 书的结果/notice 挂到 B 书详情页。表单值也在发起时快照——
 		// await 之后重读会拿到用户此刻改的值（M15 重载判断就错位了）。
 		const bookId = state.selected;
@@ -563,7 +563,7 @@ export function createProjectsController(ctx) {
 	// 会话疲劳「创建新会话并交接」（全自动版，用户钦定 2026-10-10）：
 	// 交接摘要由服务端直接 prompt 进新会话（点开即写，不手动粘贴）；
 	// 归档走 deferArchive——先跳进新会话再补归档，躲开「归档当前会话 → 宿主 clearMain
-	// 把人踢回『选择工作区』首页」的竞态（真机实证 2026-10-10）。
+	// 把人踢回『选择工作区』首页」的竞态。
 	const createSession = async () => {
 		if (!state.sessionId) { state.error = '缺会话 id（面板未挂在会话上）——无法创建新会话'; notify(); return; }
 		const oldSessionId = state.sessionId;
@@ -611,13 +611,13 @@ export function createProjectsController(ctx) {
 				? `新会话「${named}」已创建${value.workspaceMatched ? '，落在原会话的工作区' : ''}${claim}${place}${value.accounted === false ? '；侧栏暂未登记（可刷新页面或到全部会话找）' : ''}——${delivery}${archive ? `；${archive}` : ''}`
 				: '新会话已创建但未取得 id——请到会话列表查看';
 			// 先 notify 渲染反馈再延迟跳转：openSession 一调用面板就卸载了，
-			// 同步赋 notice 来不及渲染——用户看到「没反应」（真机 2026-10-09）。
+			// 同步赋 notice 来不及渲染——用户看到「没反应」（2026-10-09）。
 			if (value.createdSessionId && canJump) {
 				notify();
 				const newId = value.createdSessionId;
 				const archiveOld = () => apiFetch('/session/archive', { method: 'POST', body: JSON.stringify({ session: oldSessionId }) })
 					.catch((error) => console.warn('[novel-forge] 旧会话延迟归档失败（可在会话列表手动归档）：', error?.message ?? error));
-				// 归档时机不猜时间猜状态（CodeBuddy 审查 2026-10-10）：openSession 同步返回、
+				// 归档时机不猜时间猜状态（外部审计 ）：openSession 同步返回、
 				// 异步完成导航——固定 60ms 在慢渲染下会「归档先到、main 还是旧会话」，
 				// clearMain 照样踢人。轮询 syncSession（读宿主 sessions.list 的 current）
 				// 等 main 真的切到新会话再归档，上限 ~4s；openSession 抛错则立即归档

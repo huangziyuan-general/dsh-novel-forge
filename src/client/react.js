@@ -1,12 +1,10 @@
 // src/client/react.js — 从宿主模块表取 React 的**唯一出口**。
 //
-// 为什么要有这个文件（两次真机事故的教训）：
+// 两条边界（自建 root / 加新依赖前先读）：
 //
 // ① **`createRoot` 不在 `react` 里，在 `react-dom/client` 里。**
-//    0.4.x 的全屏抽屉自己建 root，写成 `react.createRoot(node)` → 真机 TypeError，
-//    表现是「第 1 次点击没反应（容器停在 display:none）、第 2 次点击整屏空白」，
-//    极具迷惑性。0.5.0 起面板改由**右侧栏 slot 框架**渲染（我们只返回 element，
-//    不自己 createRoot），这条坑随之消失；但历史写在这里，换回自建 root 时别重踩。
+//    写 `react.createRoot(node)` 是 TypeError。0.5.0 起面板由**右侧栏 slot 框架**渲染
+//    （只返回 element，不自己 createRoot）；将来换回自建 root 须用 react-dom/client。
 // ② 宿主播种的模块表（官方 CHUNK_EXTERNALS / PLATFORM_MODULES）只有：
 //    react · react/jsx-runtime · react-dom · react-dom/client · cordis
 //    · @deepseek-ai/dsh-client-ui-slots · @deepseek-ai/dsh-client-ui-primitives

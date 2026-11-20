@@ -409,7 +409,7 @@ test('audit latinRuns: 英文残留检出——folded 案例回归（≥4 连续
 test('★ 0.19.2 引号规范：直角引号「『』」检出 + 判定策略（block/warn/off/默认）', () => {
     const cfg = { minChapterChars: 100, maxChapterChars: 4000 };
     // 正文 >100 字且 ≥3 段，把字数/段落数问题压掉，让断言只落在引号判定上
-    const body = '他推门进来。\n「坐。」老周说。\n『别动。』他补了一句。\n\n窗外起了风，吹得灯苗乱晃。他想起白天的事，心里发沉，蹲下身系紧了鞋带，又等了半晌。\n\n巷口传来更鼓声，两下，他攥紧了手里的油纸包，慢慢走向镇子方向，影子被灯拉得很长，一直拖到桥洞底下。';
+    const body = '他推门进来。\n「坐。」老陈说。\n『别动。』他补了一句。\n\n窗外起了风，吹得灯苗乱晃。他想起白天的事，心里发沉，蹲下身系紧了鞋带，又等了半晌。\n\n巷口传来更鼓声，两下，他攥紧了手里的油纸包，慢慢走向镇子方向，影子被灯拉得很长，一直拖到桥洞底下。';
     const corner = computeAudit({ content: body });
     assert.equal(corner.cornerQuotes, 4, '「」『』共 4 处直角引号必须被统计');
     assert.equal(corner.dialogueRatio, 0, '★ 直角引号行不算对话（横排合规引号才是）');
@@ -1032,6 +1032,31 @@ test('content-gate: 死人复活阻断；账本旧值仍在用则警告', () => 
     assert.equal(clean.warnings.length, 0);
 });
 
+test('content-gate: 隐藏人物泄底——多字名硬拦，单字名降级为人工复核警告', () => {
+    // 多字名：子串判定可信，维持硬拦截（本模块存在的全部意义）。
+    const multi = contentGate({
+        content: '她推门进去，看见守夜人立在廊下。', chapter: 4,
+        contract: { participants: ['测试角色'], hidden: ['守夜人'] },
+    });
+    assert.equal(multi.ok, false);
+    assert.ok(multi.blocking.some((b) => b.code === 'hidden-character-leaked'));
+
+    // 单字名：子串判定失真（「云」会命中「白云/云朵」），降级为 warning 让人复核。
+    const single = contentGate({
+        content: '白云漫过山脊，她在檐下坐了半晌。', chapter: 4,
+        contract: { participants: ['测试角色'], hidden: ['云'] },
+    });
+    assert.equal(single.ok, true);
+    const w = single.warnings.find((x) => x.code === 'hidden-character-single-name');
+    assert.ok(w, '单字名应给出人工复核警告');
+    assert.ok(w.message.includes('人工核对'));
+
+    // 契约未声明 hidden 时不受影响。
+    const none = contentGate({ content: '白云漫过山脊。', chapter: 4, contract: { participants: ['测试角色'] } });
+    assert.equal(none.ok, true);
+    assert.equal(none.warnings.filter((x) => String(x.code).startsWith('hidden-')).length, 0);
+});
+
 test('content-gate: 到期伏笔零回应且开了新钩 → 阻断；回应了则放行', () => {
     const foreshadows = [{ id: 'F1', setup: '断刃的下落', chapter: 1, plan: 3, payoffChapter: null }];
     // 长度靠**不同**的句子堆出来：逐字复读是内容门禁的新阻断项，夹具不能再靠 repeat 凑字数。
@@ -1081,7 +1106,7 @@ test('gate volumeSection/outlineDivergence: 卷段定位 + 2-gram 重合度（0.
     const outline = [
         '### 卷一 白石城·废兵觉醒（1-40章）',
         '矿上招工入猎妖队，矿洞猎妖首战立威。',
-        '### 卷二 青岚兵院·弹种演化（41-90章）',
+        '### 卷二 北境军院·弹种演化（41-90章）',
         '武院天才争锋；郡内大比对轰沈家。',
     ].join('\n');
     assert.equal(volumeSection(outline, 25), ['### 卷一 白石城·废兵觉醒（1-40章）', '矿上招工入猎妖队，矿洞猎妖首战立威。'].join('\n'), '第 25 章落在卷一段');
@@ -1501,10 +1526,10 @@ test('★ 0.19.1 E20：跨标点滑窗——细纲与正文的标点/措辞微�
 });
 
 test('★ 0.19.1 E12：登场禁令降条件型——提及命中不算禁项命中', () => {
-    const r = parseBanRules('- 不得让老周登场\n- 不得让郑板现身');
-    assert.ok(r.conditional.includes('老周') && r.conditional.includes('郑板'), '人名归条件型');
-    assert.ok(!r.banned.includes('老周') && !r.banned.includes('郑板'), '不再进禁词表');
-    const g = computeGateMetrics({ content: '老周当年守过的夜，郑板提过一嘴。', outline: '## 本章必写场景\n- 某场：他翻着旧账。\n\n## 本章禁止偏离项\n- 不得让老周登场\n- 不得让郑板现身\n' });
+    const r = parseBanRules('- 不得让老陈登场\n- 不得让郑板现身');
+    assert.ok(r.conditional.includes('老陈') && r.conditional.includes('郑板'), '人名归条件型');
+    assert.ok(!r.banned.includes('老陈') && !r.banned.includes('郑板'), '不再进禁词表');
+    const g = computeGateMetrics({ content: '老陈当年守过的夜，郑板提过一嘴。', outline: '## 本章必写场景\n- 某场：他翻着旧账。\n\n## 本章禁止偏离项\n- 不得让老陈登场\n- 不得让郑板现身\n' });
     assert.deepEqual(g.bannedHits, [], '回忆性提及不判偏离');
 });
 

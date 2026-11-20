@@ -8,7 +8,7 @@
 //      防「停了又活过来」。
 //
 // 全部依赖注入（synth / loadChapter / hasChapter）：headless 测试直接喂替身，
-// 不碰真机 Web Speech。
+// 不碰浏览器 Web Speech。
 
 /**
  * 把正文切成朗读块：先按段落，超长段再按句末标点断开，最后合并到 limit 内。
@@ -54,7 +54,7 @@ export function resolveSynth() {
 /**
  * 朗读对象的默认工厂。
  *
- * ⚠️ 真机 Web Speech 的 `speechSynthesis.speak()` 只收 **`SpeechSynthesisUtterance` 实例**，
+ * ⚠️ 浏览器 Web Speech 的 `speechSynthesis.speak()` 只收 **`SpeechSynthesisUtterance` 实例**，
  * 传普通对象会直接 `TypeError`（The provided value is not of type 'SpeechSynthesisUtterance'）。
  * 所以有真实构造器时**必须用它 new**，而不是手搓 `{text,...}` 对象糊过去。
  * node/headless 没有该构造器，此时退回普通对象（仅供测试替身按自己的契约决定是否放行）。
@@ -89,7 +89,7 @@ export function defaultUtteranceFactory() {
  * @param {(no: number) => number|null} [deps.nextChapterAfter] 目录里第一个编号**大于** no 的章；没有返回 null。
  *   连播/空章跳过都按它找下一章 —— 否则章号有缺口（如只有 1、3）会在缺口处早停。
  * @param {(text: string) => any} [deps.makeUtterance] 造朗读对象的工厂，默认 defaultUtteranceFactory()
- *   （真机必须产 SpeechSynthesisUtterance 实例，见 factory 注释）
+ *  （必须产 SpeechSynthesisUtterance 实例，见 factory 注释）
  * @param {({status: string, currentNo: number|null}) => void} [deps.onChange]
  * @param {number} [deps.chunkLimit] 朗读块字符上限
  */
@@ -128,7 +128,7 @@ export function createTtsPlayer({ synth, loadChapter, hasChapter, nextChapterAft
 			return;
 		}
 		const text = queue[idx++];
-		// 真机必须用 SpeechSynthesisUtterance 实例（见 defaultUtteranceFactory 注释）
+		// 必须用 SpeechSynthesisUtterance 实例（见 defaultUtteranceFactory 注释）
 		const u = makeUtterance(text);
 		speaking = true;
 		u.onend = () => { speaking = false; speakNext(gen); };

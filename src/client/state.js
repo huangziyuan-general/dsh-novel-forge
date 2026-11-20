@@ -23,7 +23,7 @@ export function initialState() {
 		selected: null,
 		// 项目列表
 		// sessionFallback：会话过滤为空但全量有书 → 回落显示全部（宿主 slot 会话标识
-		// 与工具写入的 session id 可能不同源，0.13.2 真机实锤）。null = 未触发过回落。
+		// 与工具写入的 session id 可能不同源）。null = 未触发过回落。
 		projects: [], sessionFallback: null, unclaimed: [], loading: true, error: '', notice: '',
 		creating: false, busy: false, title: '', genre: '',
 		// titleReset：书名输入是非受控的（defaultValue + key），创建成功清空后 bump 重置
@@ -79,7 +79,7 @@ export function initialState() {
 		// 工具面没有 apply（见 lib/proposals.js）——「批准钥匙」在面板这一侧。
 		proposals: [], proposalsLoading: false,
 		extractionProposals: [], extractionEdits: {}, extractionSelected: {}, extractionBusy: null,
-		proposalsError: null, // 提案队列加载失败——必须可见，不得伪装成「没有待批」（2026-09-23 真机教训）
+		proposalsError: null, // 提案队列加载失败——必须可见，不得伪装成「没有待批」
 		sessionScope: 'session', // 书单范围：'session'=只看本会话名下的书（默认）；'all'=全部书（多会话工作流必需）
 		// 多会话各自的书写给不同会话——只认本会话时别的书完全不可见（空列表才回落全量，
 		// 名下有任何一本书就不回落），用户在写作会话里永远够不到其他会话建的书。

@@ -48,7 +48,7 @@ test('上下文包：卡片与世界书装不下时，上一章结尾仍然在�
         chapterOutline: '细'.repeat(1200),
         promise: '承'.repeat(400),
         sceneContract: '契'.repeat(500),
-        castCards: [{ name: '陈野', card: '卡'.repeat(700) }, { name: '周传海', card: '卡'.repeat(700) }],
+        castCards: [{ name: '陈野', card: '卡'.repeat(700) }, { name: '陈定山', card: '卡'.repeat(700) }],
         factsDigest: ['账'.repeat(900)],
         foreshadowDigest: ['伏'.repeat(400)],
         worldEntries: [{ id: 'a', content: '世'.repeat(400) }, { id: 'b', content: '世'.repeat(400) }],

@@ -230,7 +230,7 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 | `novel_worldbook` | 世界书条目（add/update/list/remove + import/export） | 设定只认这里；update 保 id；缺触发词不再报错——先抽本书已知实体名，抽不到转常驻并给可见警告 |
 | `novel_scene` | 场景契约（save/get/list/delete）：本章场景/出场人物/**隐藏人物**/世界书白名单/禁项 | 隐藏人物档案不进上下文且正文不许出现其名；契约外人物不注入（省 token） |
 | `novel_briefing` | 写前上下文包（细纲→承诺书→**场景契约**→人物卡→**语言基因卡**→账本→**叙事契约**→伏笔→世界书→上章结尾→锚段→**写作样稿**（表达校准）） | 一致性供给侧；按契约裁剪 cast 与世界书 |
-| `novel_write_chapter` | 写章落盘 | 门禁→机审→账本→**内容门禁（六维）**→**细纲契约指标**→版本化；与同章细纲长段逐字重合只告警并记 minor 债，场景摘要和显式原话段豁免 |
+| `novel_write_chapter` | 写章落盘 | 门禁→机审→账本→**内容门禁（死人复活/欠账未还开新钩/隐藏人物泄底/未知补齐/成稿缺陷四连…）**→**细纲契约指标**→版本化；与同章细纲长段逐字重合只告警并记 minor 债，场景摘要和显式原话段豁免 |
 | `novel_ledger` | 事实账本（含 note）+ **时点推演**（`status_at` 第 n 章快照 / `timeline` 演化线）+ 伏笔埋/收/改期 + **回收证据校验** + 认知账本 + **叙事契约**（pledge/deadline/secret）+ **写作样稿库**（sample_* 六动作） | 同章改值拒绝；章号超前拒绝；超期伏笔告警；回收章必须已写且正文命中关键词（force 记审计）；契约到期未兑现写章时点名，broken 且仍有到期伏笔未还 → 拒绝落盘；补录不改历史；认知倒退显形 |
 | `novel_relation` | 关系账本：人物/组织**之间**的关系状态线（盟友/仇敌/师徒/信任度…）：`update` 登记推进 / `query` 当前值 / `status_at` 时点推演 / `timeline` 演化线 | (A,B) 与 (B,A) 自动归一同一对；同章同对同维度改值=冲突拒绝；正文仍按旧值写 → 内容门禁每章 warning |
 | `novel_arc` | 弧线账本：单人物**维度**随章推进（成长/无畏/信任度/嫌疑度…）：`update` 登记推进 / `query` 当前读数 / `status_at` 时点 / `diagnose` 全书停走诊断 | `stalled`（≥15 章未推进）命中时写章链自动落 major 质量债；`no-move`（全书≥20章只推进过一次）warning；零 token 纯函数 |
@@ -302,13 +302,15 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 | scanTopK | 8 | 扫描报告每维最多列出的问题数 |
 | repetitionWindow | 10 | 跨章重复检测的滑动窗口（与前 N 章比对） |
 | skipPresetDeploy | false | 跳过预设部署 |
-| engine.channels.\* | 继承当前路由 | 旁路通道（polish/proofread/annotate/expand/draft）按通道覆盖；长文通道（polish/proofread/draft）`timeoutMs` 默认 600000，短任务通道（annotate/expand）默认 512 tok / 60s |
+| engine.channels.\* | 继承当前路由 | 旁路通道（polish/proofread/annotate/expand/draft/ledger）按通道覆盖；长文通道（polish/proofread/draft）`timeoutMs` 默认 600000，短任务通道（annotate/expand/ledger）默认 512 tok（ledger 超时 120s） |
 | engine.channels.\*.maxTokens | 0 | 0＝不传，继承宿主按模型校准的上限（推荐保持默认）；显式设小会被推理模型的思考+整章重写烧穿（报 `OUTPUT_TRUNCATED`） |
 | engine.retries | 2 | 旁路调用的指数退避重试次数 |
 | engine.attachSession | false | 旁路流是否写进会话记录；默认不写（这才是"不占主对话"） |
 | allowedHosts | [] | 面板 API 的额外本机白名单：裸主机名数组（不带端口，大小写不敏感，Origin 共用同一集合）；默认空 = 只许 localhost/127.0.0.1/[::1]，与未配置逐字相同；拒通配符 |
 | autoOpenPanel | true | 打开 DSH web 时自动展开锻炉 tab；false 只关自动弹出，tab 仍常驻 |
 | search.autoAnnotate | true | 写章落盘后自动给本章新块补语义标签（后台执行，封顶 4 块）；false 整体关掉 |
+| ledgerExtract.enabled | false | 批量起草后**自动抽取账本行**（盲区强方案）：每章落盘后后台抽「正文里确实发生的状态变化」→ 证据双校验 → 落 pending 事实行，并把该章 `batch-no-ledger` 债自动换成 `ledger-pending`（待你复核）；关了走 lite（只记 `batch-no-ledger` major 债、零模型成本） |
+| ledgerExtract.maxLines | 8 | 每章抽取行数封顶（超限部分不收，回落债——防模型一次性灌爆账本） |
 
 > `engine` 整块都可省略——省略即「用当前路由、重试 2 次、不写会话」，最省心的默认。
 > 宿主没有模型服务时插件照常装载，只有真正调用旁路通道时才返回可读错误。

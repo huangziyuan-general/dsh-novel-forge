@@ -33,7 +33,7 @@ import { SettingsView } from './views/settings.js';
 
 // 版本号：必须与 package.json 的 version 一致。
 // build-client.mjs 会把它与 package.json 对账，不一致直接构建失败（防发行漂移）。
-const PLUGIN_VERSION = '1.7.4';
+const PLUGIN_VERSION = '1.7.5';
 
 // 供视图头部徽标读取 —— 让视图层不必反向 import 入口（避免循环依赖）。
 window.__NOVEL_FORGE_VERSION__ = PLUGIN_VERSION;
@@ -73,7 +73,7 @@ function apply(ctx) {
 	}
 
 	// ③ 打开：锻炉是右侧栏**常驻独立 tab** —— 会话里有没有项目都打开。
-	//    之前 0.5.0 一度收进「本会话有项目才开」的门控，真机没项目（或 API 没命中）
+	//  之前 曾一度收进「本会话有项目才开」的门控，没项目（或 API 没命中）
 	//    时右侧栏就没了那个独立「锻炉」，用户要的是"右侧栏 · 单独的"。
 	//    面板内部仍按会话语义过滤项目列表，空会话给引导空态（见 project-list.js），
 	//    所以无条件打开不会露丑。延迟重试由 openForgeTab 自己兜（seat 未挂载会抛）。

@@ -186,50 +186,50 @@ test('discard 也要过 id 形状守卫（它同样把 id 拼进写路径）', a
 });
 
 // ── ④ 已知称谓：构词候选 + 有出处才放宽 ──────────────────────────────
-test('★ 称谓证据：全名没出现但「老周」有出处 → 不算缺失；没出处照报', () => {
-    const content = '老周把门拉开一条缝，侧身让他进去。';
+test('★ 称谓证据：全名没出现但「老陈」有出处 → 不算缺失；没出处照报', () => {
+    const content = '老陈把门拉开一条缝，侧身让他进去。';
     const withEvidence = computeAudit({
-        content, previous: [], terms: ['周传海'], castNames: ['周传海'],
-        castAliasSources: { 周传海: ['周传海（老周），班里资历最老的人'] },
+        content, previous: [], terms: ['陈定山'], castNames: ['陈定山'],
+        castAliasSources: { 陈定山: ['陈定山（老陈），班里资历最老的人'] },
     });
-    assert.deepEqual(withEvidence.coverage.missing, [], '卡上有「老周」出处 → 覆盖判定要认这个称呼');
+    assert.deepEqual(withEvidence.coverage.missing, [], '卡上有「老陈」出处 → 覆盖判定要认这个称呼');
 
     const without = computeAudit({
-        content, previous: [], terms: ['周传海'], castNames: ['周传海'],
-        castAliasSources: { 周传海: ['周传海，班里资历最老的人'] },
+        content, previous: [], terms: ['陈定山'], castNames: ['陈定山'],
+        castAliasSources: { 陈定山: ['陈定山，班里资历最老的人'] },
     });
-    assert.deepEqual(without.coverage.missing, ['周传海'], '★ 候选没有出处就不许白放宽一次判定');
+    assert.deepEqual(without.coverage.missing, ['陈定山'], '★ 候选没有出处就不许白放宽一次判定');
 
-    // 既往正文也是证据（「老周」上一章就这么叫）
+    // 既往正文也是证据（「老陈」上一章就这么叫）
     const fromPrevious = computeAudit({
-        content, previous: [{ chapter: 1, content: '大家都管周传海叫老周。' }], terms: ['周传海'], castNames: ['周传海'],
+        content, previous: [{ chapter: 1, content: '大家都管陈定山叫老陈。' }], terms: ['陈定山'], castNames: ['陈定山'],
     });
     assert.deepEqual(fromPrevious.coverage.missing, [], '既往章节里的称呼同样算出处');
 
     // 去姓短称（E4 老放宽）仍不需要出处
-    const short = computeAudit({ content: '传海推门进来。', previous: [], terms: ['周传海'], castNames: ['周传海'] });
+    const short = computeAudit({ content: '定山推门进来。', previous: [], terms: ['陈定山'], castNames: ['陈定山'] });
     assert.deepEqual(short.coverage.missing, [], '去姓短称照旧免证据');
 });
 
-test('★ 同姓两人不共享档案证据：别人的卡里写「老周」不能替这个人交卷', () => {
-    // 周涛的档案明确「人称老周」；周传海本章没写到、也没有自己的证据。
-    // 拼一锅证据的写法会让「老周」这个候选同时满足两个人 → 漏写被吞掉。
+test('★ 同姓两人不共享档案证据：别人的卡里写「老陈」不能替这个人交卷', () => {
+    // 陈定安的档案明确「人称老陈」；陈定山本章没写到、也没有自己的证据。
+    // 拼一锅证据的写法会让「老陈」这个候选同时满足两个人 → 漏写被吞掉。
     const r = computeAudit({
-        content: '周涛坐下喝水。',
+        content: '陈定安坐下喝水。',
         previous: [],
-        terms: ['周传海', '周涛'],
-        castNames: ['周传海', '周涛'],
-        castAliasSources: { 周传海: ['周传海，班里资历最老的人'], 周涛: ['周涛，人称老周'] },
+        terms: ['陈定山', '陈定安'],
+        castNames: ['陈定山', '陈定安'],
+        castAliasSources: { 陈定山: ['陈定山，班里资历最老的人'], 陈定安: ['陈定安，人称老陈'] },
     });
-    assert.deepEqual(r.coverage.missing, ['周传海'], '★ 只有本人的档案能放宽本人的判定');
+    assert.deepEqual(r.coverage.missing, ['陈定山'], '★ 只有本人的档案能放宽本人的判定');
 });
 
 test('既往正文是共享证据（上一章就这么叫，这一章不必再要求出处）', () => {
     const r = computeAudit({
-        content: '老周点了根烟。',
-        previous: [{ chapter: 1, content: '大家都管周传海叫老周。' }],
-        terms: ['周传海'],
-        castNames: ['周传海'],
+        content: '老陈点了根烟。',
+        previous: [{ chapter: 1, content: '大家都管陈定山叫老陈。' }],
+        terms: ['陈定山'],
+        castNames: ['陈定山'],
     });
     assert.deepEqual(r.coverage.missing, [], '没有卡也没关系：既往正文里的称呼同样是出处');
 });

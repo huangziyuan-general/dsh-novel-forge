@@ -1592,6 +1592,153 @@ test('★ commitChapter 成功合入：本章计数清零、并发字段存活�
     assert.equal(saved.stage, 'writing', '成功路径才推进阶段');
 });
 
+test('★ commitChapter extraDebts（P2 批量账本盲区）：追加债随本章债表落盘并进回执，不另开写盘路径', async () => {
+    const { commitChapter } = await import('../lib/chapter-commit.js');
+    const { makeDebt, debtLevelOf } = await import('../lib/quality-debt.js');
+    assert.equal(debtLevelOf('batch-no-ledger'), 'major', 'batch-no-ledger 债码已登记为 major');
+    const book = '批量盲区书';
+    const meta = `${book}/novel.json`;
+    const io = memIo({
+        [meta]: JSON.stringify({
+            title: book, genre: '仙侠', logline: '', stage: 'chapter', phases: {},
+            approvals: { outline: { 7: true } },
+            chapters: {}, cast: [],
+        }),
+        [`${book}/大纲/细纲/第7章.md`]: '# 第7章 试探\n\n- 对峙：来客与测试角色僵持。',
+    });
+    const p = pathsFor(book);
+    const novel = JSON.parse(io.files.get(meta));
+    // 模拟批量路径：成功提交 + 追加一条 batch-no-ledger 债（该章没有账本通道）
+    const out = await commitChapter({
+        config: TEST_CFG, io, p, book, novel, n: 7, title: '试探',
+        content: CHAPTER_TEXTS[1], summary: '试探之章',
+        extraDebts: [makeDebt({ code: 'batch-no-ledger', message: '批量起草未落账', chapter: 7, ts: 't' })],
+    });
+    // ① 回执：追加债在当次 qualityDebt 里可见（level 是合并后最重档）
+    assert.equal(out.qualityDebt.level, 'major');
+    assert.ok(out.qualityDebt.items.some((d) => d.code === 'batch-no-ledger'), '追加债进回执 items');
+    // ② 落盘：债随同一份 saveBookMerged 进 novel.json.quality.debts（章号键）
+    const saved = JSON.parse(io.files.get(meta));
+    const debtItems = saved.quality?.debts?.['7'] ?? [];
+    assert.ok(debtItems.some((d) => d.code === 'batch-no-ledger'), '★ 追加债落盘（与门禁债同章同表）');
+    // ③ 不传 extraDebts 时行为不变：空债照旧覆盖旧账（重写干净 = 清零语义不回归）
+    const out2 = await commitChapter({
+        config: TEST_CFG, io, p, book, novel, n: 7, title: '试探',
+        content: CHAPTER_TEXTS[2], summary: '重写',
+    });
+    const saved2 = JSON.parse(io.files.get(meta));
+    assert.ok(!((saved2.quality?.debts?.['7'] ?? []).some((d) => d.code === 'batch-no-ledger')),
+        '不追加即不欠债——重写的章把上次的盲区债清零（空债覆盖旧账语义不回归）');
+    assert.equal(out2.qualityDebt.level, 'none');
+});
+
+test('★ P2 强方案端到端：ledgerExtract.enabled → 批量提交后抽账本行、batch-no-ledger 债换 ledger-pending', async () => {
+    const { pendingLedgerExtract } = await import('../lib/ledger-extract.js');
+    const book = '批量强方案书';
+    const files = {
+        [`${book}/novel.json`]: JSON.stringify({
+            title: book, genre: '仙侠', logline: '', stage: 'chapter', phases: {},
+            approvals: { outline: { 1: true, 2: true } },
+            chapters: {}, cast: [], proposals: [], gateFailures: {},
+        }),
+        [`${book}/设定/场景契约.json`]: JSON.stringify({
+            1: { scene: '码头', participants: [], hidden: [], settings: [], forbidden: [], notes: '' },
+            2: { scene: '义庄', participants: [], hidden: [], settings: [], forbidden: [], notes: '' },
+        }),
+        [`${book}/大纲/细纲/第1章.md`]: '# 第1章 雪夜\n\n- 码头相遇：她在雾里认出暗号。',
+        [`${book}/大纲/细纲/第2章.md`]: '# 第2章 斗笠\n\n- 摘斗笠：露出被火燎过的脸。',
+    };
+    const io = memIo(files);
+    const p = pathsFor(book);
+    // 假引擎：draft 通道回正文（与既有用例同文），ledger 通道回**证据可校验**的账本行。
+    // 正文里确实写了「境界升至筑基三层」（CHAPTER_TEXTS[1] 不含，故用含该句的固定文本），
+    // ledger 行必须与之逐字对上才会落账（双校验真的在跑）。
+    const CHAPTER_WITH_STATE = CHAPTER_TEXTS[1].replace(
+        '她认得那个节奏——三长两短，是义庄的暗号。',
+        '她认得那个节奏——三长两短，是义庄的暗号。沈诀的境界升至筑基三层，握着的刀换成了新打的寒铁。');
+    const ledgerCalls = [];
+    const engine = {
+        async run(channel, { prompt }) {
+            if (channel === 'ledger') {
+                ledgerCalls.push(1);
+                return {
+                    ok: true, attempts: 1, route: null,
+                    text: '沈诀|境界|筑基三层|沈诀的境界升至筑基三层\n沈诀|持有|寒铁|握着的刀换成了新打的寒铁',
+                };
+            }
+            const n = Number(prompt.match(/【第 (\d+) 章/)[1]);
+            return {
+                ok: true, finishKind: 'stop', attempts: 1,
+                route: { provider: 'p', model: 'm', source: 'default' },
+                usage: { inputTokens: 100 + n, outputTokens: 200 + n },
+                text: n === 1 ? CHAPTER_WITH_STATE : CHAPTER_TEXTS[2],
+            };
+        },
+    };
+    const novel = JSON.parse(files[`${book}/novel.json`]);
+    const result = await runDraftBatch({
+        engine, config: { ...TEST_CFG, ledgerExtract: { enabled: true, maxLines: 8 } },
+        io, p, book, novel, from: 1, count: 2,
+    });
+    assert.equal(result.stats.committed, 2, '两章落盘');
+    // ① 批次返回时抽取是 fire-and-forget——必须排空链尾才能断言账本结果
+    await pendingLedgerExtract(book);
+    // ② 账本真的落了 pending 行（每章 2 行，证据双校验通过）
+    const facts = JSON.parse(io.files.get(p.facts));
+    const ch1 = facts.filter((f) => f.chapter === 1);
+    assert.equal(ch1.length, 2, '★ 第1章抽出 2 行 pending 账本行');
+    assert.ok(ch1.every((f) => f.status === 'pending'), 'status 一律 pending（不进门禁硬判）');
+    assert.ok(ch1.every((f) => f.evidence !== undefined), '证据随行落账（可回溯正文原句）');
+    // ③ 债对账：batch-no-ledger major → ledger-pending minor（盲区已关、待复核）
+    const saved = JSON.parse(io.files.get(p.meta));
+    const codes = (saved.quality?.debts?.['1'] ?? []).map((d) => d.code);
+    assert.ok(codes.includes('ledger-pending'), '★ 债被换成 ledger-pending（minor）');
+    assert.ok(!codes.includes('batch-no-ledger'), '原 major 债被换掉，不再欠「盲区」账');
+    // ④ 批次级警示口径切换：enabled 时提示「已后台排队」，不再是「没有账本通道」
+    assert.ok(result.warnings.some((w) => w.includes('账本自动抽取已后台排队')), '收尾警示走强方案口径');
+    assert.equal(ledgerCalls.length, 2, '两章各抽一次（按书串行链不漏章）');
+});
+
+test('★ P2 强方案默认关：不传 ledgerExtract → 不抽（零模型成本），batch-no-ledger 债保留', async () => {
+    const { pendingLedgerExtract } = await import('../lib/ledger-extract.js');
+    const book = '批量默认关书';
+    const files = {
+        [`${book}/novel.json`]: JSON.stringify({
+            title: book, genre: '仙侠', logline: '', stage: 'chapter', phases: {},
+            approvals: { outline: { 1: true } },
+            chapters: {}, cast: [], proposals: [], gateFailures: {},
+        }),
+        [`${book}/设定/场景契约.json`]: JSON.stringify({
+            1: { scene: '码头', participants: [], hidden: [], settings: [], forbidden: [], notes: '' },
+        }),
+        [`${book}/大纲/细纲/第1章.md`]: '# 第1章 雪夜\n\n- 码头相遇：她在雾里认出暗号。',
+    };
+    const io = memIo(files);
+    const p = pathsFor(book);
+    const ledgerCalls = [];
+    const engine = {
+        async run(channel, { prompt }) {
+            if (channel === 'ledger') { ledgerCalls.push(1); return { ok: true, attempts: 1, route: null, text: '' }; }
+            const n = Number(prompt.match(/【第 (\d+) 章/)[1]);
+            return {
+                ok: true, finishKind: 'stop', attempts: 1, route: null,
+                usage: { inputTokens: 1, outputTokens: 1 }, text: CHAPTER_TEXTS[1],
+            };
+        },
+    };
+    const novel = JSON.parse(files[`${book}/novel.json`]);
+    const result = await runDraftBatch({ engine, config: TEST_CFG, io, p, book, novel, from: 1, count: 1 });
+    assert.equal(result.stats.committed, 1);
+    assert.equal(ledgerCalls.length, 0, '★ 默认关：ledger 通道一次都不调（零模型成本）');
+    // 债保留：batch-no-ledger major 还在（盲区可见可结清）
+    const saved = JSON.parse(io.files.get(p.meta));
+    assert.ok((saved.quality?.debts?.['1'] ?? []).some((d) => d.code === 'batch-no-ledger'));
+    assert.equal(pendingLedgerExtract(book), null, '没开 enabled → 没有抽取链');
+    // 批次警示走 P2-lite 口径（「没有账本通道」）
+    assert.ok(result.warnings.some((w) => w.includes('没有账本通道')));
+});
+
+
 // ── 熔断不认 force（E2 收紧）：tripped 后 force:true 也必须 throw ──────────────
 
 test('★ commitChapter 熔断：tripped 后 force:true 照样拒绝（不 bypass、不递增计数）', async () => {

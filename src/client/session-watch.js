@@ -25,7 +25,7 @@ export const POLL_INTERVAL_MS = 8000;
 /**
  * 读当前会话 id。
  *
- * `ctx.sessions.list` 是 ObservableSnapshot，真机形态是 `getSnapshot()` + `subscribe()`；
+ * `ctx.sessions.list` 是 ObservableSnapshot，形态是 `getSnapshot()` + `subscribe()`；
  * 这里对三种可能形态都做兜底（getSnapshot / snapshot() / 裸对象），任一形态变了都不至于瞎。
  * @returns {string|null}
  */

@@ -39,7 +39,7 @@ export function createProposalsController(ctx) {
 			}
 			state.extractionEdits = edits; state.extractionSelected = selected;
 		} catch (error) {
-			// 加载失败 ≠ 没有待批：必须留痕可辨（2026-09-23 真机教训——失败曾被静默
+			// 加载失败 ≠ 没有待批：必须留痕可辨（2026-09-——失败曾被静默
 			// 渲染成「没有待批的修订」，用户盯着空列表误以为提案被吞了几天）
 			if (mine === seq.open) { state.proposals = []; state.proposalsError = String(error?.message ?? error); }
 		}
@@ -221,7 +221,7 @@ export function createProposalsController(ctx) {
 
 	/** 页面重新可见/聚焦时的提案重拉：写作会话随时可能提交新提案，而队列只在
 	 *  开书/应用动作时加载——挂着面板的用户看到的永远是打开那一刻的快照
-	 *  （真机 10-04 实锤：写作会话新建 P45/P48/P49，用户面板停在旧空态）。
+	 * （已验证：写作会话新建 P45/P48/P49，用户面板停在旧空态）。
 	 *  只在详情态且无在途动作时执行；loadProposals 同步置 proposalsLoading，
 	 *  visibilitychange+focus 连发也不会双拉。 */
 	const refreshProposalsIfIdle = () => {

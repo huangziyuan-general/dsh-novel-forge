@@ -1,8 +1,15 @@
 # Changelog
 
-## 未发布
+## v1.7.5 (2026-11-20)
 
 - 新增：`npm run version:set -- x.y.z` 发版版本号单一入口——一条命令同步 package.json / PLUGIN_VERSION / server.json 四落点，任何锚点缺失响亮失败不写盘；build 闸扩展为校验全部落点一致（此前 server.json 漏改导致 v1.7.4 的 MCP Registry 发布被拒）。
+- 新增：批量起草账本自动抽取（强方案，`lib/ledger-extract.js` + `ledger` 引擎通道，默认关）——批量提交的章没有账本通道（正文落盘了、状态变化没进事实账本），每章成功落盘后 fire-and-forget 抽一次：模型把「正文里确实发生的状态变化」抽成 `实体|键|值|正文原句` 行，经**证据双校验**（值⊂原句 且 原句逐字⊂正文，复用 `validateFactEvidence` 同一份算式）落 `status=pending` 事实行（不进内容门禁硬判，`novel_ledger` 可见可改 confirmed）；行数封顶（`ledgerExtract.maxLines`，默认 8）、同书串行排队（不漏章、不并发打限流）、同章同键改值冲突显形不覆盖。落盘后把各章 `batch-no-ledger`（major，盲区债）**自动换成** `ledger-pending`（minor，待复核）；抽取失败/未开则 major 债原样保留——强方案是升级、lite 是降级底，两套叠起来闭环。配置 `ledgerExtract: { enabled: false, maxLines: 8 }`。
+- 修复：大纲方向闸判据注释漂移（`lib/gate.js` 注释写 0.12、调用方与回归测试恒为 0.02——git 考古确认 0.12 从未进过代码，0.02 才是 0.19.1 压误报的实值；同线细纲 termHitRate 实测 ~0.04，按 0.12 判会全误报）。注释对齐为 0.02 并注明「改阈值需同步 outline-tool 两处 + test E1」。
+- 修复：批量路径账本盲区可见性（默认开、零模型成本）——每章成功落盘记 `batch-no-ledger` major 债 + 批次收尾总警示，`novel_quality view` 可见、`settle` 可结清；走 `commitChapter` 新增的 `extraDebts` 通道（与门禁债同表同一次 `saveBookMerged` 落盘，不新增并发写盘面）。
+- 修复：实体名归一缺口检测（`lib/continuity.js` `detectEntityFragments`，挂进 `fullscan` 深扫）——同人被拆成「全名 + 派生称呼（老/小/大/阿+姓、去姓短称，复用 audit.js 单一实现）」两条账本线时，死人名录/未知补齐按名匹配会漏检；判据取精确形态（全名与派生称呼**都**各自成账本实体才报，非 cast 的人名不锚定）。
+- 修复：单字隐藏人物名（`content-gate`）——`text.includes(name)` 对「云」会命中「白云/云朵」整章误拦；多字名维持硬拦（泄底判据不变），单字名降级为人工复核 warning。
+- 修复：内容门禁「欠账未还禁开新钩」的绕过面显形——本章没开钩子时欠账不阻断（只走 warning）是有意取舍（钩子检测是启发式），补注释钉死业务规则，免被误读成「每章都拦欠账」。
+- 修复：发行面文档维度数漂移——`package.json` 描述「六维去AI味」→八维（noai 八维是测试红线）；README/README.en 内容门禁「六维/四维」→按实际判据列举（维度数不稳定，不再写死 N）。
 
 ## v1.7.4 (2026-11-18)
 

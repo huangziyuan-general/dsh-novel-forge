@@ -15,7 +15,7 @@
 //   button-primary-fill、label-primary-foreground、interactive-bg-hover）。
 //   改这里的任何变量名之前，先去那个包里 grep 一遍。
 //
-// ⚠️⚠️ **名字存在 ≠ 用法正确**（0.13.1 修正的第二类事故，比上面更隐蔽）：
+// ⚠️⚠️ **名字存在 ≠ 用法正确**（0.13.1 修正的第二类缺陷，比上面更隐蔽）：
 //   光核名字够不着下面这两种错——它们不报错、不错位，只是**难看**：
 //     · `bg-overlay` 是**遮罩(scrim)色**（深色 #61666b 的中亮灰），
 //       拿去当"输入框/胶囊底" → 深色主题里搜索框和所有胶囊糊成亮块；
@@ -38,7 +38,7 @@ const V = (name, fallback) => `var(--dsw-alias-${name}, ${fallback})`;
 /**
  * 按宿主前景色染一层底：`color-mix(in srgb, var(--label-primary) N%, transparent)`。
  *
- * 为什么需要它（0.13.1 修的第二类 token 事故）：宿主的调色板是**平的**——
+ * 为什么需要它（0.13.1 修的第二类 token 缺陷）：宿主的调色板是**平的**——
  * 浅色主题下 `bg-layer-1/2/3` 全是 `#fff`，想要「卡片里再嵌一层」的层次，
  * 光靠 layer token 取不出来。而 `label-primary` 在两套主题里正好是**反色**
  * （浅色 ≈ 近黑 `#0f1115`，深色 ≈ 近白 `#f9fafb`），

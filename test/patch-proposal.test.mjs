@@ -20,16 +20,16 @@ test('润色守卫：数字 token 多重集变了就拦（格式归一不算）'
 });
 
 test('润色守卫：人物专名出现次数变了就拦；没给名字表时保持旧行为', () => {
-    const original = '周传海推门进来。周传海把伞收好。灯还亮着。';
-    const dropped = validatePolishEdits(original, '周传海推门进来。他把伞收好。灯还亮着。', { names: ['周传海'] });
+    const original = '陈定山推门进来。陈定山把伞收好。灯还亮着。';
+    const dropped = validatePolishEdits(original, '陈定山推门进来。他把伞收好。灯还亮着。', { names: ['陈定山'] });
     assert.equal(dropped.ok, false);
     assert.ok(dropped.blocking.some((b) => b.code === 'proper-name-count-changed'));
-    assert.ok(dropped.blocking.find((b) => b.code === 'proper-name-count-changed').message.includes('「周传海」2→1'));
+    assert.ok(dropped.blocking.find((b) => b.code === 'proper-name-count-changed').message.includes('「陈定山」2→1'));
 
-    const extra = validatePolishEdits('他推门进来。灯还亮着。', '周传海推门进来。灯还亮着。', { names: ['周传海'] });
+    const extra = validatePolishEdits('他推门进来。灯还亮着。', '陈定山推门进来。灯还亮着。', { names: ['陈定山'] });
     assert.equal(extra.ok, false, '多出来一次同样是换了人');
 
-    const noNames = validatePolishEdits(original, '周传海推门进来。他把伞收好。灯还亮着。');
+    const noNames = validatePolishEdits(original, '陈定山推门进来。他把伞收好。灯还亮着。');
     assert.equal(noNames.ok, true, '不传 names 不启用专名校验（向后兼容）');
 });
 

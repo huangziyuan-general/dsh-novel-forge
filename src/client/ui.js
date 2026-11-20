@@ -59,7 +59,7 @@ export function Section({ icon = '', title, right = null } = {}, ...children) {
 export function Btn(props = {}, ...label) {
 	const { variant = 'secondary', size = 'md', action, id, disabled = false, title, block = false, row, choice } = props;
 	// 无障碍名：camelCase 与 kebab-case 两种写法都收 —— 只认一种时，另一种会被白名单
-	// 静默吞掉（图标按钮对读屏器不可名），失效方式与 dataset.no 事故同族：不报错、看不出来。
+	// 静默吞掉（图标按钮对读屏器不可名），失效方式与 dataset.no 缺陷同族：不报错、看不出来。
 	const aria = props.ariaLabel ?? props['aria-label'];
 	const style = { ...btnLayout({ size }) };
 	if (block) style.width = '100%';
