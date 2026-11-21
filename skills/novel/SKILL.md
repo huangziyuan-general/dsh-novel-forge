@@ -55,6 +55,19 @@ description: Use when the user asks to write, create, outline, or continue a nov
 - 每 600–900 字一次微兑现（信息/小反转/情绪落点），章末留钩子——但不许用新悬念掩盖旧欠账
 - 字数不足被退稿时：把细纲场景写细写透，不是注水
 
+## 技法参考（corpus，按需读，别整包塞进上下文）
+
+检测层（`novel_noai_scan` / `novel_audit`）报的是「哪里不对」，`references/` 里给的是「怎么改」。出证据面症状才翻对应一篇，读完就动笔，不要预防性全读：
+
+- 开头平 / structure 维低 / platform 前千字不爽点 → `references/chapter-openings.md`（十种强力开头 + 无效开头自查）
+- 章末钩子弱 / trailerEnding 句式命中 / 伏笔超期无 plan → `references/hook-endings.md`（十三式钩子 + 与伏笔台账的配法）
+- 字数不足被退稿 / dilution 维走高 → `references/content-expansion.md`（五条防注水红线 + 场景肌理充实）
+- 对话干瘪 / 全人物一个说话味 / emotion 维高 → `references/dialogue.md`（潜台词 / 节奏 / 与 voice 卡配合）
+- 卷级结构没定 / 弧线停走（major 债）/ 伏笔没埋回收 → `references/plot-structures.md`（三幕骨架 + 草蛇灰线进台账）
+- 人物扁平 / 反派单面纸板 / 配角工具人 → `references/character-craft.md`（矛盾驱动 + 侧面揭示三法）
+
+参考文件在 skill 的 `references/` 下（宿主注 Base directory），用 read 按名取；一次最多翻一篇，读完即写。
+
 ## 质检与发布
 
 - `novel_audit`：platform 按（起点吃长线结构与章末钩子 / 番茄吃前千字爽点）；`censor:true` 发书前必跑（启发式预筛，命中仍须人工复核）

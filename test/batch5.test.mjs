@@ -25,7 +25,9 @@ import {
 import {
     planDraftBatch, deriveTitleSummary, mapWithConcurrency, buildDraftPrompt,
     runDraftBatch, MAX_CONCURRENCY, draftSystem, buildContinuationPrompt, findContinuationRepeat,
+    isRepairableRejection, buildRepairPrompt,
 } from '../lib/batch-draft.js';
+import { GateRejectionError } from '../lib/chapter-commit.js';
 import { createRecoveryRecorder } from '../lib/recovery.js';
 import { pathsFor } from '../lib/store.js';
 import { updateJson, isVersionConflict } from '../lib/fsio.js';
@@ -2041,4 +2043,127 @@ test('retrieval: bigrams/ftsQuery 对保留字符——引号不再是检索字'
     assert.equal(ftsQuery('"""'), '', '全是保留字符的查询 → 空表达式（fallback 不做 quote(raw)）');
     assert.equal(ftsQuery('   '), '', '纯空白照旧空表达式');
     assert.equal(ftsQuery('"搜"索'), '"搜索"', '剔除引号后正常出 gram（单字 fallback 同样剔除保留字符）');
+});
+
+// ── 有界修复回环（draftRepair，默认关）────────────────────────────────────
+// 三条红线：① 正文级拒稿才进回环（结构级重写救不了）；② 默认关＝零回归
+// （被拒章保持原 failed 语义、零额外引擎调用）；③ 预算耗尽落 needs-attention
+// 终态（区别于默认 failed，面板/检查点能指认「修复救不了，该改细纲」）。
+
+test('isRepairableRejection：正文级拒稿可修，结构级拒稿与普通异常不可修', () => {
+    for (const msg of ['内容门禁未通过，未保存：占位符', '机审未通过，未保存：字数不足', '细纲禁项被违反，未保存：禁项「香炉」']) {
+        assert.ok(isRepairableRejection(new GateRejectionError(msg)), `可修：${msg.slice(0, 12)}`);
+    }
+    for (const msg of ['阶段门禁未通过：细纲未批准', '书目不存在（提交中途被删？）', '第3章细纲文件缺失', '熔断：第3章已连续被驳回 3 次', '账本冲突，未保存：']) {
+        assert.ok(!isRepairableRejection(new GateRejectionError(msg)), `不可修（结构级）：${msg.slice(0, 12)}`);
+    }
+    assert.ok(!isRepairableRejection(new Error('普通异常（io 挂了）')), '非门禁拒稿不在回环里修');
+    assert.ok(!isRepairableRejection(null));
+});
+
+test('buildRepairPrompt：驳回原因/字数区间/原稿/整章重写指令全进提示词', () => {
+    const p = buildRepairPrompt({
+        prompt: '初稿提示', draft: '原稿正文', rejection: '内容门禁未通过：占位符',
+        minChars: 60, maxChars: 2000,
+    });
+    assert.ok(p.includes('初稿提示'), '初稿提示是底座（同一次简报材料）');
+    assert.ok(p.includes('内容门禁未通过：占位符'), '驳回原因喂回');
+    assert.ok(p.includes('原稿正文'), '上一版原稿供对照');
+    assert.ok(p.includes('60–2000'), '字数区间重申');
+    assert.ok(p.includes('整章重写'), '明确整章重写不是打补丁');
+});
+
+// 夹具正文须 ≥ TEST_CFG.minChapterChars（60 字）——短稿会进生成阶段的续写路径，
+// 把提交回环的测试面带偏（续写回吐同文被复述检测拦下，章死在生成阶段）。
+const REPAIR_REJECTED_TEXT = '（待补：这一段还没想好怎么写，先用一句话占住位置。）他把半张湿纸按回桌下，纸角的焦味钻进鼻子。门外的雨又落了一阵，檐水一线，打在青石板上。';
+const REPAIR_CLEAN_TEXT = '他把灯芯拨亮了一截，火光在墙上映出人影。\n\n门外传来第二声叩击，比第一声更急。他走到门边，从门缝里看了一眼：巷口站着一个撑伞的陌生人，伞骨是新的。\n\n他没有开门，退回到灯下，把那张湿纸重新摊开。纸角还带着焦味，半字「寒」在烛光里晃。';
+
+function repairFixture() {
+    const book = '修复回环书';
+    const files = {
+        [`${book}/novel.json`]: JSON.stringify({
+            title: book, stage: 'chapter', phases: {}, approvals: { outline: { 1: true } },
+            chapters: {}, cast: [], proposals: [], gateFailures: {},
+        }),
+        [`${book}/大纲/细纲/第1章.md`]: '# 第1章 灯下\n\n- 灯下叩门：门外来了撑伞人。',
+    };
+    const io = memIo(files);
+    return { book, io, p: pathsFor(book), novel: JSON.parse(files[`${book}/novel.json`]) };
+}
+
+test('★ draftRepair 回环：内容门禁拒 → 喂回 draft 整章重写 → 修复版过门禁落盘', async () => {
+    const { book, io, p, novel } = repairFixture();
+    const calls = [];
+    const engine = {
+        async run(channel, { prompt }) {
+            calls.push(prompt);
+            const text = prompt.includes('【修复指令') ? REPAIR_CLEAN_TEXT : REPAIR_REJECTED_TEXT;
+            return { ok: true, attempts: 1, route: { provider: 'p', model: 'm', source: 'default' }, usage: { inputTokens: 10, outputTokens: 20 }, text };
+        },
+    };
+    const result = await runDraftBatch({
+        engine, config: { ...TEST_CFG, draftRepair: { enabled: true, rounds: 2 } },
+        io, p, book, novel, from: 1, count: 1, concurrency: 1,
+    });
+    // 修复版落盘（不是被拒的占位版）
+    assert.equal(result.results[0].ok, true, '修复后提交成功');
+    assert.equal(result.results[0].committed, true);
+    const saved = JSON.parse(io.files.get(`${book}/novel.json`));
+    assert.equal(saved.chapters['1'].path !== undefined, true, '正文落盘');
+    assert.equal(calls.filter((c) => c.includes('【修复指令')).length, 1, '恰好一轮修复');
+    const record = result.checkpoint.records.find((r) => r.chapter === 1);
+    assert.equal(record.status, 'completed');
+    assert.equal(record.repairRounds, 1, '完成记录带上修复轮数');
+    assert.equal(result.checkpoint.status, 'done');
+});
+
+test('★ draftRepair 回环：修复预算耗尽仍被拒 → needs-attention 终态 + 批次警示', async () => {
+    const { book, io, p, novel } = repairFixture();
+    let repairCalls = 0;
+    const engine = {
+        async run(_channel, { prompt }) {
+            if (prompt.includes('【修复指令')) repairCalls += 1;
+            return { ok: true, attempts: 1, route: { provider: 'p', model: 'm', source: 'default' }, usage: { inputTokens: 10, outputTokens: 20 }, text: REPAIR_REJECTED_TEXT };
+        },
+    };
+    const result = await runDraftBatch({
+        engine, config: { ...TEST_CFG, draftRepair: { enabled: true, rounds: 1 } },
+        io, p, book, novel, from: 1, count: 1, concurrency: 1,
+    });
+    assert.equal(repairCalls, 1, 'rounds=1 只烧一轮修复');
+    const r = result.results[0];
+    assert.equal(r.ok, false);
+    assert.equal(r.needsAttention, true, '修复救不了 → needsAttention 显形');
+    assert.equal(r.repairRounds, 1);
+    const record = result.checkpoint.records.find((x) => x.chapter === 1);
+    assert.equal(record.status, 'needs-attention', '终态区别于默认 failed（面板能指认该改细纲）');
+    assert.match(record.note, /改细纲/);
+    assert.deepEqual(result.checkpoint.failed, [1]);
+    assert.equal(result.checkpoint.status, 'partial');
+    assert.equal(result.stats.needsAttention, 1);
+    assert.ok(result.warnings.some((w) => w.includes('修复预算耗尽')), '批次收尾警示点名 needs-attention 章');
+    // 正文层面没修好：没有任何正文落盘
+    assert.equal(JSON.parse(io.files.get(`${book}/novel.json`)).chapters['1'], undefined);
+});
+
+test('★ draftRepair 默认关：门禁拒稿零额外引擎调用，原 failed 语义零回归', async () => {
+    const { book, io, p, novel } = repairFixture();
+    const calls = [];
+    const engine = {
+        async run(_channel, { prompt }) {
+            calls.push(prompt);
+            return { ok: true, attempts: 1, route: { provider: 'p', model: 'm', source: 'default' }, usage: { inputTokens: 10, outputTokens: 20 }, text: REPAIR_REJECTED_TEXT };
+        },
+    };
+    const result = await runDraftBatch({
+        engine, config: TEST_CFG, io, p, book, novel, from: 1, count: 1, concurrency: 1,
+    });
+    assert.equal(calls.length, 1, '环关：只有生成阶段的 1 次调用，修复零调用');
+    const r = result.results[0];
+    assert.equal(r.ok, false);
+    assert.equal(r.needsAttention, undefined, '原语义：无 needsAttention 键');
+    assert.equal(r.repairRounds, undefined, '原语义：无 repairRounds 键');
+    const record = result.checkpoint.records.find((x) => x.chapter === 1);
+    assert.equal(record.status, 'failed', '原终态 failed 不变（断点续跑语义零回归）');
+    assert.equal(result.stats.needsAttention, 0);
 });

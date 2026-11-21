@@ -151,6 +151,9 @@ function batchRow(r, i) {
 			h('div', null, ok
 				? `${r.title ?? ''} ${r.chars ? `${r.chars} 字` : ''} v${r.version ?? 1}${r.noai?.level ? ` · 去AI味 ${r.noai.level}` : ''}`
 				: (r.reason ?? r.contentGate?.reason ?? '未通过门禁')),
+			// needs-attention 等记录的 resume 指引（改细纲/场景契约后重试）——
+			// 只在 checkpoint JSON 里看不见等于没写，面板就地亮出来。
+			!ok && r.note ? h('div', { style: { ...hintStyle, fontSize: font.caption, marginTop: '1px' } }, r.note) : null,
 			metrics ? h('div', { style: { ...hintStyle, fontSize: font.caption, marginTop: '1px' } }, metrics) : null,
 		),
 	);

@@ -76,7 +76,7 @@ AI 长篇写作的通病不是玄学，每一个都有对应的工程解法。�
 | 最痛 | 硬约束 | 落点 |
 | --- | --- | --- |
 | 设定/战力崩坏 | 事实账本：同章改值=冲突拒绝 | `novel_ledger` |
-| 模型看不见前文 | 写前简报按预算组装上下文包，百章后仍能找回段落 | `novel_briefing` / `novel_search` |
+| 模型看不见前文 | 写前简报按预算组装上下文包，百章后仍能找回段落；相关历史章节段按伏笔/出场/状态/关系四维反查「该回头读的旧章 + 为什么」 | `novel_briefing` / `novel_search` |
 | 悬念提前泄底 | 隐藏人物档案不进上下文，正文出现其名=门禁拦下 | `novel_scene` |
 | AI 味太重 | 八维结构性扫描（纯本地，零模型费用） | `novel_noai_scan` |
 | 多角色千人一腔 | 语言基因卡结构化注入，审稿核对禁忌词 | `novel_character voice` |
@@ -225,19 +225,19 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 | 工具 | 职责 | 硬约束 |
 | --- | --- | --- |
 | `novel_project` | init / status / **phase（九阶段看板与入场判定）** / set_stage / repair / check（含**派生面漂移对账**：已写章未进检索索引 / 风格基线落后 / 台账脏行，只报不修） / promise / promise_template / promise_review / preference / platform / chars | 题材模板与偏好存储零 token；`promise_review` 复用 `annotate`，默认复核最近三章、引文逐字核验，只给建议不进门禁；偏好必须经用户明确确认，不能削弱硬约束 |
-| `novel_outline` | 全书大纲 / 第N章细纲 / **批准** | 写章门禁的钥匙 |
+| `novel_outline` | 全书大纲 / 第N章细纲 / **批准**（批准关口预检：细纲点名已死实体 / 关系线过期值 → warning 不拦，拦截语义仍归写章门禁） | 写章门禁的钥匙 |
 | `novel_character` | 人物卡 + **语言基因卡**（voice：句长/逻辑/口头禅/绝不说/小动作/语域，结构化存储） | 写章单独注入成区块；audit voice:true 核对禁忌词 |
-| `novel_worldbook` | 世界书条目（add/update/list/remove + import/export） | 设定只认这里；update 保 id；缺触发词不再报错——先抽本书已知实体名，抽不到转常驻并给可见警告 |
+| `novel_worldbook` | 世界书条目（add/update/list/remove + import/export） | 设定只认这里；update 保 id；缺触发词不再报错——先抽本书已知实体名，抽不到转常驻并给可见警告；**双键门槛**（`selective:true` + `secondaryKeywords`）：主键与次级键同时在场才注入，压掉大设定整串泛词的单词误激活 |
 | `novel_scene` | 场景契约（save/get/list/delete）：本章场景/出场人物/**隐藏人物**/世界书白名单/禁项 | 隐藏人物档案不进上下文且正文不许出现其名；契约外人物不注入（省 token） |
-| `novel_briefing` | 写前上下文包（细纲→承诺书→**场景契约**→人物卡→**语言基因卡**→账本→**叙事契约**→伏笔→世界书→上章结尾→锚段→**写作样稿**（表达校准）） | 一致性供给侧；按契约裁剪 cast 与世界书 |
+| `novel_briefing` | 写前上下文包（细纲→承诺书→**场景契约**→人物卡→**语言基因卡**→账本→**叙事契约**→伏笔→世界书→上章结尾→锚段→**写作样稿**（表达校准，按章号轮转取段）→**写法规则（本书纪律）**→**相关历史章节**（四维台账反查该回读的旧章，带推荐理由）） | 一致性供给侧；按契约裁剪 cast 与世界书 |
 | `novel_write_chapter` | 写章落盘 | 门禁→机审→账本→**内容门禁（死人复活/欠账未还开新钩/隐藏人物泄底/未知补齐/成稿缺陷四连…）**→**细纲契约指标**→版本化；与同章细纲长段逐字重合只告警并记 minor 债，场景摘要和显式原话段豁免 |
 | `novel_ledger` | 事实账本（含 note）+ **时点推演**（`status_at` 第 n 章快照 / `timeline` 演化线）+ 伏笔埋/收/改期 + **回收证据校验** + 认知账本 + **叙事契约**（pledge/deadline/secret）+ **写作样稿库**（sample_* 六动作） | 同章改值拒绝；章号超前拒绝；超期伏笔告警；回收章必须已写且正文命中关键词（force 记审计）；契约到期未兑现写章时点名，broken 且仍有到期伏笔未还 → 拒绝落盘；补录不改历史；认知倒退显形 |
 | `novel_relation` | 关系账本：人物/组织**之间**的关系状态线（盟友/仇敌/师徒/信任度…）：`update` 登记推进 / `query` 当前值 / `status_at` 时点推演 / `timeline` 演化线 | (A,B) 与 (B,A) 自动归一同一对；同章同对同维度改值=冲突拒绝；正文仍按旧值写 → 内容门禁每章 warning |
 | `novel_arc` | 弧线账本：单人物**维度**随章推进（成长/无畏/信任度/嫌疑度…）：`update` 登记推进 / `query` 当前读数 / `status_at` 时点 / `diagnose` 全书停走诊断 | `stalled`（≥15 章未推进）命中时写章链自动落 major 质量债；`no-move`（全书≥20章只推进过一次）warning；零 token 纯函数 |
 | `novel_quality` | 书级质量债：`view` 看欠了多少账 / 最重是哪章 / 现在该不该继续写，并给**质量趋势**（逐章 noai 分/覆盖率/债档序列 + 方向与风险旗标——这本书在变好还是变差）；`settle` 结清某章的债 | 三级口径（minor 质量债 / major 需重规划 / hard 硬门禁放行）；局部瑕疵不阻塞全书，硬门禁放行必须回头核对；趋势零 token 现算（审计/索引/债表既有数据，不新写盘） |
-| `novel_noai_scan` | 八维去 AI 味扫描 + **句式腔调判据**（微动作补语成片/音量反差腔/否定排比/预告式收尾，report-only 不进八维分） | 纯本地零费用；扫描前自动应用本书文风白名单（`novel_style whitelist` 登记的「这是我，别拦」写法） |
+| `novel_noai_scan` | 八维去 AI 味扫描 + **句式腔调判据**（微动作补语成片/音量反差腔/否定排比/预告式收尾，report-only 不进八维分）+ **书级写法规则计数**（`bookRules` 段，确定性计数不进八维分） | 纯本地零费用；扫描前自动应用本书文风白名单（`novel_style whitelist` 登记的「这是我，别拦」写法） |
 | `novel_audit` | 确定性章节审计 + 契约指标 + `continuity` 全书一致性 + `voice` 语言基因核对 + `platform` **起点/番茄/晋江/七猫/飞卢五平台审稿** + `censor` **敏感自查七类** | 机审证据；平台体检表给出可执行改法 |
-| `novel_style` | 文笔六维基线（μ±σ 带）+ **氛围光谱 12 轴**：build 建基线 / check 对照（含主导氛围漂移）；`whitelist` / `whitelist_add` / `whitelist_remove` 管理**本书文风白名单**（作者登记的「这是我，别拦」字面串，去 AI 味扫描前掩码） | 纯本地零费用；只报数不贴标签；白名单按书隔离、逐字匹配，只影响 AI 味证据面不影响其它门禁 |
+| `novel_style` | 文笔六维基线（μ±σ 带）+ **氛围光谱 12 轴**：build 建基线 / check 对照（含主导氛围漂移）；`whitelist` / `whitelist_add` / `whitelist_remove` 管理**本书文风白名单**（作者登记的「这是我，别拦」字面串，去 AI 味扫描前掩码）；`rules` / `rules_add` / `rules_remove` 管理**书级写法规则台账**（「禁止/风险/鼓励」三态规则：noai 扫描确定性计数 report-only，修正方向进写章简报当写作纪律位） | 纯本地零费用；只报数不贴标签；白名单/写法规则均按书隔离、逐字匹配，只影响 AI 味证据面与简报注入，不产生门禁 |
 | `novel_propose` | 提案 / 列表 | 修订走提案，用户在面板应用；旧版永不覆盖 |
 | `novel_import` | 本地书籍导入（preview/import/**backfill 门禁回补**；file 支持 `.md`/`.txt`/`.docx`——docx 按 Word 标题样式与「第N章」规则切分） | 纯函数切分章节；建书+版本化落盘；docx 走 `readBytes` 字节通道（文本通道会解坏二进制），拒 zip64、48MB 解压上限 |
 | `novel_export` | 导出整本（md/txt + stats） | 按版本顺序拼装，写 `导出/` |
@@ -311,6 +311,8 @@ novel_project init → novel_project phase（看九阶段看板，按提示补�
 | search.autoAnnotate | true | 写章落盘后自动给本章新块补语义标签（后台执行，封顶 4 块）；false 整体关掉 |
 | ledgerExtract.enabled | false | 批量起草后**自动抽取账本行**（盲区强方案）：每章落盘后后台抽「正文里确实发生的状态变化」→ 证据双校验 → 落 pending 事实行，并把该章 `batch-no-ledger` 债自动换成 `ledger-pending`（待你复核）；关了走 lite（只记 `batch-no-ledger` major 债、零模型成本） |
 | ledgerExtract.maxLines | 8 | 每章抽取行数封顶（超限部分不收，回落债——防模型一次性灌爆账本） |
+| draftRepair.enabled | false | 批量起草**有界修复回环**：提交被正文级门禁拒（机审/内容门禁/细纲禁项）时，把驳回原因喂回模型整章重写再交门禁；默认关（保持「被拒章留候选、手动续跑」的既有行为） |
+| draftRepair.rounds | 2 | 每章修复轮数封顶（1–3；第 3 次驳回即触发同章熔断，上限 3）。修复预算耗尽仍拒 → 该章落 `needs-attention` 检查点终态（改细纲/场景契约后续跑），不无限烧调用 |
 
 > `engine` 整块都可省略——省略即「用当前路由、重试 2 次、不写会话」，最省心的默认。
 > 宿主没有模型服务时插件照常装载，只有真正调用旁路通道时才返回可读错误。

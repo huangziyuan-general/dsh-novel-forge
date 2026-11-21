@@ -473,6 +473,52 @@ test('contextpack: 世界书关键词命中与 always 常驻', () => {
     assert.equal(matchWorldEntries(entries, ['没有触发词']).map((e) => e.id)[0], 'W3');
 });
 
+test('★ contextpack: 世界书双键门槛（selective）主键 AND 次级键才激活', () => {
+    const entries = [
+        // 双键：主「顾氏集团」AND 次「并购」——只有两者同时在场才注入
+        { id: 'W1', keywords: ['顾氏集团'], secondaryKeywords: ['并购'], selective: true, content: 'r1', always: false },
+        // 普通条目同主键——对照组：命中「顾氏集团」即激活
+        { id: 'W2', keywords: ['顾氏集团'], content: 'r2', always: false },
+    ];
+    // 只有主键 → 普通条目激活，双键条目不激活
+    assert.deepEqual(matchWorldEntries(entries, ['顾氏集团开会']).map((e) => e.id), ['W2']);
+    // 主键 + 次级键都在 → 两条都激活
+    assert.deepEqual(matchWorldEntries(entries, ['顾氏集团启动并购案']).map((e) => e.id), ['W1', 'W2']);
+    // 只有次级键（主键缺席）→ 一条都不激活（次级键单独不触发）
+    assert.deepEqual(matchWorldEntries(entries, ['并购案失败']).map((e) => e.id), []);
+
+    // 畸形兜底：selective 但无次级键（正常数据在 normalizeWorldEntry 层就被拒）→ 退回普通门槛，不静默失效
+    const malformed = [{ id: 'W4', keywords: ['灵潮'], selective: true, content: 'r4' }];
+    assert.deepEqual(matchWorldEntries(malformed, ['灵潮将至']).map((e) => e.id), ['W4']);
+
+    // 面板停用开关：enabled:false 显式关，比任何触发都硬（工具面条目无此键，不受影响）
+    const disabled = [
+        { id: 'W5', keywords: ['灵潮'], enabled: false, content: 'r5' },
+        { id: 'W6', keywords: ['灵潮'], content: 'r6' },
+    ];
+    assert.deepEqual(matchWorldEntries(disabled, ['灵潮将至']).map((e) => e.id), ['W6']);
+    // 面板常驻键名 always_active（面板写路径与工具写路径写同一文件，激活面必须两个键名都认）
+    const panelShape = [{ id: 'W7', keywords: [], always_active: true, content: 'r7' }];
+    assert.deepEqual(matchWorldEntries(panelShape, ['无关文本']).map((e) => e.id), ['W7']);
+});
+
+test('★ normalizeWorldEntry：双键门槛成对校验（selective 缺次级键必须拒，不静默永不生效）', () => {
+    assert.throws(
+        () => normalizeWorldEntry({ keywords: ['主键'], secondaryKeywords: [], selective: true, content: 'c' }),
+        /secondaryKeywords/,
+    );
+    // selective:true + 主键 + 次级键 → 落盘键齐全
+    const e = normalizeWorldEntry({
+        keywords: ['顾氏集团'], secondaryKeywords: ['并购'], selective: true, content: '设定',
+    });
+    assert.equal(e.selective, true);
+    assert.deepEqual(e.secondaryKeywords, ['并购']);
+    // 不设 selective → 键恒在（selective:false），次级键空则省略
+    const plain = normalizeWorldEntry({ keywords: ['灵潮'], content: '设定' });
+    assert.equal(plain.selective, false);
+    assert.equal('secondaryKeywords' in plain, false, '空次级键省略（旧书数据零回归）');
+});
+
 test('contextpack: 覆盖率要素收敛——世界书泛词只在细纲点过名时才计入（真机第69章 50+ 噪声）', () => {
     const entries = [
         { id: 'W1', keywords: ['觉醒', '本命神兵', '弹匣', '膛纹', '灵弹'], content: 'x' },

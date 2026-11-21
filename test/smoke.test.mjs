@@ -1846,8 +1846,12 @@ test('★ 全工具×全 action：真校验器验证输出 + render 冒烟', asy
         ['novel_worldbook', 'add', { action: 'add', book: A, id: '自检设定', keywords: '自检', content: '自检世界书条目' }],
         ['novel_worldbook', 'list', { action: 'list', book: A }],
         ['novel_worldbook', 'update', { action: 'update', book: A, id: '自检设定', content: '自检世界书条目（更新）' }],
+        // 双键门槛条目：selective:true + 主键 + 次级键（新参数走一遍真 schema 校验器）
+        ['novel_worldbook', 'add', { action: 'add', book: A, id: '自检双键', keywords: '自检主键', secondaryKeywords: '自检次键', selective: true, content: '自检双键设定' }],
+        ['novel_worldbook', 'update', { action: 'update', book: A, id: '自检双键', selective: false, secondaryKeywords: '' }],
         ['novel_worldbook', 'export', { action: 'export', book: A }],
         ['novel_worldbook', 'remove', { action: 'remove', book: A, id: '自检设定' }],
+        ['novel_worldbook', 'remove', { action: 'remove', book: A, id: '自检双键' }],
         ['novel_scene', 'save', { action: 'save', book: A, chapter: 1, scene: '自检场景', participants: '测者甲' }],
         ['novel_scene', 'get', { action: 'get', book: A, chapter: 1 }],
         ['novel_scene', 'list', { action: 'list', book: A }],
@@ -1879,6 +1883,10 @@ test('★ 全工具×全 action：真校验器验证输出 + render 冒烟', asy
         ['novel_style', 'whitelist', { action: 'whitelist', book: A }],
         ['novel_style', 'whitelist_add', { action: 'whitelist_add', book: A, text: '他抬了抬眼皮' }],
         ['novel_style', 'whitelist_remove', { action: 'whitelist_remove', book: A, text: '他抬了抬眼皮' }],
+        // 书级写法规则三动作（「禁止/风险/鼓励」写法规矩：noai 扫描确定性计数 + 简报纪律位）
+        ['novel_style', 'rules', { action: 'rules', book: A }],
+        ['novel_style', 'rules_add', { action: 'rules_add', book: A, text: '禁嘴角|forbidden|high|嘴角勾起,眼神深邃|改用具体动作' }],
+        ['novel_style', 'rules_remove', { action: 'rules_remove', book: A, text: '禁嘴角' }],
         ['novel_search', 'build', { action: 'build', book: A }],
         ['novel_search', 'status', { action: 'status', book: A }],
         ['novel_search', 'query', { action: 'query', book: A, q: '自检' }],
@@ -2309,6 +2317,15 @@ test('★ novelSkillDefinition：从插件包内 SKILL.md 组装宿主可校验�
     assert.ok(d.content.includes('回溯用摘录不整章读'), 'SKILL.md 必须带「回溯用摘录不整章读」（防整章 read 把 in_tok 堆高）');
     assert.match(d.source, /^plugin:/);
     assert.ok(d.path.endsWith('skills/novel/SKILL.md'));
+    // 技法语料（references/*.md）随包发行，宿主靠 resourceBase 给模型注「Base directory」
+    // （renderSkillContent 读它）。接错目录 → 模型照 SKILL.md 的相对链接 read 落空且静默
+    // （不会报错，就是拿不到语料）。钉两条：resourceBase 真指向语料所在 skill 目录，
+    // 且该目录下 references/ 真存在——接线层真能跑，不是只 grep 源码。
+    assert.equal(d.resourceBase?.kind, 'directory');
+    // SKILL_DIR 带尾斜杠（fileURLToPath of URL '../skills/novel/'），剥掉再比对
+    const rbDir = path.normalize(d.resourceBase.path).replace(/\/+$/, '');
+    assert.ok(rbDir.endsWith('skills/novel'), `resourceBase 指向 skill 目录：${rbDir}`);
+    assert.ok(fs.existsSync(path.join(d.resourceBase.path, 'references')), '语料目录 references/ 必须存在');
 });
 
 test('★ registerNovelSkill：有 skills.register 就注册；服务缺席/抛错都优雅降级不抛', async () => {
