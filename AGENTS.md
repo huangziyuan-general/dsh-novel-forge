@@ -143,6 +143,23 @@ npm test            # node --test test/（纯逻辑单测 + 假 fs 冒烟 + head
 
 **release 标题只用版本号**（用户钦定，不要长文标题）；notes 取 CHANGELOG 对应段（遵守不变量 12 隐私铁律）。发布前安全审计：暂存区逐条核对无书稿/工作面文件，发现未忽略的样书目录先补 .gitignore 再 add。
 
+### 发版前文案与隐私检查（2026-11-21 用户钦定「下次版本前要检查」）
+
+五步之前先跑四组扫描，命中即清、复扫归零后才发版：
+
+```bash
+# a) 叙事词表：扫 CHANGELOG + 全部 release notes（标题须纯版本号）
+grep -nE "真机|实录|复盘|补刀|证伪|学费|踩坑|事故|实锤|借鉴|竞品" CHANGELOG.md
+# 对标书（novel_library 功能语义）豁免；真机作为「宿主实机 vs 测试替身」的技术术语豁免
+gh release list --limit 50 --json tagName -q '.[].tagName' | while read t; do gh release view "$t" --json body -q .body | grep -nE "真机|实录|复盘|借鉴|竞品|事故" && echo "  ↑ $t"; done
+# b) 全历史 commit message（subject 与 body 都算）
+git log --branches --tags --format=%B | grep -nE "真机|实录|复盘|补刀|证伪|学费|踩坑|事故|实锤|借鉴|竞品"
+# c) 隐私词表：书名/人名/第三方产品名/docs 文件引用（CHANGELOG、commit、fixture、README）
+# d) 分级词：P0/P1/P2 前缀
+```
+
+清法（已验证）：CHANGELOG 用 python 锚点替换；commit message 用 `git filter-repo --message-callback`（映射表 JSON：old_message 全文→new_message。注意新版 filter-repo 的 callback 是**单函数体**且**只收 message 不收 commit 对象**——拿不到 sha 就按 message 全文匹配；key 双端 rstrip 尾换行；tag 链残留需「跑→复扫→再跑」多轮收敛到 0。filter-branch 在沙箱下 msg-filter 子进程读不到 /tmp 预写文件，弃用）。**bundle 备份先行**（../dsh-novel-forge-backup/），清完 force push main+tags，并核对各 release 未因 tag 更新转 draft（若删 tag 重打则必转，须 `gh release edit --draft=false`）。
+
 
 ## 数据落盘（一本书 = 一个目录，位于会话工作区）
 
