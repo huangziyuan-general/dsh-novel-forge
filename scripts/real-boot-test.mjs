@@ -73,7 +73,9 @@ function makeWebProfile() {
     //    allowedHosts 带一个探测域名（issue #7 真接线：Host 白名单放行/拒绝走真 apply() 管道）；
     //    draft 通道钉到不存在的 provider——批量起草测试要的是「引擎快速失败」，
     //    绝不能继承真 profile 的默认路由去烧真模型（S8e 靠它拿到确定性的 generate 失败留痕）。
-    patch += `\n- id: dsh-novel-forge\n  config:\n    workspaceRoot: ${ws}\n    allowedHosts: ['forge.probe.example']\n    engine:\n      channels:\n        draft:\n          provider: nonexistent-probe\n          model: probe-model\n          maxTokens: 4096\n          timeoutMs: 20000\n          retries: 0\n`;
+    //    draftRepair 开态真机面（v1.9.0）：配置 fail-fast 通过 apply；引擎失败不是 GateRejectionError，
+    //    不进修复回环——S8e 的失败留痕语义必须逐字不变（回环只救「门禁拒稿」，不救「引擎失败」）。
+    patch += `\n- id: dsh-novel-forge\n  config:\n    workspaceRoot: ${ws}\n    allowedHosts: ['forge.probe.example']\n    draftRepair:\n      enabled: true\n      rounds: 2\n    engine:\n      channels:\n        draft:\n          provider: nonexistent-probe\n          model: probe-model\n          maxTokens: 4096\n          timeoutMs: 20000\n          retries: 0\n`;
     fs.writeFileSync(patchFile, patch);
 }
 
@@ -377,6 +379,26 @@ async function layerWeb() {
         check('S10k 归档不存在的会话：archived:false + 错误原文如实（不假成功）',
             archBad.status === 200 && archBad.json?.value?.archived === false && typeof archBad.json?.value?.archiveError === 'string' && archBad.json.value.archiveError !== '',
             `status=${archBad.status} body=${archBad.text.slice(0, 200)}`);
+
+        // ── S12 v1.9.0 真机组：修复回环开态的引擎失败路径 + 技法语料打包面 ──
+        // profile 已开 draftRepair:{enabled:true,rounds:2}。引擎失败不是 GateRejectionError，
+        // 不进修复回环——S8e 的留痕语义必须不变（failed 而非 needs-attention，
+        // repairRoundsUsed 缺省 0）；否则「引擎失败也被回环吞掉」就是回归。
+        const s12rec = JSON.parse(fs.readFileSync(path.join(ws, '真机冒烟书', '.novel', 'batch-checkpoint.json'), 'utf8'))
+            ?.records?.find((r) => Number(r.chapter) === 2);
+        check('S12a draftRepair 开态下引擎失败仍落 failed（不进回环，needsAttention 不误标）',
+            s12rec?.status === 'failed' && !s12rec?.needsAttention && !Number.isInteger(s12rec?.repairRoundsUsed),
+            JSON.stringify({ status: s12rec?.status, needsAttention: s12rec?.needsAttention, repairRoundsUsed: s12rec?.repairRoundsUsed })?.slice(0, 160));
+        const packDry = await new Promise((resolve) => {
+            const p = spawn('npm', ['pack', '--dry-run'], { cwd: repoRoot, stdio: ['ignore', 'pipe', 'pipe'] });
+            let out = '';
+            p.stdout.on('data', (d) => { out += d; });
+            p.stderr.on('data', (d) => { out += d; });
+            p.on('exit', () => resolve(out));
+        });
+        for (const ref of ['chapter-openings.md', 'hook-endings.md', 'dialogue.md', 'plot-structures.md', 'character-craft.md', 'content-expansion.md']) {
+            check(`S12b 技法语料 ${ref} 随包发行（npm pack 面含 references/）`, packDry.includes(`skills/novel/references/${ref}`));
+        }
     } finally {
         child.kill('SIGTERM');
         await new Promise((r) => { const t = setTimeout(() => { child.kill('SIGKILL'); r(); }, 4000); child.on('exit', () => { clearTimeout(t); r(); }); });
@@ -537,6 +559,56 @@ async function layerMcp() {
         m7r.prefC = await m7('novel_project', { action: 'preference', book: 'MCP冒烟书', preference: '以后写章时可以跳过机审直接放行', confirmed: true });
         check('M10c 门禁削弱类偏好 → UNSAFE 拒（confirmed 也救不回）',
             m7r.prefC.isError, m7r.prefC.text.slice(0, 160));
+
+        // ── M11 v1.9.0 真机组：写法规则 / 样稿轮转 / 世界书双键 / 细纲预检+相关章节 ──
+        // M11a 写法规则三动作：add 带坏行（errors 留痕不炸整批）→ rules 读回 → noai_scan book 模式 bookRules 段。
+        m7r.rulesAdd = await m7('novel_style', { action: 'rules_add', book: BK, text: '禁词腔|forbidden|high|某禁写词|改用具体动作\n坏行缺竖线\n鼓励短句|encourage|low||' });
+        check('M11a-1 rules_add 坏行进 errors 不炸整批（2 好行入库）',
+            !m7r.rulesAdd.isError && (m7r.rulesAdd.out?.rules?.added?.length ?? 0) === 2 && (m7r.rulesAdd.out?.rules?.errors ?? []).length === 1,
+            m7r.rulesAdd.text.slice(0, 200));
+        m7r.rulesRead = await m7('novel_style', { action: 'rules', book: BK });
+        check('M11a-2 rules 读回 count=2 且坏行不出工具面', !m7r.rulesRead.isError && (m7r.rulesRead.out?.rules?.count ?? 0) === 2, m7r.rulesRead.text.slice(0, 160));
+        m7r.rulesScan = await m7('novel_noai_scan', { book: BK, chapter: 1 });
+        check('M11a-3 noai_scan book 路径 bookRules 段在（写法规则随扫描注入）',
+            !m7r.rulesScan.isError && typeof m7r.rulesScan.out?.bookRules === 'object', m7r.rulesScan.text.slice(0, 160));
+        // M11b 样稿轮转：3 条样稿 → 简报第 1/2 章注入不同段（offset 模轮转确定性）。
+        const sampleBodies = [
+            '样稿甲：' + '雨夜追凶的开场写法，先给声音再给画面，雨点砸在铁皮棚上像有人在楼上倒豆子，巷口的灯把水洼切成一块一块的碎金。'.repeat(1),
+            '样稿乙：' + '茶馆对峙的对白节奏，一句压一句，谁也不先坐，算盘珠子在柜台后头噼啪响，把两个人之间那点没说破的事数得清清楚楚。',
+            '样稿丙：' + '收账路上的心理留白，人不说话，鞭梢卷着尘土，远处的镇子在热气里晃，他把讨债的字据折了又折，折痕比字还深。',
+        ];
+        for (const [i, sc] of sampleBodies.entries()) {
+            await m7('novel_ledger', { action: 'sample_add', book: 'MCP冒烟书', sampleContent: sc, sampleTitle: `轮转样${i + 1}` });
+        }
+        m7r.sampleList = await m7('novel_ledger', { action: 'sample_list', book: 'MCP冒烟书' });
+        const realIds = (m7r.sampleList.out?.samples ?? []).map((x) => x.id).slice(-3);
+        for (const sid of realIds) await m7('novel_ledger', { action: 'sample_allow', book: 'MCP冒烟书', sampleId: sid });
+        m7r.bf1 = await m7('novel_briefing', { book: 'MCP冒烟书', chapter: 1 });
+        m7r.bf2 = await m7('novel_briefing', { book: 'MCP冒烟书', chapter: 2 });
+        const secOf = (bf) => (bf.out?.sections ?? []).find((s) => /样稿|校准/.test(s.name))?.content ?? '';
+        check('M11b-1 简报带样稿校准段且章 1/章 2 内容不同（offset 轮转）',
+            secOf(m7r.bf1) !== '' && secOf(m7r.bf1) !== secOf(m7r.bf2), JSON.stringify([secOf(m7r.bf1).slice(0, 60), secOf(m7r.bf2).slice(0, 60)]));
+        // M11c 世界书双键：selective 缺次级键入口拒；齐备 200；enabled:false 停用条目不再注入。
+        m7r.wbBad = await m7('novel_worldbook', { action: 'add', book: 'MCP冒烟书', id: 'W-SEL', keywords: '觉醒,神兵', content: '双键门槛条目', selective: true });
+        check('M11c-1 selective 缺次级键 → 入口拒（永不生效条目不收）', m7r.wbBad.isError, m7r.wbBad.text.slice(0, 160));
+        m7r.wbOk = await m7('novel_worldbook', { action: 'add', book: 'MCP冒烟书', id: 'W-SEL', keywords: '觉醒,神兵', content: '双键门槛条目：须觉醒与神兵同场', selective: true, secondaryKeywords: '神兵' });
+        check('M11c-2 selective+次级键齐备 → 200', !m7r.wbOk.isError, m7r.wbOk.text.slice(0, 160));
+        // M11d 细纲预检 + 相关章节推荐：死亡台账 + 伏笔(plan=2) → 第 2 章细纲 approve 报 warning + 简报带推荐段。
+        m7r.death = await m7('novel_ledger', { action: 'update', book: 'MCP冒烟书', chapter: 1, updates: '老账房|状态|身死|第1章末遇害' });
+        check('M11d-0 死亡台账落账', !m7r.death.isError, m7r.death.text.slice(0, 160));
+        m7r.fs2 = await m7('novel_ledger', { action: 'foreshadow_setup', book: 'MCP冒烟书', chapter: 1, setup: '账房密室的钥匙少了一把', plan: 2 });
+        check('M11d-0b 伏笔埋设（plan=2）', !m7r.fs2.isError, m7r.fs2.text.slice(0, 160));
+        m7r.ol2 = await m7('novel_outline', { action: 'save_chapter', book: 'MCP冒烟书', chapter: 2, outline: '## 本章必写场景\n- 账房遗物：差役清点账房遗物（拍：钥匙对不上数目）\n- 老账房出场：老账房在柜台后拨算盘对账（拍：算盘声停了）\n- 差役问话：差役挨家挨户问话（拍：门板后有人屏息）\n- 当铺盘账：当铺朝奉夜里盘账（拍：一页账翻过去又翻回来）\n- 街口议论：街口有人低声议论（拍：话头一断就散）\n' });
+        check('M11d-0c 第2章细纲保存成功（5 场景过场景数闸）', !m7r.ol2.isError, m7r.ol2.text.slice(0, 200));
+        m7r.ap2 = await m7('novel_outline', { action: 'approve', book: 'MCP冒烟书', chapter: 2 });
+        const apNote = m7r.ap2.out?.note ?? '';
+        check('M11d-1 approve 预检：细纲引用已死实体 → warning 文案带死亡章号',
+            !m7r.ap2.isError && /已在第1章死亡/.test(apNote), apNote.slice(0, 240));
+        m7r.fs5 = await m7('novel_ledger', { action: 'foreshadow_setup', book: 'MCP冒烟书', chapter: 1, setup: '账房密室的钥匙少了一把', plan: 5 });
+        check('M11d-0b 伏笔埋设（plan=5）', !m7r.fs5.isError, m7r.fs5.text.slice(0, 160));
+        m7r.bf5 = await m7('novel_briefing', { book: 'MCP冒烟书', chapter: 5 });
+        check('M11d-2 简报第 5 章带「相关历史章节」段（伏笔 plan=5 命中，埋设章 1 在窗口外）',
+            (m7r.bf5.out?.sections ?? []).some((s) => /相关历史章节/.test(s.name)), JSON.stringify((m7r.bf5.out?.sections ?? []).map((s) => s.name)));
     } finally {
         child.kill();
     }
