@@ -1852,6 +1852,11 @@ test('★ 全工具×全 action：真校验器验证输出 + render 冒烟', asy
         ['novel_worldbook', 'export', { action: 'export', book: A }],
         ['novel_worldbook', 'remove', { action: 'remove', book: A, id: '自检设定' }],
         ['novel_worldbook', 'remove', { action: 'remove', book: A, id: '自检双键' }],
+        // 世界规则台账四动作（设定域 × 冲突优先级：report-only，简报带「世界设定纪律」段）
+        ['novel_worldbook', 'rules', { action: 'rules', book: A }],
+        ['novel_worldbook', 'rules_add', { action: 'rules_add', book: A, payload: '地理|行政区划|郡县制|无改动|史实优先' }],
+        ['novel_worldbook', 'rules_check', { action: 'rules_check', book: A, chapter: 1 }],
+        ['novel_worldbook', 'rules_remove', { action: 'rules_remove', book: A, payload: '地理' }],
         ['novel_scene', 'save', { action: 'save', book: A, chapter: 1, scene: '自检场景', participants: '测者甲' }],
         ['novel_scene', 'get', { action: 'get', book: A, chapter: 1 }],
         ['novel_scene', 'list', { action: 'list', book: A }],
@@ -1873,6 +1878,9 @@ test('★ 全工具×全 action：真校验器验证输出 + render 冒烟', asy
         ['novel_ledger', 'sample_prompt', { action: 'sample_prompt', book: A, samplePurpose: 'revise' }],
         ['novel_ledger', 'sample_revoke', { action: 'sample_revoke', book: A, sampleId: 'S1' }],
         ['novel_ledger', 'sample_remove', { action: 'sample_remove', book: A, sampleId: 'S1' }],
+        // 情感节拍卡两动作（写前规划本章情感弧线：一章一张卡，简报带出「本章情感弧线」段）
+        ['novel_ledger', 'beat_set', { action: 'beat_set', book: A, chapter: 1, beatOverallArc: '压抑→爆发→释然', beatBeats: '祠堂对峙|压抑|读者紧绷|主角隐忍' }],
+        ['novel_ledger', 'beat_list', { action: 'beat_list', book: A, chapter: 1 }],
         ['novel_write_chapter', null, { book: A, chapter: 1, title: '自检第一章', content: GOOD_CHAPTER, cast: '测者甲', summary: '自检用一章' }],
         // 回收证据校验：自检正文不含「自检伏笔」——非 force 必须被拒（下面单测覆盖），
         // 这里用 force 走通 schema/render 通道
