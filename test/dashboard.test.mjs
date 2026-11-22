@@ -2,6 +2,52 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildDashboard } from '../lib/dashboard.js';
 
+test('buildDashboard：进度阶梯读数——逾期/停滞点名进「下一步动作」（report-only，不挡 readiness）', () => {
+    const dash = buildDashboard({
+        novel: { chapters: { 1: { chars: 2200, latest: 1 }, 2: { chars: 2300, latest: 1 } } },
+        // 合法大纲且里程碑未到期 → 基线 readiness=ready；阶梯逾期在场也保持 ready（证明 report-only）
+        bookOutline: '### 卷一（第 1-10 章）\n- 第 1-10 章：夺符、立派门。',
+        chapterTexts: [],
+        continuity: { ok: true, stats: { errors: 0, warnings: 0 }, issues: [] },
+        diagnosis: { overall: '良', issues: [] },
+        proposals: [],
+        // 时点 = 已写最大章 2：力量线第 2 章级未登记实绩 → 逾期 + 停滞对（前级达标后下一级逾期）
+        ladders: [
+            {
+                id: 'L1', name: '力量线',
+                rungs: [
+                    { chapter: 1, label: '筑基', check: '', reached: 1 },
+                    { chapter: 2, label: '开宗', check: '立派门时登账', reached: null },
+                ],
+            },
+        ],
+    });
+    assert.equal(dash.ladders.present, true);
+    assert.equal(dash.ladders.lines, 1);
+    assert.equal(dash.ladders.overdue, 1, '第 2 章级逾期未登记');
+    assert.equal(dash.ladders.stalled, 1, '筑基达标后开宗逾期 = 停滞对');
+    assert.ok(dash.actions.some((a) => a.action === 'ladder' && a.level === 'warn' && /该走没走/.test(a.text)),
+        '阶梯点名进下一步动作（warn 档，与质量警告同层）');
+    // report-only：阶梯问题不改变 readiness（无硬伤/无欠账/大纲在场时仍是 ready）
+    assert.equal(dash.readiness, 'ready');
+});
+
+test('buildDashboard：空/畸形阶梯台账 → present=false，不掺噪声、不动 actions', () => {
+    const dash = buildDashboard({
+        novel: { chapters: { 1: { chars: 2200, latest: 1 } } },
+        bookOutline: '### 卷一（第 1-10 章）\n- 第 1-10 章：夺符、立派门。',
+        chapterTexts: [],
+        continuity: { ok: true, stats: { errors: 0, warnings: 0 }, issues: [] },
+        diagnosis: { overall: '良', issues: [] },
+        proposals: [],
+        ladders: [null, { id: 'L9' }, '坏行'], // 畸形行全滤出
+    });
+    assert.equal(dash.ladders.present, false, '畸形/空台账 = 无阶梯面');
+    assert.equal(dash.ladders.lines, 0);
+    assert.ok(!dash.actions.some((a) => a.action === 'ladder'), '无台账不出阶梯动作');
+    assert.equal(dash.readiness, 'ready');
+});
+
 test('buildDashboard：进度、提案、诊断与下一步动作聚合', () => {
     const novel = {
         stage: 'writing',

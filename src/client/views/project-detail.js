@@ -256,7 +256,17 @@ export function ProjectDetailView({ state: s }) {
 								h('span', { style: { flex: '1 1 auto', fontSize: font.small, lineHeight: 1.7 } }, a.text),
 							))),
 						h('div', { style: { ...hintStyle, fontSize: font.caption, marginTop: space.sm } },
-							`平台口径：${dash.platform.charMin ?? '?'}–${dash.platform.charMax ?? '?'} 字（${dash.charSourceLabel ?? '默认'}）`)),
+							`平台口径：${dash.platform.charMin ?? '?'}–${dash.platform.charMax ?? '?'} 字（${dash.charSourceLabel ?? '默认'}）`),
+						dash.ladders?.present && dash.ladders.flagged.length > 0
+							? h('div', { style: { marginTop: space.sm, paddingTop: space.sm, borderTop: `1px solid ${color.border1}` } },
+								h('div', { style: { fontWeight: weight.semibold, fontSize: font.small, marginBottom: space.xs } },
+									`🪜 进度阶梯（第 ${dash.progress.maxChapter} 章时点：${dash.ladders.overdue} 线逾期 · ${dash.ladders.stalled} 线停滞）`),
+								h('div', { style: stackStyle(space.xs) },
+									...dash.ladders.flagged.map((f, i) => h('div', { key: i, style: stackStyle(space.xs) },
+										h('div', { style: { fontSize: font.small, fontWeight: weight.medium } }, f.name),
+										...f.issues.map((msg, j) => h('div', { key: j, style: { ...hintStyle, fontSize: font.caption, color: color.warn } }, `⚠ ${msg}`))))))
+							: null),
+
 		review?.available
 			? h('div', { style: { marginTop: space.sm, paddingTop: space.sm, borderTop: `1px solid ${color.border1}` } },
 				h('div', { style: { display: 'flex', gap: space.sm, flexWrap: 'wrap', alignItems: 'baseline' } },

@@ -399,6 +399,51 @@ async function layerWeb() {
         for (const ref of ['chapter-openings.md', 'hook-endings.md', 'dialogue.md', 'plot-structures.md', 'character-craft.md', 'content-expansion.md']) {
             check(`S12b 技法语料 ${ref} 随包发行（npm pack 面含 references/）`, packDry.includes(`skills/novel/references/${ref}`));
         }
+
+        // ── S13：进度阶梯 → dashboard 实参接线回归钉（H1）─────────────────
+        // insights 路由读了账本/阶梯.json 却漏传 buildDashboard 实参 → dash.ladders
+        // 恒 present:false、驾驶舱 warn 行永不触发（v1.9.1 修复）。台账数据经临时
+        // MCP 进程（NOVEL_FORGE_ROOT 指向 web 工作区）写入，REST 读 dashboard 验证。
+        const S13_BOOK = '真机单换行书';
+        const mcpChild = spawn(process.execPath, [path.join(repoRoot, 'mcp/server.mjs')],
+            { cwd: repoRoot, env: { ...process.env, NOVEL_FORGE_ROOT: ws }, stdio: ['pipe', 'pipe', 'pipe'] });
+        try {
+            let mbuf = '';
+            mcpChild.stdout.on('data', (d) => { mbuf += d; });
+            const rpc = async (method, params) => {
+                const id = Math.floor(Math.random() * 1e9);
+                mcpChild.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+                const deadline = Date.now() + 15_000;
+                while (Date.now() < deadline) {
+                    for (const line of mbuf.split('\n')) {
+                        if (!line.trim()) continue;
+                        try { const j = JSON.parse(line); if (j.id === id) return j; } catch { /* 半行继续等 */ }
+                    }
+                    await new Promise((r) => setTimeout(r, 120));
+                }
+                return { error: { message: 'rpc timeout' } };
+            };
+            await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'probe-s13', version: '0.0.0' } });
+            mbuf = '';
+            const call = await rpc('tools/call', { name: 'novel_ledger', arguments: {
+                action: 'ladder_add', book: S13_BOOK,
+                ladder: '力量境界|练气三层|第1章前应到|测试锚点\n支线伏笔|埋设完成|第5章前应到',
+            } });
+            const callOut = call?.result?.content?.[0]?.text ?? '';
+            check('S13-0 临时 MCP 通道 ladder_add 落账（addedCount=2，描述口径「第N章前应到」可解析）',
+                callOut.includes('"addedCount": 2') || /addedCount["：:\s]*2/.test(callOut),
+                callOut.slice(0, 300));
+            const dashRes = await req('GET', `/api/novel-forge/projects/${encodeURIComponent(S13_BOOK)}/dashboard`);
+            const dl = dashRes.json?.value?.ladders;
+            check('S13a dashboard 读阶梯（H1 回归钉：present=true 而非恒 false）',
+                dashRes.status === 200 && dl?.present === true,
+                `status=${dashRes.status} ladders=${JSON.stringify(dl)?.slice(0, 200)}`);
+            check('S13b dashboard 阶梯读数形状（lines=2 + flagged 数组 + 数值 overdue）',
+                dl?.lines === 2 && Array.isArray(dl?.flagged) && typeof dl?.overdue === 'number',
+                JSON.stringify(dl));
+        } finally {
+            mcpChild.kill('SIGTERM');
+        }
     } finally {
         child.kill('SIGTERM');
         await new Promise((r) => { const t = setTimeout(() => { child.kill('SIGKILL'); r(); }, 4000); child.on('exit', () => { clearTimeout(t); r(); }); });
@@ -609,6 +654,50 @@ async function layerMcp() {
         m7r.bf5 = await m7('novel_briefing', { book: 'MCP冒烟书', chapter: 5 });
         check('M11d-2 简报第 5 章带「相关历史章节」段（伏笔 plan=5 命中，埋设章 1 在窗口外）',
             (m7r.bf5.out?.sections ?? []).some((s) => /相关历史章节/.test(s.name)), JSON.stringify((m7r.bf5.out?.sections ?? []).map((s) => s.name)));
+
+        // ── M12 v1.9.1 真机组：情感节拍卡 / 世界规则台账 ─────────────────────
+        // 两个写前规划账本的端到端：写卡→读回→简报注入；台账 add→check→remove；
+        // 以及 beat_set 章号正数闸（0/负数存出永远查不到的脏卡）。
+        m7r.beatSet = await m7('novel_ledger', { action: 'beat_set', book: BK, chapter: 2,
+            beatOverallArc: '压抑→警觉',
+            beatBeats: '当铺对账|紧绷|替主角捏汗|主角发现数目缺口\n后门湿布鞋|后怕|疑窦丛生|主角意识到有人抢先\n分工查册|沉稳|节奏放缓|两人开始互补' });
+        check('M12a beat_set 写卡（章2 三拍落账，beatErrors 空）',
+            !m7r.beatSet.isError && m7r.beatSet.out?.beat?.chapter === 2 && (m7r.beatSet.out.beat?.beats?.length ?? 0) === 3
+            && (m7r.beatSet.out.beatErrors ?? []).length === 0, m7r.beatSet.text.slice(0, 160));
+        m7r.beatBad = await m7('novel_ledger', { action: 'beat_set', book: BK, chapter: 0, beatBeats: 'x|y|z|w' });
+        check('M12b beat_set 章号 0 → 拒（正整数闸，脏卡不落）',
+            m7r.beatBad.isError && /正整数/.test(m7r.beatBad.text), m7r.beatBad.text.slice(0, 160));
+        m7r.beatList = await m7('novel_ledger', { action: 'beat_list', book: BK });
+        check('M12c beat_list 读回含章 2 卡（四格齐）',
+            !m7r.beatList.isError && (m7r.beatList.out?.beats ?? []).some((c) => c.chapter === 2 && (c.beats?.length ?? 0) === 3),
+            m7r.beatList.text.slice(0, 160));
+        m7r.bfBeat = await m7('novel_briefing', { book: BK, chapter: 2 });
+        check('M12d 简报第 2 章带「本章情感弧线」段（含纪律尾行）',
+            (m7r.bfBeat.out?.sections ?? []).some((s) => s.name.includes('本章情感弧线')),
+            JSON.stringify((m7r.bfBeat.out?.sections ?? []).map((s) => s.name)));
+        m7r.wrAdd = await m7('novel_worldbook', { action: 'rules_add', book: BK,
+            payload: '器物|符箓|朱砂封印为官办印记|灵符时代|史实优先\n势力|巡检司|十日一巡|夜巡制|架空优先\n' });
+        check('M12e rules_add 两行入库（historical+fictional 各一）',
+            !m7r.wrAdd.isError && (m7r.wrAdd.out?.rules?.count ?? 0) === 2, m7r.wrAdd.text.slice(0, 160));
+        m7r.wrCheck = await m7('novel_worldbook', { action: 'rules_check', book: BK, chapter: 1 });
+        check('M12f rules_check 通道（第1章扫描返回 counts+issues）',
+            !m7r.wrCheck.isError && m7r.wrCheck.out?.ruleCheck?.chapter === 1 && Array.isArray(m7r.wrCheck.out.ruleCheck.issues),
+            m7r.wrCheck.text.slice(0, 160));
+        m7r.wrRm = await m7('novel_worldbook', { action: 'rules_remove', book: BK, payload: '器物' });
+        check('M12g rules_remove 删域（主行+子行整域，count 回落 1）',
+            !m7r.wrRm.isError && (m7r.wrRm.out?.rules?.count ?? 0) === 1, m7r.wrRm.text.slice(0, 160));
+        m7r.bfRules = await m7('novel_briefing', { book: BK, chapter: 2 });
+        check('M12h 简报带「世界设定纪律」段（剩势力域，架空优先）',
+            (m7r.bfRules.out?.sections ?? []).some((s) => s.name.includes('世界设定纪律')),
+            JSON.stringify((m7r.bfRules.out?.sections ?? []).map((s) => s.name)));
+
+        // ── M12i：进度阶梯登记（MCP 通道）——dashboard 实参接线回归钉在 web 层 S13 ──
+        m7r.ladderAdd = await m7('novel_ledger', { action: 'ladder_add', book: BK,
+            ladder: '力量境界|练气三层|第1章前应到|测试锚点\n支线伏笔|埋设完成|第5章前应到' });
+        check('M12i ladder_add 两线入库（addedCount=2，ladderErrors 空）',
+            !m7r.ladderAdd.isError && m7r.ladderAdd.out?.addedCount === 2
+                && (m7r.ladderAdd.out?.ladderErrors?.length ?? 0) === 0,
+            m7r.ladderAdd.text.slice(0, 200));
     } finally {
         child.kill();
     }

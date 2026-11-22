@@ -46,6 +46,11 @@ export function ProjectOverviewView({ state: s }) {
 	const meta = el.meta ?? {};
 	const facts = Array.isArray(el.facts) ? el.facts : [];
 	const foreshadows = Array.isArray(el.foreshadows) ? el.foreshadows : [];
+	const relations = Array.isArray(el.relations) ? el.relations : [];
+	const arcs = Array.isArray(el.arcs) ? el.arcs : [];
+	const pledges = Array.isArray(el.pledges) ? el.pledges : [];
+	const cognition = Array.isArray(el.cognition) ? el.cognition : [];
+	const ladders = Array.isArray(el.ladders) ? el.ladders : [];
 	const chars = Array.isArray(el.characters) ? el.characters : [];
 	const castNames = (meta.cast ?? []).map((c) => (typeof c === 'string' ? c : c?.name)).filter(Boolean);
 	const outlineCount = el.outline?.chapterOutlines?.length ?? 0;
@@ -93,6 +98,11 @@ export function ProjectOverviewView({ state: s }) {
 			StatTile({ icon: '🔤', value: el.glossaryCount ?? 0, label: '术语', size: 'sm' }),
 			StatTile({ icon: '🧾', value: facts.length, label: '台账', size: 'sm' }),
 			StatTile({ icon: '🪡', value: foreshadows.length, label: '伏笔', size: 'sm' }),
+			StatTile({ icon: '🔗', value: relations.length, label: '关系', size: 'sm' }),
+			StatTile({ icon: '📈', value: arcs.length, label: '弧线', size: 'sm' }),
+			StatTile({ icon: '📝', value: pledges.length, label: '契约', size: 'sm' }),
+			StatTile({ icon: '🧠', value: cognition.length, label: '认知', size: 'sm' }),
+			StatTile({ icon: '🪜', value: ladders.length, label: '阶梯', size: 'sm' }),
 		),
 	);
 
@@ -202,12 +212,76 @@ export function ProjectOverviewView({ state: s }) {
 			))
 		: null;
 
+	// ── 关系 / 弧线 / 契约 / 认知（工具链已支持的账本，面板此前看不见）──
+	// 各账本独立成块、有数据才给（空账本不掺噪声，同伏笔块「length>0 才给区块」口径）。
+	const ledgerSub = [];
+	if (relations.length > 0) {
+		ledgerSub.push(Fold({ title: `🔗 关系（${relations.length} 条）` },
+			h('div', { style: stackStyle(space.xs) },
+				...relations.map((r, i) => h('div', { key: i, style: { display: 'flex', gap: space.sm, flexWrap: 'wrap', fontSize: font.small, alignItems: 'baseline' } },
+					Chip({ tone: 'neutral' }, `${r.a ?? '？'}${r.relation ? '·' + r.relation : ''}·${r.b ?? '？'}`),
+					(r.value ?? '') ? h('span', { style: { color: color.text2 } }, r.value) : null,
+					h('span', { style: hintStyle }, `第 ${r.chapter ?? '？'} 章`))))));
+	}
+	if (arcs.length > 0) {
+		ledgerSub.push(Fold({ title: `📈 弧线（${arcs.length} 条）` },
+			h('div', { style: stackStyle(space.xs) },
+				...arcs.map((a, i) => h('div', { key: i, style: { display: 'flex', gap: space.sm, flexWrap: 'wrap', fontSize: font.small, alignItems: 'baseline' } },
+					Chip({ tone: 'accent' }, a.character ?? '？'),
+					h('span', { style: { color: color.text2 } }, `${a.dimension ?? ''} ${a.value ?? ''}`.trim()),
+					a.trend ? h('span', { style: hintStyle }, a.trend) : null,
+					h('span', { style: hintStyle }, `第 ${a.chapter ?? '？'} 章`))))));
+	}
+	if (pledges.length > 0) {
+		ledgerSub.push(Fold({ title: `📝 叙事契约（${pledges.length} 条）` },
+			h('div', { style: stackStyle(space.xs) },
+				...pledges.map((pg, i) => {
+					const st = pg.status ?? 'open';
+					const tone = st === 'kept' || st === 'revealed' ? 'ok'
+						: st === 'broken' ? 'danger' : st === 'expired' ? 'warn' : 'neutral';
+					return h('div', { key: i, style: { display: 'flex', gap: space.sm, flexWrap: 'wrap', fontSize: font.small, alignItems: 'baseline' } },
+						Chip({ tone }, st),
+						h('span', null, pg.statement || pg.subject || pg.id || '？'),
+						Number.isInteger(pg.deadlineChapter) ? h('span', { style: hintStyle }, `到期第 ${pg.deadlineChapter} 章`) : null,
+					);
+				}))));
+	}
+	if (cognition.length > 0) {
+		ledgerSub.push(Fold({ title: `🧠 认知（${cognition.length} 条）` },
+			h('div', { style: stackStyle(space.xs) },
+				...cognition.map((c, i) => h('div', { key: i, style: { fontSize: font.small, color: color.text2 } },
+					`${c.subject ?? '？'} ${c.verb === 'doesNotKnow' ? '不知道' : '知道'}「${c.info ?? '？'}」${Number.isInteger(c.chapter) ? `（第 ${c.chapter} 章）` : ''}`)))));
+	}
+	const ledgerBlock = ledgerSub.length > 0 ? h('div', { style: stackStyle(space.md) }, ...ledgerSub) : null;
+
+	// ── 进度阶梯（该走没走：每线各级的计划章 vs 实绩，与驾驶舱 ladders 读数同台账）──
+	const ladderBlock = (ladders.length > 0)
+		? h('div', { style: stackStyle(space.md) },
+			...ladders.map((l) => h('div', { key: l.id ?? l.name, style: stackStyle(space.xs) },
+				h('div', { style: { fontSize: font.small, fontWeight: weight.medium } }, l.name ?? '？'),
+				...((l.rungs ?? [])
+					.slice()
+					.sort((a, b) => (a.chapter ?? 0) - (b.chapter ?? 0))
+					.map((r, i) => {
+						const done = Number.isInteger(r.reached);
+						return h('div', { key: i, style: { display: 'flex', gap: space.sm, flexWrap: 'wrap', fontSize: font.small, alignItems: 'baseline' } },
+							Chip({ tone: done ? 'ok' : 'neutral' }, done ? `✓ 第 ${r.reached} 章达标` : '未达标'),
+							h('span', null, r.label || `第 ${r.chapter} 章级`),
+							Number.isInteger(r.chapter) ? h('span', { style: hintStyle }, `第 ${r.chapter} 章前该到`) : null,
+							r.check ? h('span', { style: hintStyle }, r.check) : null,
+						);
+					})),
+			)))
+		: null;
+
+
 	return h('div', { style: stackStyle(space.xl) },
 		Section({ icon: '📚', title: '档案' }, profile, tiles),
 		Section({ icon: '🗺', title: '大纲' }, outlineBlock),
 		Section({ icon: '👥', title: '角色卡' }, castBlock),
 		Section({ icon: '🧭', title: '设定' }, settingBlock),
-		Section({ icon: '⏳', title: '时间线 · 账本' }, timelineBlock),
+		Section({ icon: '⏳', title: '时间线 · 账本' }, timelineBlock, ledgerBlock),
 		foreshadowBlock ? Section({ icon: '🪡', title: '伏笔' }, foreshadowBlock) : null,
+		ladderBlock ? Section({ icon: '🪜', title: '进度阶梯' }, ladderBlock) : null,
 	);
 }

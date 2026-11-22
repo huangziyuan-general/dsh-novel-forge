@@ -1105,14 +1105,14 @@ test('★ B3 场景契约：隐藏人物不进上下文，写进正文被内容�
 
     const saved = await scene.execute({
         action: 'save', book: '示例书', chapter: 2,
-        scene: '雨夜断刃', participants: '测试角色', hidden: '陆寒',
-        forbidden: '储物戒指', notes: '陆寒的真实身份本章不揭',
+        scene: '雨夜断刃', participants: '测试角色', hidden: '雾中人',
+        forbidden: '储物戒指', notes: '雾中人的真实身份本章不揭',
     }, exec);
     assert.deepEqual(saved.contract.participants, ['测试角色']);
-    assert.deepEqual(saved.contract.hidden, ['陆寒']);
+    assert.deepEqual(saved.contract.hidden, ['雾中人']);
     const cPath = path.join(root, '示例书', '设定', '场景契约.json');
     assert.ok(fs.existsSync(cPath), '契约文件必须落盘');
-    assert.ok(fs.readFileSync(cPath, 'utf8').includes('陆寒'), '落盘内容要含声明');
+    assert.ok(fs.readFileSync(cPath, 'utf8').includes('雾中人'), '落盘内容要含声明');
 
     await outline.execute({
         action: 'save_chapter', book: '示例书', chapter: 2,
@@ -1121,24 +1121,24 @@ test('★ B3 场景契约：隐藏人物不进上下文，写进正文被内容�
     await outline.execute({ action: 'approve', book: '示例书', chapter: 2 }, exec);
 
     const bf = await briefing.execute({ book: '示例书', chapter: 2 }, exec);
-    const leaks = bf.sections.filter((x) => x.content.includes('陆寒')).map((x) => x.name);
+    const leaks = bf.sections.filter((x) => x.content.includes('雾中人')).map((x) => x.name);
     assert.deepEqual(leaks, [], '★ 隐藏人物名不得进上下文（悬念保护：不知道就写不出来）');
     assert.ok(bf.rendered.includes('测试角色'), '出场人物要在场');
     assert.equal(bf.hiddenCount, 1, '要报告「有 1 人隐藏」但不给名字');
 
     // 正文与第1章无重合：否则机审（跨章重复率）会先于内容门禁拦下，测不到悬念保护这条
-    const bad = `${CLEAN_CHAPTER}\n\n陆寒从雾里走出来，掌中托着一柄断刃，正是从江底浮起的那一柄。`;
+    const bad = `${CLEAN_CHAPTER}\n\n雾中人从雾里走出来，掌中托着一柄断刃，正是从江底浮起的那一柄。`;
     const dbgLog = fs.readFileSync(path.join(root, '示例书', '.novel', 'audit.jsonl'), 'utf8');
     const cg = (await import('../lib/content-gate.js')).contentGate;
-    const r0 = cg({ content: bad, chapter: 2, contract: { hidden: ['陆寒'] } });
+    const r0 = cg({ content: bad, chapter: 2, contract: { hidden: ['雾中人'] } });
     await assert.rejects(
-        () => write.execute({ book: '示例书', chapter: 2, title: '雨夜断刃', content: bad, summary: '陆寒现身', cast: '测试角色' }, exec),
+        () => write.execute({ book: '示例书', chapter: 2, title: '雨夜断刃', content: bad, summary: '雾中人现身', cast: '测试角色' }, exec),
         /隐藏人物|泄底/,
         '★ 隐藏人物出现在正文必须被拦（不靠模型自觉）',
     );
 
     const ok = await write.execute({
-        book: '示例书', chapter: 2, title: '雨夜断刃', content: bad, summary: '陆寒现身', cast: '测试角色', force: true,
+        book: '示例书', chapter: 2, title: '雨夜断刃', content: bad, summary: '雾中人现身', cast: '测试角色', force: true,
     }, exec);
     assert.equal(ok.gate.bannedHits.includes('储物戒指'), true, '命中禁项要落进指标');
     assert.equal(ok.gate.passed, false, '违约的章不该判通过');
@@ -1882,6 +1882,13 @@ test('★ 全工具×全 action：真校验器验证输出 + render 冒烟', asy
         ['novel_ledger', 'beat_set', { action: 'beat_set', book: A, chapter: 1, beatOverallArc: '压抑→爆发→释然', beatBeats: '祠堂对峙|压抑|读者紧绷|主角隐忍' }],
         ['novel_ledger', 'beat_list', { action: 'beat_list', book: A, chapter: 1 }],
         ['novel_write_chapter', null, { book: A, chapter: 1, title: '自检第一章', content: GOOD_CHAPTER, cast: '测者甲', summary: '自检用一章' }],
+        // 进度阶梯五动作（书级「随进度演进的线」：规划式先排后验，逾期/停滞确定性点名）。
+        // 放在写章之后——ladder_reach 实绩必须落在已写章节上（未写章会拒收）。
+        ['novel_ledger', 'ladder_add', { action: 'ladder_add', book: A, ladder: '力量线|筑基|10|突破后登账\n力量线|金丹|30|渡劫后登账' }],
+        ['novel_ledger', 'ladder_reach', { action: 'ladder_reach', book: A, ladderLine: '力量线', ladderRung: 10, chapter: 1 }],
+        ['novel_ledger', 'ladder_check', { action: 'ladder_check', book: A, at: 5 }],
+        ['novel_ledger', 'ladder_list', { action: 'ladder_list', book: A, ladderLine: '力量线' }],
+        ['novel_ledger', 'ladder_remove', { action: 'ladder_remove', book: A, ladder: '力量线' }],
         // 回收证据校验：自检正文不含「自检伏笔」——非 force 必须被拒（下面单测覆盖），
         // 这里用 force 走通 schema/render 通道
         ['novel_ledger', 'foreshadow_payoff', { action: 'foreshadow_payoff', book: A, chapter: 1, id: 'F1', force: true }],
