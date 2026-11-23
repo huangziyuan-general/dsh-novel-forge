@@ -317,8 +317,11 @@ h1 .ver { font-size: 11px; font-weight: 500; padding: 1px 7px; border-radius: 99
     <button data-do="list">📚 项目列表</button>
     <button data-do="open">🔎 打开《示例书》</button>
     <button data-do="checkup">🩺 全书体检</button>
-    <button data-do="info">📋 基本信息</button>
-    <button data-do="chapters">🎧 章节听书</button>
+    <button data-do="assets">📋 资料</button>
+    <button data-do="write">✍️ 写作</button>
+    <button data-do="check">🩺 体检</button>
+    <button data-do="proposals">✅ 提案</button>
+    <button data-do="chapters">🎧 章节</button>
     <button data-do="lore">📖 世界书</button>
     <button data-do="settings">⚙ 设置</button>
     <span class="sep"></span>
@@ -463,17 +466,23 @@ const tour = {
     }
   },
   open: async () => click('[data-action="open"][data-id="示例书"]'),
-  checkup: async () => click('[data-action="continuity"]'),
-  diagnose: async () => click('[data-action="diagnose"]'),
-  write: async () => click('[data-action="write"]'),
-  info: async () => click('[data-action="detail-tab"][data-tab="info"]'),
+  // 体检/诊断按钮已挪进「体检」标签，先切过去再点，否则点空
+  checkup: async () => { click('[data-action="detail-tab"][data-tab="check"]'); await sleep(150); click('[data-action="continuity"]'); },
+  diagnose: async () => { click('[data-action="detail-tab"][data-tab="check"]'); await sleep(150); click('[data-action="diagnose"]'); },
+  write: async () => click('[data-action="detail-tab"][data-tab="write"]'),
+  info: async () => click('[data-action="detail-tab"][data-tab="write"]'),
+  assets: async () => click('[data-action="detail-tab"][data-tab="assets"]'),
+  check: async () => click('[data-action="detail-tab"][data-tab="check"]'),
+  proposals: async () => click('[data-action="detail-tab"][data-tab="proposals"]'),
   chapters: async () => click('[data-action="detail-tab"][data-tab="chapters"]'),
-  // 世界书入口只在「基本信息」标签里 —— 先切回去再点，否则点空
-  lore: async () => { click('[data-action="detail-tab"][data-tab="info"]'); await sleep(100); click('[data-action="goto-lorebook"]'); },
+  // 世界书入口在「写作台」标签 —— 先切回去再点，否则点空
+  lore: async () => { click('[data-action="detail-tab"][data-tab="write"]'); await sleep(100); click('[data-action="goto-lorebook"]'); },
   settings: async () => click('[data-action="goto-settings"]'),
   'polish-ok': async () => { polishMode = 'ok'; click('[data-action="polish"]'); },
   'polish-blocked': async () => { polishMode = 'blocked'; click('[data-action="polish"]'); },
   batch: async () => {
+    click('[data-action="detail-tab"][data-tab="batch"]');
+    await sleep(200);
     document.querySelectorAll('details').forEach((d) => { d.open = true; });
     await sleep(60);
     click('[data-action="draft-batch"]');
@@ -524,11 +533,15 @@ window.addEventListener('unhandledrejection', (e) => pageErrors.push('unhandled:
 
 const SWEEP_VIEWS = [
   { name: '项目列表', go: async () => { await tour.list(); } },
-  { name: '详情 · 基本信息', go: async () => { await tour.list(); click('[data-action="open"][data-id="示例书"]'); await sleep(420); click('[data-action="detail-tab"][data-tab="info"]'); await sleep(180); } },
+  { name: '详情 · 写作', go: async () => { await tour.list(); click('[data-action="open"][data-id="示例书"]'); await sleep(420); click('[data-action="detail-tab"][data-tab="write"]'); await sleep(180); } },
+  { name: '详情 · 资料', go: async () => { await tour.list(); click('[data-action="open"][data-id="示例书"]'); await sleep(420); click('[data-action="detail-tab"][data-tab="assets"]'); await sleep(180); } },
+  { name: '详情 · 体检', go: async () => { await tour.list(); click('[data-action="open"][data-id="示例书"]'); await sleep(420); click('[data-action="detail-tab"][data-tab="check"]'); await sleep(180); } },
+  { name: '详情 · 提案', go: async () => { await tour.list(); click('[data-action="open"][data-id="示例书"]'); await sleep(420); click('[data-action="detail-tab"][data-tab="proposals"]'); await sleep(180); } },
+  { name: '详情 · 批量', go: async () => { await tour.list(); click('[data-action="open"][data-id="示例书"]'); await sleep(420); click('[data-action="detail-tab"][data-tab="batch"]'); await sleep(180); } },
   { name: '详情 · 章节听书', go: async () => { await tour.list(); click('[data-action="open"][data-id="示例书"]'); await sleep(420); click('[data-action="detail-tab"][data-tab="chapters"]'); await sleep(220); } },
-  // 世界书要自己走完「回列表 → 开书 → 基本信息 → 进世界书」四步：
+  // 世界书要自己走完「回列表 → 开书 → 写作台 → 进世界书」四步：
   // 直接调 tour.lore() 会在别的视图上点空（tour 的导航前摇只在它自己的处理器里）
-  { name: '世界书', go: async () => { await tour.list(); click('[data-action="open"][data-id="示例书"]'); await sleep(420); click('[data-action="detail-tab"][data-tab="info"]'); await sleep(180); click('[data-action="goto-lorebook"]'); await sleep(260); } },
+  { name: '世界书', go: async () => { await tour.list(); click('[data-action="open"][data-id="示例书"]'); await sleep(420); click('[data-action="detail-tab"][data-tab="write"]'); await sleep(180); click('[data-action="goto-lorebook"]'); await sleep(260); } },
   { name: '设置', go: async () => { await tour.settings(); } },
 ];
 
@@ -579,7 +592,7 @@ const sweep = async () => {
 
       // 让点击"有意义"的前置：切标签/进设置这类，若已经停在目标态，点了当然没变化
       if (action === 'detail-tab') {
-        const otherTab = tab === 'info' ? 'chapters' : 'info';
+        const otherTab = tab === 'write' ? 'chapters' : 'write';
         const other = frame.querySelector('[data-action="detail-tab"][data-tab="' + otherTab + '"]');
         if (other) { other.click(); await sleep(300); }
       } else if (action === 'goto-settings') {

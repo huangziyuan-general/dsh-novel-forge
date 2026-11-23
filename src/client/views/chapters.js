@@ -20,7 +20,7 @@ export function ChapterListView({ state: s }) {
 			icon: '🎧',
 			title: '这本书还没有章节',
 			hint: '在会话里让 AI 调 novel_write_chapter 开写，写完这里就会出现目录，可以朗读与连播。',
-			action: [Btn({ size: 'sm', action: 'back' }, '← 返回基本信息')],
+			action: [Btn({ size: 'sm', action: 'back' }, '← 返回写作台')],
 		});
 	}
 

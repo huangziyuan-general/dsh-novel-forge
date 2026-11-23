@@ -60,11 +60,14 @@ DeepSeek Harness（DSH）的中文长篇写作插件。它不是「提示词合�
 
 | | |
 | --- | --- |
-| **项目列表**<br><img src="assets/mockups/png/dark-1-项目列表.png" width="100%"> | **详情 · 基本信息**（全书体检仪表盘）<br><img src="assets/mockups/png/dark-2-详情-基本信息.png" width="100%"> |
-| **润色守卫拦下**（核心卖点：代码拒绝，理由给全）<br><img src="assets/mockups/png/dark-5-润色守卫拦下.png" width="100%"> | **批量起草**（并发生成·串行过门禁·断点续跑）<br><img src="assets/mockups/png/dark-6-批量起草.png" width="100%"> |
-| **章节听书**<br><img src="assets/mockups/png/dark-3-章节听书.png" width="100%"> | **世界书**<br><img src="assets/mockups/png/dark-4-世界书.png" width="100%"> |
+| **详情 · 资料**（默认首屏：档案/大纲/角色卡/设定/时间线）<br><img src="assets/mockups/png/dark-2b-详情-资料.png" width="440"> | **详情 · 写作**（写章/编辑/字数，紧邻资料）<br><img src="assets/mockups/png/dark-2-详情-写作台.png" width="440"> |
+| **项目列表**<br><img src="assets/mockups/png/dark-1-项目列表.png" width="440"> | **润色守卫拦下**（核心卖点：代码拒绝，理由给全）<br><img src="assets/mockups/png/dark-5-润色守卫拦下.png" width="440"> |
+| **批量起草**（并发生成·串行过门禁·断点续跑）<br><img src="assets/mockups/png/dark-6-批量起草.png" width="440"> | **章节听书**<br><img src="assets/mockups/png/dark-3-章节听书.png" width="440"> |
+| **世界书**<br><img src="assets/mockups/png/dark-4-世界书.png" width="440"> | |
 
 > 以上是 `lib/client.js` 的**真实渲染**（非手绘 mock）：`npm run preview` 生成预览页后跑 `assets/mockups/shoot-real.cjs` 即可复现，浅色/深色两套随宿主主题。
+>
+> 详情页按写作工作流分六个标签：**资料 / 写作 / 体检 / 提案 / 批量 / 章节**，资料置首且为默认首屏。「资料」放档案、大纲、角色卡、设定与账本时间线（查阅物），「体检」只放创作驾驶舱、全书体检与黄金三章诊断（核对结果）。原来九张卡片平铺在一个「基本信息」里，写章编辑排第 8 位；现在面包屑与标签栏吸顶，切标签自动回到内容顶部。
 
 > 看完了演示觉得有用？这就是它每天在你写长篇时替你挡下的事。顺手点个 ⭐ 让更多人看见：
 > [github.com/huangziyuan-general/dsh-novel-forge](https://github.com/huangziyuan-general/dsh-novel-forge)

@@ -1,4 +1,4 @@
-// src/client/views/project-detail.js — 项目详情：两个标签（基本信息 / 章节听书）。
+// src/client/views/project-detail.js — 项目详情：六个标签（写作 / 资料 / 体检 / 提案 / 批量 / 章节）。
 //
 // 这个页面承担三件事，顺序就是版面顺序：
 //   ① **看**：要素总览（档案/大纲/角色卡/设定/时间线）——书攒了什么（views/overview.js）
@@ -35,7 +35,10 @@ function Segmented({ tab }) {
 			//（底色若内联，选中项一悬停就会丢掉"选中"的样子）。
 			'data-nf-seg': '1', 'data-active': active ? '1' : '0',
 			style: {
-				flex: '1 1 0', padding: `${space.xs + 1}px ${space.md}px`,
+				// 六个标签挤在窄侧栏：横向 padding 收到 6px，且强制不折行。
+				// 折成「写 / 作」两行会让标签认不出来（实测 8px padding 必折）。
+				flex: '1 1 0', padding: `${space.xs + 1}px ${space.sm}px`,
+				whiteSpace: 'nowrap',
 				border: 'none', borderRadius: '7px', cursor: 'pointer',
 				fontFamily: 'inherit', fontSize: font.small,
 				fontWeight: active ? weight.semibold : weight.normal,
@@ -47,7 +50,14 @@ function Segmented({ tab }) {
 			display: 'flex', gap: '2px', padding: '2px',
 			borderRadius: '9px', background: color.inset,
 		},
-	}, item('info', '📋 基本信息'), item('chapters', '🎧 章节听书'));
+	},
+		item('assets', '📋 资料'),
+		item('write', '✍️ 写作'),
+		item('check', '🩺 体检'),
+		item('proposals', '✅ 提案'),
+		item('batch', '⚡ 批量'),
+		item('chapters', '🎧 章节'),
+	);
 }
 
 /** 会话疲劳横幅（0.15.1）：服务端按当前会话聚合的首稿趋势——退化时提醒换会话。
@@ -177,7 +187,14 @@ export function BatchRecordsView({ checkpoint }) {
 export function RecoveryCandidatesView({ candidates }) {
 	const rows = Array.isArray(candidates) ? candidates : [];
 	if (rows.length === 0) return null;
-	return Fold({ title: `失败正文恢复（${rows.length}）`, open: true },
+	return Card({ pad: space.md },
+		h('div', {
+			style: {
+				fontWeight: weight.semibold, fontSize: font.small, color: color.text,
+				borderLeft: `3px solid ${tint(color.accent, 45)}`,
+				paddingLeft: space.sm, lineHeight: 1.4, marginBottom: space.md,
+			},
+		}, `失败正文恢复（${rows.length}）`),
 		h('div', { style: { ...hintStyle, fontSize: font.caption, marginBottom: space.sm } },
 			'候选只来自失败或被驳回的生成；载入编辑器后仍需人工检查与保存，绝不会自动成为正文。'),
 		...rows.map((candidate) => h('div', { key: candidate.id, style: { marginBottom: space.sm } },
@@ -232,12 +249,13 @@ export function ProjectDetailView({ state: s }) {
 						'把已有信号折叠成一个判断：现在该继续写、改体检、收大纲欠账，还是处理提案。')
 					: h('div', { style: { marginTop: space.md } },
 						h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: space.sm, marginBottom: space.sm } },
-							StatTile({ value: dash.progress.chapterCount, label: '已写章' }),
-							StatTile({ value: dash.progress.nextChapter, label: '下一章', tone: 'accent' }),
-							StatTile({ value: dash.quality.errors, label: '硬伤', tone: dash.quality.errors > 0 ? 'danger' : 'ok' }),
-							StatTile({ value: dash.quality.warnings, label: '警告', tone: dash.quality.warnings > 0 ? 'warn' : 'neutral' }),
-							StatTile({ value: dash.outline.overdue, label: '欠账候选', tone: dash.outline.overdue > 0 ? 'warn' : 'neutral' }),
-							StatTile({ value: dash.proposals.pending, label: '待批提案', tone: dash.proposals.pending > 0 ? 'warn' : 'neutral' }),
+							// 字段级可选链：驾驶舱是只读聚合，服务端偶发缺字段时不能让整页白屏。
+							StatTile({ value: dash.progress?.chapterCount ?? 0, label: '已写章' }),
+							StatTile({ value: dash.progress?.nextChapter ?? '?', label: '下一章', tone: 'accent' }),
+							StatTile({ value: dash.quality?.errors ?? 0, label: '硬伤', tone: (dash.quality?.errors ?? 0) > 0 ? 'danger' : 'ok' }),
+							StatTile({ value: dash.quality?.warnings ?? 0, label: '警告', tone: (dash.quality?.warnings ?? 0) > 0 ? 'warn' : 'neutral' }),
+							StatTile({ value: dash.outline?.overdue ?? 0, label: '欠账候选', tone: (dash.outline?.overdue ?? 0) > 0 ? 'warn' : 'neutral' }),
+							StatTile({ value: dash.proposals?.pending ?? 0, label: '待批提案', tone: (dash.proposals?.pending ?? 0) > 0 ? 'warn' : 'neutral' }),
 						),
 						h('div', { style: { display: 'flex', flexDirection: 'column', gap: space.xs } },
 							...(dash.actions ?? []).map((a, i) => h('div', {
@@ -256,11 +274,11 @@ export function ProjectDetailView({ state: s }) {
 								h('span', { style: { flex: '1 1 auto', fontSize: font.small, lineHeight: 1.7 } }, a.text),
 							))),
 						h('div', { style: { ...hintStyle, fontSize: font.caption, marginTop: space.sm } },
-							`平台口径：${dash.platform.charMin ?? '?'}–${dash.platform.charMax ?? '?'} 字（${dash.charSourceLabel ?? '默认'}）`),
+							`平台口径：${dash.platform?.charMin ?? '?'}–${dash.platform?.charMax ?? '?'} 字（${dash.charSourceLabel ?? '默认'}）`),
 						dash.ladders?.present && dash.ladders.flagged.length > 0
 							? h('div', { style: { marginTop: space.sm, paddingTop: space.sm, borderTop: `1px solid ${color.border1}` } },
 								h('div', { style: { fontWeight: weight.semibold, fontSize: font.small, marginBottom: space.xs } },
-									`🪜 进度阶梯（第 ${dash.progress.maxChapter} 章时点：${dash.ladders.overdue} 线逾期 · ${dash.ladders.stalled} 线停滞）`),
+									`🪜 进度阶梯（第 ${dash.progress?.maxChapter ?? '?'} 章时点：${dash.ladders.overdue} 线逾期 · ${dash.ladders.stalled} 线停滞）`),
 								h('div', { style: stackStyle(space.xs) },
 									...dash.ladders.flagged.map((f, i) => h('div', { key: i, style: stackStyle(space.xs) },
 										h('div', { style: { fontSize: font.small, fontWeight: weight.medium } }, f.name),
@@ -639,9 +657,15 @@ h('span', { style: { flex: '1 1 auto' } }),
 	// ── 批量起草（D2：并发生成、串行提交，每章仍过同一套门禁）──
 	const batch = s.batchResult;
 	const batchCheckpoint = s.batchResult?.checkpoint ?? s.detail?.batchCheckpoint;
-	const batchBlock = Fold({
-		title: `⚡ 批量起草（从第 ${s.batchFrom ?? nextNo} 章起 ${s.batchCount ?? 3} 章）`,
-	},
+	// 批量起草已独占一个 tab，不再折叠：标题 + 内容直接平铺，省掉「展开」这一步。
+	const batchBlock = Card({ pad: space.md },
+		h('div', {
+			style: {
+				fontWeight: weight.semibold, fontSize: font.small, color: color.text,
+				borderLeft: `3px solid ${tint(color.accent, 45)}`,
+				paddingLeft: space.sm, lineHeight: 1.4, marginBottom: space.md,
+			},
+		}, `⚡ 批量起草（从第 ${s.batchFrom ?? nextNo} 章起 ${s.batchCount ?? 3} 章）`),
 		h('div', { style: { ...hintStyle, fontSize: font.caption, lineHeight: 1.7, marginBottom: space.md } },
 			'并发生成、串行提交：每一章照样过机审、内容门禁、账本、契约指标，',
 			'单章被拦下不影响其它章。没有细纲或细纲未批准的章会直接被挡（可勾选强制）。'),
@@ -740,25 +764,55 @@ h('span', { style: { flex: '1 1 auto' } }),
 		s.charsError ? h('div', { style: { ...errStyle, fontSize: font.small, marginTop: space.xs } }, s.charsError) : null,
 	);
 
-	// ── 标签一：基本信息 ──
-	// 注意别在这里套 Section 标题：卡片自己已经带标题了，套一层会得到
+	// ── 六个标签按工作流拆开 ──
+	// 旧版把 9 张卡片平铺在一个「基本信息」里：驾驶舱/体检/诊断/提案/编辑/批量
+	// 全挤成一列，写章编辑排第 8 位，用户得滚过半屏才够得到正文（截图实证）。
+	// 现在按「资料 → 写 → 查 → 批 → 批量 → 读」分栏，每栏 1–4 张卡，首屏即资料。
+	// 「资料」与「体检」分开：大纲/角色卡是查阅物，体检是核对结果，混在一起名不副实。
+	// 注意别在卡片外套 Section 标题：卡片自己已经带标题了，套一层会得到
 	// 「✍️ 本章 / ✍️ 本章编辑」这种双标题。
-	const infoView = h('div', { style: stackStyle(space.lg) },
-		dashboardBlock,
-		ProjectOverviewView({ state: s }),
-		charLimitsBlock,
-		continuityBlock,
-		diagnosisBlock,
-		proposalsBlock,
-		ExtractionProposalView({ state: s }),
-		editBlock,
-		batchBlock,
-	);
+	let tabView;
+	switch (s.detailTab) {
+		case 'assets':
+			// 档案 / 大纲 / 角色卡 / 设定 / 账本时间线 / 伏笔 —— 是写作时查阅的**资料**，
+			// 不是质量检查结果；放进「体检」会让标签名和内容对不上。
+			tabView = ProjectOverviewView({ state: s });
+			break;
+		case 'check':
+			// 只留「判断与核对」：驾驶舱给结论，体检/诊断给证据。
+			tabView = h('div', { style: stackStyle(space.lg) },
+				dashboardBlock, continuityBlock, diagnosisBlock);
+			break;
+		case 'proposals':
+			tabView = h('div', { style: stackStyle(space.lg) },
+				proposalsBlock, ExtractionProposalView({ state: s }));
+			break;
+		case 'batch':
+			tabView = batchBlock;
+			break;
+		case 'chapters':
+			tabView = ChapterListView({ state: s });
+			break;
+		case 'write':
+		default:
+			// 最高频的两张卡放最前：本章编辑（写章/保存/润色/审稿/稿纸）与字数区间。
+			tabView = h('div', { style: stackStyle(space.lg) }, editBlock, charLimitsBlock);
+	}
+
+	// 面包屑 + 标签栏吸顶：滚到批量起草底部时仍能一键切回写作台/返回列表。
+	// 背景用 color.base（宿主 bg-base token），否则下方卡片会从透明处透上来。
+	const pinned = h('div', {
+		style: {
+			position: 'sticky', top: 0, zIndex: 3,
+			background: color.base,
+			display: 'flex', flexDirection: 'column', gap: space.sm,
+			padding: `2px 0 ${space.sm}px`,
+		},
+	}, crumb, Segmented({ tab: s.detailTab }));
 
 	return h('div', { style: stackStyle(space.lg) },
-		crumb,
+		pinned,
 		SessionFatigueBanner({ session: s.detail?.session, copied: s.copiedHandoff === true, rotatePending: s.rotatePending === true }),
-		Segmented({ tab: s.detailTab }),
-		s.detailTab === 'chapters' ? ChapterListView({ state: s }) : infoView,
+		tabView,
 	);
 }

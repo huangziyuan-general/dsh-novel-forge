@@ -58,11 +58,14 @@ The right-sidebar "Forge" panel, rendered from the real `lib/client.js` (these a
 
 | | |
 | --- | --- |
-| **Project list**<br><img src="assets/mockups/png/dark-1-项目列表.png" width="100%"> | **Detail · Overview** (full-book health dashboard)<br><img src="assets/mockups/png/dark-2-详情-基本信息.png" width="100%"> |
-| **Polish guard rejects** (core selling point: code says no, with full reasons)<br><img src="assets/mockups/png/dark-5-润色守卫拦下.png" width="100%"> | **Batch drafting** (concurrent gen · serial gating · checkpoint resume)<br><img src="assets/mockups/png/dark-6-批量起草.png" width="100%"> |
-| **Chapter text-to-speech**<br><img src="assets/mockups/png/dark-3-章节听书.png" width="100%"> | **Worldbook**<br><img src="assets/mockups/png/dark-4-世界书.png" width="100%"> |
+| **Detail · Assets** (default landing: archive / outline / character cards / settings / timeline)<br><img src="assets/mockups/png/dark-2b-详情-资料.png" width="440"> | **Detail · Writing** (write / edit / word count, next to Assets)<br><img src="assets/mockups/png/dark-2-详情-写作台.png" width="440"> |
+| **Project list**<br><img src="assets/mockups/png/dark-1-项目列表.png" width="440"> | **Polish guard rejects** (core selling point: code says no, with full reasons)<br><img src="assets/mockups/png/dark-5-润色守卫拦下.png" width="440"> |
+| **Batch drafting** (concurrent gen · serial gating · checkpoint resume)<br><img src="assets/mockups/png/dark-6-批量起草.png" width="440"> | **Chapter text-to-speech**<br><img src="assets/mockups/png/dark-3-章节听书.png" width="440"> |
+| **Worldbook**<br><img src="assets/mockups/png/dark-4-世界书.png" width="440"> | |
 
 > The screenshots above are **real renders** of `lib/client.js` (not hand-drawn mocks): run `npm run preview` to generate the preview page, then `assets/mockups/shoot-real.cjs` to reproduce — both light and dark themes track the host.
+>
+> The detail page is split into six tabs by workflow: **Assets / Writing / Health / Proposals / Batch / Chapters** — Assets is first and the default landing screen. "Assets" holds the reference material (archive, outline, character cards, settings, ledger & timeline); "Health" holds only the verification results (creation cockpit, full-book checkup, golden-three-chapter diagnosis). The breadcrumb and tab bar stick to the top, and switching tabs scrolls back to the content top.
 
 ## AI writing failure modes
 

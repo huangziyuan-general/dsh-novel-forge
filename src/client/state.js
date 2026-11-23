@@ -68,8 +68,13 @@ export function initialState() {
 		batchBusy: false, batchResult: null,
 		// 小说基本要素（基本信息标签：档案/大纲/角色卡/设定/账本时间线）
 		elements: null, elementsLoading: false,
-		// 详情页两个标签：'info'（基本信息）| 'chapters'（章节听书）
-		detailTab: 'info',
+		// 详情页六个标签（2026-11-23 重排，资料置首）：
+		// 'assets'（资料：档案/大纲/角色卡/设定/时间线，默认首屏）
+		// | 'write'（写作）| 'check'（体检：驾驶舱/全书体检/三章诊断）
+		// | 'proposals'（提案）| 'batch'（批量）| 'chapters'（章节）。
+		// 原设计只有 'info'|'chapters'，9 个功能卡片全堆在 info 里，写章编辑
+		// 排第 8 位——用户要滚过驾驶舱/体检/诊断才够得到正文。
+		detailTab: 'assets',
 		chapterList: [], chapterListLoading: false,
 		playback: { status: 'idle', currentNo: null },
 		// 阅读器（0.13.1）：点目录行的 📖 展开正文。{ no, title, text, loading } | null

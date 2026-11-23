@@ -7,12 +7,12 @@
     "url": "https://github.com/huangziyuan-general/dsh-novel-forge",
     "source": "github"
   },
-  "version": "1.9.2",
+  "version": "1.9.3",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "dsh-novel-forge",
-      "version": "1.9.2",
+      "version": "1.9.3",
       "transport": {
         "type": "stdio"
       },

@@ -276,7 +276,7 @@ export function ForgePanel(props) {
 				},
 			}, '⚙'),
 		),
-		h('div', { style: bodyStyle },
+		h('div', { 'data-nf-body': '1', style: bodyStyle },
 			s.view === 'projects' ? h(ProjectListView, { state: s }) : null,
 			s.view === 'detail' ? h(ProjectDetailView, { state: s }) : null,
 			s.view === 'lorebook' ? h(LorebookView, { state: s }) : null,

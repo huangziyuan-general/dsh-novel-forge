@@ -595,7 +595,7 @@ test('★ 平台审稿抽样能落到动作面：打开命中章；未保存草�
     };
 
     await controller.handleAction('review-open-chapter', { dataset: { id: '3' } });
-    assert.equal(controller.state.detailTab, 'info', '打开审稿章后应回到本章编辑区');
+    assert.equal(controller.state.detailTab, 'write', '打开审稿章后应回到写作台编辑区');
     assert.equal(controller.state.chapterNo, 3);
     assert.equal(controller.state.draft, '第三章正文');
     assert.ok(seq.requests.some((r) => /\/chapters\/3($|\?)/.test(r.url)), '必须真的载入命中章');
@@ -651,7 +651,7 @@ test('★ 事件代理：attach 后 data-action 能走通，detach 后不再响�
     assert.equal(seq.requests.length, count, 'detach 之后不再响应（否则面板卸载后还留着一份监听）');
 });
 
-// ── 章节听书（0.6.0）：两个标签 + 语音连播 ──
+// ── 章节听书（0.6.0）：六个标签 + 语音连播 ──
 
 /** 朗读对象构造器（镜像真机：Web Speech 只收 SpeechSynthesisUtterance 实例）。 */
 class SpeechSynthesisUtterance {
@@ -736,12 +736,18 @@ test('★ 听书目录：openProject 拉章节目录；两个标签可来回切'
     assert.ok(requests.some((r) => /\/projects\/示例书\/chapters($|\?)/.test(r.url)),
         '★ 打开书必须拉章节目录（它既是听书清单，也是连播的边界）');
     assert.equal(controller.state.chapterList.length, 3, '目录落到 state.chapterList');
-    assert.equal(controller.state.detailTab, 'info', '默认落在「基本信息」标签');
+    assert.equal(controller.state.detailTab, 'assets', '默认落在「资料」标签');
 
     await controller.handleAction('detail-tab', { dataset: { tab: 'chapters' } });
-    assert.equal(controller.state.detailTab, 'chapters', '★ 能切到「章节听书」标签');
-    await controller.handleAction('detail-tab', { dataset: { tab: 'info' } });
-    assert.equal(controller.state.detailTab, 'info', '能切回「基本信息」');
+    assert.equal(controller.state.detailTab, 'chapters', '★ 能切到「章节」标签');
+    await controller.handleAction('detail-tab', { dataset: { tab: 'write' } });
+    assert.equal(controller.state.detailTab, 'write', '能切回「写作台」');
+    for (const tab of ['assets', 'check', 'proposals', 'batch']) {
+        await controller.handleAction('detail-tab', { dataset: { tab } });
+        assert.equal(controller.state.detailTab, tab, `★ 能切到「${tab}」标签`);
+    }
+    await controller.handleAction('detail-tab', { dataset: { tab: 'bogus' } });
+    assert.equal(controller.state.detailTab, 'assets', '未知 tab 回落到资料，不留空白页');
 });
 
 test('★ 未保存草稿：返回前先确认（丢弃改动才离开，取消留在原地）', async () => {
@@ -825,7 +831,7 @@ test('★ 基本要素：openProject 拉 /elements（档案/大纲/角色卡/设
     const { requests, controller } = bootBook();
     await controller.handleAction('open', { dataset: { id: '示例书' } });
     assert.ok(requests.some((r) => /\/projects\/示例书\/elements($|\?)/.test(r.url)),
-        '★ 打开书必须拉基本要素（基本信息标签就是要素总览）');
+        '★ 打开书必须拉基本要素（体检标签里的要素总览）');
     const el = controller.state.elements;
     assert.ok(el && el.meta, '要素落到 state.elements');
     assert.equal(el.meta.title, '示例书');
@@ -1566,7 +1572,7 @@ test('★ 审稿项筛选：真实复选框驱动选择，未选项与指导按�
     const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
     Object.assign(controller.state, {
         selected: '书A', chapterNo: 1, chapterList: [{ no: 1, title: '一', chars: 100 }],
-        detail: { chapters: { 1: {} } }, draftModified: false,
+        detail: { chapters: { 1: {} } }, draftModified: false, detailTab: 'write',
     });
     await controller.handleAction('review-options', { dataset: {} });
     assert.deepEqual(controller.state.reviewSelectedIssueIds, ['I1', 'I2']);
@@ -1604,7 +1610,7 @@ test('★ 持久批注：真实解决/重开按钮提交 data-id 与 data-choice
         selected: '书A', chapterNo: 2, chapterList: [{ no: 2, title: '二', chars: 100 }],
         detail: { chapters: { 2: {} } }, reviewVisible: true, reviewIssues: [
             { id: 'A1', status: 'open', paragraph: 3, quote: '需要处理的段落', issues: ['段落需要复核'] },
-        ], reviewSelectedIssueIds: ['A1'],
+        ], reviewSelectedIssueIds: ['A1'], detailTab: 'write',
     });
     const firstView = mod.exports.__internals.ProjectDetailView({ state: controller.state });
     const resolve = collect(firstView, (element) => element.props?.['data-action'] === 'annotation-status'
@@ -1721,7 +1727,7 @@ test('★ 前章影响：真实按钮取只读报告，直接与不可判定分�
     } }]);
     const mod = loadClient(createDom(), BUNDLE, { fetch: seq.fetch });
     const controller = mod.exports.__internals.createForgeController({ sessionId: 's1' });
-    Object.assign(controller.state, { selected: '书A', chapterNo: 1, chapterList: [{ no: 1 }], detail: { chapters: { 1: {} } } });
+    Object.assign(controller.state, { selected: '书A', chapterNo: 1, chapterList: [{ no: 1 }], detail: { chapters: { 1: {} } }, detailTab: 'write' });
     await controller.handleAction('impact', { dataset: {} });
     assert.ok(seq.requests[0].url.includes('/chapters/1/impact'));
     assert.equal(controller.state.impact.affected[0].kind, 'direct');
@@ -2232,7 +2238,7 @@ test('★ 动作契约对账：视图发出的每个 data-action 控制器都有
         renaming: false, cloning: false, listDeleteId: '书A', listDeleting: false, busy: false,
         sessionScope: 'session', sessionFallback: false,
         // 详情 / 通用
-        selected: '书A', detail: { title: '书A', stage: 'topic', chapters: { 1: {} } }, detailTab: 'info',
+        selected: '书A', detail: { title: '书A', stage: 'topic', chapters: { 1: {} } }, detailTab: 'write',
         chapterList: [{ no: 1, title: '第一章', chars: 20, version: 2 }], chapterListLoading: false,
         chapterNo: 1, draft: '正文', draftVersion: 0, draftModified: true,
         proposals: [{ id: 'P1', status: 'pending', chapter: 1, title: '第一章' }],
@@ -2271,7 +2277,11 @@ test('★ 动作契约对账：视图发出的每个 data-action 控制器都有
     // 每个视图都要真渲染（播放态/空目录各来一份，把三条播放分支都逼出来）。
     const renders = [
         ['ProjectListView', () => I.ProjectListView({ state: sink })],
-        ['ProjectDetailView(基本信息)', () => I.ProjectDetailView({ state: { ...sink, detailTab: 'info' } })],
+        ['ProjectDetailView(写作)', () => I.ProjectDetailView({ state: { ...sink, detailTab: 'write' } })],
+        ['ProjectDetailView(资料)', () => I.ProjectDetailView({ state: { ...sink, detailTab: 'assets' } })],
+        ['ProjectDetailView(体检)', () => I.ProjectDetailView({ state: { ...sink, detailTab: 'check' } })],
+        ['ProjectDetailView(提案)', () => I.ProjectDetailView({ state: { ...sink, detailTab: 'proposals' } })],
+        ['ProjectDetailView(批量)', () => I.ProjectDetailView({ state: { ...sink, detailTab: 'batch' } })],
         ['ProjectDetailView(章节听书/播放中)', () => I.ProjectDetailView({ state: { ...sink, detailTab: 'chapters', playback: { status: 'playing', currentNo: 1 } } })],
         ['ChapterListView(暂停态)', () => I.ChapterListView({ state: { ...sink, playback: { status: 'paused', currentNo: 1 } } })],
         ['ChapterListView(空目录)', () => I.ChapterListView({ state: { ...sink, chapterList: [], reader: null } })],

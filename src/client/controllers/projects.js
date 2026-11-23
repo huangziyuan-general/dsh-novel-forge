@@ -148,7 +148,7 @@ export function createProjectsController(ctx) {
 		// 换书必然换章内容：使所有在途 loadChapter 的响应作废（它们的 seq 已过期）
 		const myChapter = ++seq.chapter;
 		state.selected = id; state.view = 'detail'; state.detail = null; state.chapterNo = 1;
-		state.draft = ''; state.error = ''; state.detailTab = 'info';
+		state.draft = ''; state.error = ''; state.detailTab = 'assets';
 		state.elements = null; state.discardPending = null; state.rename = null; state.listDeleteId = null; state.clone = null;
 		// 字数卡与报错都属于「上一本书」：不清就会把 A 书的 400 挂在 B 书头上。
 		// charsValue 清成 **undefined**（不是 ''）：'' 是「用户明确清除」，此处只是
@@ -554,7 +554,7 @@ export function createProjectsController(ctx) {
 			state.draftModified = state.draft !== state.baseline;
 			state.undoStack = [];
 			state.saveBlocked = '';
-			state.detailTab = 'info';
+			state.detailTab = 'write';
 			state.notice = `已载入第 ${candidate.chapter} 章恢复候选（${candidate.chars} 字）——尚未写入正文；检查后继续补完并手动保存。${candidate.stale ? '该章后来已有正文，保存会生成新版本。' : ''}`;
 		} catch (error) { if (mine === seq.chapter) state.error = String(error?.message ?? error); }
 		notify();

@@ -57,10 +57,15 @@ export function createEventsController(ctx) {
 				if (!intentLeave({ kind: 'back' })) break;
 				await ctx.goBack(); break;
 			case 'claim': await ctx.claimProject(target.dataset.id || null); break;
-			// 详情页两个标签：基本信息 / 章节听书
+			// 详情页六个标签：资料 / 写作 / 体检 / 提案 / 批量 / 章节
 			case 'detail-tab': {
-				const tab = target.dataset.tab === 'chapters' ? 'chapters' : 'info';
+				const wanted = target.dataset.tab;
+				const tab = ['assets', 'write', 'check', 'proposals', 'batch', 'chapters'].includes(wanted)
+					? wanted : 'assets';
 				if (state.detailTab !== tab) state.detailTab = tab;
+				// 切换标签后回到内容顶部：否则从批量起草底部切回资料/写作，
+				// 视线仍停在半屏以下，会以为「新标签是空的」。
+				target.closest?.('[data-nf-body]')?.scrollTo?.(0, 0);
 				if (tab === 'chapters') await ctx.loadChapterList();
 				notify(); break;
 			}
@@ -117,7 +122,7 @@ export function createEventsController(ctx) {
 						notify();
 						break;
 					}
-					state.detailTab = 'info';
+					state.detailTab = 'write';
 					if (no === state.chapterNo) break;
 					if (!intentLeave({ kind: 'chapter', no })) break;
 					await ctx.loadChapter(no);
