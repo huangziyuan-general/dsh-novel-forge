@@ -8,6 +8,7 @@
 import { h } from '../react.js';
 import { color, space, font, weight, footerStyle, stackStyle } from '../styles.js';
 import { Card, Btn, Chip, KV, Section } from '../ui.js';
+import { Ico } from '../icons.js';
 
 /** 能力行：左侧打勾/点，右侧一句人话。 */
 function cap(can, text) {
@@ -22,14 +23,14 @@ export function SettingsView() {
 
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm } },
 			Btn({ variant: 'ghost', size: 'sm', action: 'back-from-settings' }, '← 返回'),
-			h('span', { style: { fontWeight: weight.semibold, fontSize: font.lead } }, '⚙ 设置'),
+			h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: weight.semibold, fontSize: font.lead } }, Ico('settings', { size: 16 }), '设置'),
 			h('span', { style: { flex: '1 1 auto' } }),
 			Chip({}, 'v' + (window.__NOVEL_FORGE_VERSION__ || '?')),
 		),
 
 		// ── 注册了什么 ──
 		Card({ tone: 'plain' },
-			Section({ icon: '🧩', title: '已装配' },
+			Section({ icon: Ico('layers', { size: 13 }), title: '已装配' },
 				h('div', { style: stackStyle(space.sm) },
 					// ⚠️ 不写死工具数：注册数随版本变（0.13.x 已从 17 涨到 20+），
 					// 数字一落字就是下一版必过期的漂移炸弹（common.js 注释同款教训）。
@@ -44,7 +45,7 @@ export function SettingsView() {
 
 		// ── 面板能做什么 / 不能做什么 ──
 		Card({ tone: 'plain' },
-			Section({ icon: '🖱', title: '这个面板能直接做' },
+			Section({ icon: Ico('target', { size: 13 }), title: '这个面板能直接做' },
 				h('div', { style: stackStyle(space.xs) },
 					cap(true, '读章、改稿、存稿、导出、删除、改名、认领旧书'),
 					cap(true, '一键润色 / 校对 —— 走旁路引擎，产物是提案，你点「应用」才生效'),
@@ -55,7 +56,7 @@ export function SettingsView() {
 				),
 			),
 			h('div', { style: { marginTop: space.lg } },
-				Section({ icon: '💬', title: '只能回会话里做' },
+				Section({ icon: Ico('book', { size: 13 }), title: '只能回会话里做' },
 					h('div', { style: stackStyle(space.xs) },
 						// M16 修复：本清单说「写章 / 结构诊断面板做不了」早就不成立——
 						// 面板有「写单章」（走批量端点，同一门禁链）和「结构诊断」按钮（纯词表打分，零 token）

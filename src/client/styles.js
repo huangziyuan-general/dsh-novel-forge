@@ -144,28 +144,36 @@ export const bodyStyle = {
 
 // ── ③ 组件样式 ──────────────────────────────────────────────────────────────
 
-/** 面板头部：品牌块 + 标题/副题 + 右侧 chip 组。 */
+/** 面板头部：品牌块 + 标题/副题 + 右侧 chip 组。
+ *  1.10.0：加一道极淡的顶部高光与更沉的底部分隔，让头部像一块「仪表台上沿」
+ *  而不是一条普通分割线——品牌区是整块面板第一眼看到的地方，值得单独做质感。 */
 export const headerStyle = {
 	display: 'flex', alignItems: 'center', gap: space.md,
 	padding: `${space.lg}px ${space.lg}px`,
 	flex: '0 0 auto',
 	borderBottom: `1px solid ${color.border2}`,
+	// 顶缘一道随主题变化的微光（浅色近乎不可见，深色勾出金属边）
+	boxShadow: `inset 0 1px 0 ${tint('#ffffff', 7)}`,
+	background: tint(color.text, 2.5),
 };
 
-/** 头部品牌图标块（28×28 圆角方块，渐变底 + 微高光）。字色走 onGold：
- *  深色主题下底是亮金 #f3a62a，白图标只剩 ≈2:1，深字两主题都 ≥3:1（图形线）。 */
+/** 头部品牌图标块（32×32 圆角方块，渐变底 + 内圈 + 外阴影）。字色走 onGold：
+ *  深色主题下底是亮金 #f3a62a，白图标只剩 ≈2:1，深字两主题都 ≥3:1（图形线）。
+ *  1.10.0 从 28 放大到 32 并加内圈：logo 是记忆点，太小撑不起「专业产品」的第一眼。 */
 export const brandMarkStyle = {
-	flex: 'none', width: '28px', height: '28px', borderRadius: radius.md,
+	flex: 'none', width: '32px', height: '32px', borderRadius: radius.md,
 	display: 'flex', alignItems: 'center', justifyContent: 'center',
-	fontSize: '15px',
-	background: `linear-gradient(135deg, ${tint(color.accent, 22)}, ${color.accent})`,
-	color: color.onGold, boxShadow: ELEV1,
+	background: `linear-gradient(145deg, ${color.brandTop}, ${color.brand} 62%, ${color.brandDeep})`,
+	color: color.onGold,
+	boxShadow: `${ELEV1}, inset 0 1px 0 rgba(255,255,255,.35), inset 0 0 0 1px ${tint(color.onGold, 18)}`,
 };
 
-/** 头部标题（一行：标题 + 版本 chip）。 */
-export const titleStyle = { fontWeight: weight.bold, fontSize: font.title, letterSpacing: '.2px' };
+/** 头部标题（一行：标题 + 版本 chip）。字距拉开，小字号也显得从容。 */
+export const titleStyle = {
+	fontWeight: weight.bold, fontSize: font.lead, letterSpacing: '1.4px',
+};
 /** 头部副题（当前书名 / 会话范围）。 */
-export const subtitleStyle = { color: color.text3, fontSize: font.caption, marginTop: '1px' };
+export const subtitleStyle = { color: color.text3, fontSize: font.caption, marginTop: '2px', letterSpacing: '.2px' };
 
 /** 版本 chip。 */
 export const badgeStyle = {
@@ -193,7 +201,9 @@ export const card = ({ tone = 'plain', pad = space.lg } = {}) => {
 		flex: 'none', boxSizing: 'border-box',
 		border: `1px solid ${t.border}`, background: t.background,
 		borderRadius: radius.lg, padding: `${pad}px`,
-		boxShadow: ELEV1,
+		// 顶缘一道随主题翻转的高光（浅色=白高光、深色=微弱亮边），
+		// 让卡片有「玻璃厚度」而非一张色块——商业感的来源之一就是这道 1px。
+		boxShadow: `${ELEV1}, inset 0 1px 0 ${tint('#ffffff', 6)}`,
 	};
 };
 

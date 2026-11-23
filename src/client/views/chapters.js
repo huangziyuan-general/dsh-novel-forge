@@ -9,6 +9,7 @@
 import { h } from '../react.js';
 import { color, space, font, weight, hintStyle, tint, stackStyle } from '../styles.js';
 import { Card, Btn, Chip, Empty, Stat, Feedback } from '../ui.js';
+import { Ico } from '../icons.js';
 
 export function ChapterListView({ state: s }) {
 	const pb = s.playback ?? { status: 'idle', currentNo: null };
@@ -17,7 +18,7 @@ export function ChapterListView({ state: s }) {
 
 	if (!s.chapterList.length) {
 		return Empty({
-			icon: '🎧',
+			icon: Ico('headphones', { size: 26 }),
 			title: '这本书还没有章节',
 			hint: '在会话里让 AI 调 novel_write_chapter 开写，写完这里就会出现目录，可以朗读与连播。',
 			action: [Btn({ size: 'sm', action: 'back' }, '← 返回写作台')],
@@ -40,7 +41,7 @@ export function ChapterListView({ state: s }) {
 					: Btn({ variant: 'primary', size: 'sm', action: 'playback-resume' }, '▶ 继续'),
 			Btn({ variant: 'ghost', size: 'sm', action: 'playback-stop', disabled: !playing && !paused }, '⏹ 停止'),
 			h('span', { style: { flex: '1 1 auto' } }),
-			Stat({ icon: '📄', value: s.chapterList.length, unit: '章' }),
+			Stat({ icon: Ico('page', { size: 12 }), value: s.chapterList.length, unit: '章' }),
 			Stat({ icon: '·', value: totalChars.toLocaleString(), unit: '字' }),
 		),
 		h('div', {
@@ -59,8 +60,8 @@ export function ChapterListView({ state: s }) {
 		Card({ tone: 'accent', pad: space.md },
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm } },
 			h('span', {
-				style: { flex: '1 1 auto', minWidth: 0, fontWeight: weight.semibold, fontSize: font.small },
-			}, `📖 第 ${s.reader.no} 章 · ${s.reader.title}`),
+				style: { flex: '1 1 auto', minWidth: 0, fontWeight: weight.semibold, fontSize: font.small, display: 'inline-flex', alignItems: 'center', gap: '6px' },
+			}, Ico('book', { size: 14 }), `第 ${s.reader.no} 章 · ${s.reader.title}`),
 			Btn({ variant: 'secondary', size: 'sm', action: 'play-from', id: s.reader.no, title: `从第 ${s.reader.no} 章开始听` }, '▶ 朗读本章'),
 			Btn({ variant: 'ghost', size: 'sm', action: 'close-reader', title: '收起阅读器', ariaLabel: '收起阅读器' }, '✕'),
 		),

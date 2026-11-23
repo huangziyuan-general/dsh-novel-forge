@@ -127,6 +127,7 @@ export function buildCss() {
 		// rest / hover / active / selected 四态。四态都写在样式表里才不会互相打架
 		//（之前底色与字色内联，选中项一悬停就会丢掉"选中"的样子）。
 		rule(`${ROOT} [data-nf-seg]`, {
+			position: 'relative', overflow: 'hidden',
 			background: 'transparent', color: color.text3, boxShadow: 'none',
 			touchAction: 'manipulation',
 		}),
@@ -137,6 +138,13 @@ export function buildCss() {
 		rule(`${ROOT} [data-nf-seg][data-active="1"]`, {
 			background: color.surface3, color: color.text,
 			boxShadow: `inset 0 0 0 1px ${color.border2}`,
+			fontWeight: '600',
+		}),
+		// 选中项底部一道品牌金细线：让「现在在哪一栏」一眼可见，
+		// 又不用给整个 tab 上金色（收敛强调色的关键手法）。
+		rule(`${ROOT} [data-nf-seg][data-active="1"]::after`, {
+			content: '""', position: 'absolute', left: '30%', right: '30%', bottom: '2px',
+			height: '2px', borderRadius: '2px', background: color.accent,
 		}),
 
 		// ── 输入：聚焦要看得见（宿主右侧栏里全是输入框，没焦点环很难用）──

@@ -10,6 +10,7 @@ import { h } from '../react.js';
 import { sameEntryId } from '../../../lib/store.js';
 import { color, space, font, weight, hintStyle, inputStyle, stackStyle, card } from '../styles.js';
 import { Card, Btn, Chip, Empty, Mono, Feedback } from '../ui.js';
+import { Ico } from '../icons.js';
 
 export function LorebookView({ state: s }) {
 	const editing = s.loreForm.mode !== 'none';
@@ -65,7 +66,7 @@ export function LorebookView({ state: s }) {
 		// 条目列表
 		s.loreEntries.length === 0
 			? Empty({
-				icon: '📖',
+				icon: Ico('book', { size: 22 }),
 				title: '还没有世界书条目',
 				hint: '世界书是「按关键词自动注入」的设定库：写到的词一出现，对应设定就会进上下文，不必每次重复交代。',
 			})

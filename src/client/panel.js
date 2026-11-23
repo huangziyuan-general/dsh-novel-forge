@@ -27,6 +27,7 @@ import { ProjectListView } from './views/project-list.js';
 import { ProjectDetailView } from './views/project-detail.js';
 import { LorebookView } from './views/lorebook.js';
 import { SettingsView } from './views/settings.js';
+import { Ico } from './icons.js';
 // 面板根属性 + 交互态样式表（:hover/:active 只能靠样式表，内联压不过它们）
 import { PANEL_ATTR, ensureStyles } from './css.js';
 // 业务域子控制器：各自只依赖共享 ctx（state/notify/seq/player + 晚绑定的跨域动作）
@@ -243,9 +244,10 @@ export function ForgePanel(props) {
 		ref: nodeRef,
 		style: rootStyle,
 	},
-		// 品牌条：图标块 + 标题（含版本）+ 副题 + 会话范围
+		// 品牌条：logo（自绘铁砧 + 火苗，不再是系统 emoji）+ 标题 + 副题 + 会话范围
 		h('div', { style: headerStyle },
-			h('div', { style: brandMarkStyle }, '🔨'),
+			h('div', { style: brandMarkStyle },
+				Ico('forge', { size: 19, strokeWidth: 1.6 })),
 			h('div', { style: { flex: '1 1 auto', minWidth: 0 } },
 				h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm } },
 					h('span', { style: titleStyle }, '锻炉'),
@@ -273,8 +275,9 @@ export function ForgePanel(props) {
 				style: {
 					flex: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px',
 					lineHeight: 1, padding: '5px 7px', borderRadius: '8px',
+					display: 'inline-flex', alignItems: 'center',
 				},
-			}, '⚙'),
+			}, Ico('settings', { size: 15 })),
 		),
 		h('div', { 'data-nf-body': '1', style: bodyStyle },
 			s.view === 'projects' ? h(ProjectListView, { state: s }) : null,

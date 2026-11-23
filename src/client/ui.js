@@ -32,17 +32,26 @@ export function Card({ tone = 'plain', pad } = {}, ...children) {
 	return h('div', { style: pad === undefined ? card({ tone }) : card({ tone, pad }) }, ...children);
 }
 
-/** 区块标题行：左侧强调色条 + 标题 +（可选）右侧内容。 */
-export function Section({ icon = '', title, right = null } = {}, ...children) {
+/** 区块标题行：左侧方形色标 + 标题 +（可选）右侧内容。
+ *  1.10.0：色标从 3px 细线换成 6px 圆角小方块（更像状态灯/章节标记），
+ *  标题字距微开——这两处是「专业工具」和「普通表单」的分水岭。
+ *  icon 参数保留兼容：传入 SVG 元素或字符串都行，放在色标之前。 */
+export function Section({ icon = null, title, right = null } = {}, ...children) {
 	return h('div', { style: stackStyle(space.sm) },
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm } },
 			h('span', {
 				style: {
-					fontWeight: weight.semibold, fontSize: font.small, color: color.text,
-					borderLeft: `3px solid ${tint(color.accent, 45)}`,
-					paddingLeft: space.sm, lineHeight: 1.4,
+					flex: 'none', width: '6px', height: '6px', borderRadius: '2px',
+					background: color.accent, boxShadow: `0 0 0 3px ${tint(color.accent, 14)}`,
 				},
-			}, icon ? `${icon} ${title}` : title),
+			}),
+			icon ? h('span', { style: { display: 'inline-flex', color: color.text3 } }, icon) : null,
+			h('span', {
+				style: {
+					fontWeight: weight.semibold, fontSize: font.small, color: color.text,
+					letterSpacing: '.5px', lineHeight: 1.4,
+				},
+			}, title),
 			right ? h('span', { style: { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: space.xs } }, right) : null,
 		),
 		...children,

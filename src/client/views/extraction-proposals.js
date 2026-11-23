@@ -1,6 +1,7 @@
 import { h } from '../react.js';
 import { color, space, font, weight, hintStyle, inputStyle } from '../styles.js';
 import { Card, Btn, Chip } from '../ui.js';
+import { Ico } from '../icons.js';
 
 function editOf(state, proposalId, item) {
 	return state.extractionEdits?.[proposalId]?.[item.id] ?? {
@@ -14,7 +15,7 @@ export function ExtractionProposalView({ state: s }) {
 	if (proposals.length === 0) return null;
 	return Card({ tone: 'plain' },
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, marginBottom: space.sm } },
-			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small } }, '🧩 档案抽取提案'),
+			h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: weight.semibold, fontSize: font.small } }, Ico('sparkle', { size: 14 }), '档案抽取提案'),
 			h('span', { style: { ...hintStyle, fontSize: font.caption } }, '原文证据已核验；应用前可逐项编辑，未勾选项不会入库'),
 		),
 		...proposals.map((proposal) => h('div', { key: proposal.id, style: { marginBottom: space.md, padding: space.sm, borderRadius: '8px', background: color.surface2 } },

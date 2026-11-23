@@ -17,6 +17,7 @@ import {
 	inputStyle, manuscriptStyle, stackStyle, tint, rowWrapStyle,
 } from '../styles.js';
 import { Card, Btn, Chip, StatTile, Fold, Mono, Feedback } from '../ui.js';
+import { Ico } from '../icons.js';
 import { phaseLabel } from '../../../lib/phases.js';
 import { ChapterListView } from './chapters.js';
 import { ProjectOverviewView } from './overview.js';
@@ -26,7 +27,9 @@ import { ExtractionProposalView } from './extraction-proposals.js';
 
 /** 分段控件（替代并排两个描边按钮：当前项一眼看得出）。 */
 function Segmented({ tab }) {
-	const item = (value, label) => {
+	// 1.10.0：emoji → 单色线性图标。图标 13px、标签 gap 3px，
+	// 六栏在窄侧栏仍单行（实测 emoji 版同样宽度，SVG 更窄更稳）。
+	const item = (value, label, icon) => {
 		const active = tab === value;
 		return h('button', {
 			'data-action': 'detail-tab', 'data-tab': value,
@@ -42,8 +45,9 @@ function Segmented({ tab }) {
 				border: 'none', borderRadius: '7px', cursor: 'pointer',
 				fontFamily: 'inherit', fontSize: font.small,
 				fontWeight: active ? weight.semibold : weight.normal,
+				display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px',
 			},
-		}, label);
+		}, Ico(icon, { size: 13 }), label);
 	};
 	return h('div', {
 		style: {
@@ -51,12 +55,12 @@ function Segmented({ tab }) {
 			borderRadius: '9px', background: color.inset,
 		},
 	},
-		item('assets', '📋 资料'),
-		item('write', '✍️ 写作'),
-		item('check', '🩺 体检'),
-		item('proposals', '✅ 提案'),
-		item('batch', '⚡ 批量'),
-		item('chapters', '🎧 章节'),
+		item('assets', '资料', 'book'),
+		item('write', '写作', 'pen'),
+		item('check', '体检', 'pulse'),
+		item('proposals', '提案', 'checkCircle'),
+		item('batch', '批量', 'bolt'),
+		item('chapters', '章节', 'headphones'),
 	);
 }
 
@@ -76,8 +80,8 @@ function SessionFatigueBanner({ session, copied }) {
 		},
 	},
 		h('div', { style: { display: 'flex', alignItems: 'baseline', gap: space.sm, flexWrap: 'wrap' } },
-			h('span', { style: { fontWeight: weight.semibold, color: hard ? color.danger : undefined } },
-				hard ? '🛑 上下文体量将满' : '⚠ 会话疲劳'),
+			h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: weight.semibold, color: hard ? color.danger : color.warn } },
+				Ico('warn', { size: 13 }), hard ? '上下文体量将满' : '会话疲劳'),
 			h('span', { style: hintStyle },
 				`本会话已写 ${session.chapters} 章 · 首稿均长 ${session.firstAvg} 字`
 				// 口径必须写出来：首稿＝门禁驳回前的初稿，不是成稿字数（0.18.0——旧文案只写
@@ -231,7 +235,8 @@ export function ProjectDetailView({ state: s }) {
 	}[dash?.readiness ?? 'ready'];
 	const dashboardBlock = Card({ tone: readinessMeta.card },
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' } },
-			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small } }, '🎛 创作驾驶舱'),
+			h('span', { style: { display: 'inline-flex', color: color.accent } }, Ico('target', { size: 14 })),
+			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small, letterSpacing: '.5px' } }, '创作驾驶舱'),
 			dash ? Chip({ tone: readinessMeta.tone }, readinessMeta.label) : null,
 			h('span', { style: { flex: '1 1 auto' } }),
 			Btn({
@@ -278,7 +283,7 @@ export function ProjectDetailView({ state: s }) {
 						dash.ladders?.present && dash.ladders.flagged.length > 0
 							? h('div', { style: { marginTop: space.sm, paddingTop: space.sm, borderTop: `1px solid ${color.border1}` } },
 								h('div', { style: { fontWeight: weight.semibold, fontSize: font.small, marginBottom: space.xs } },
-									`🪜 进度阶梯（第 ${dash.progress?.maxChapter ?? '?'} 章时点：${dash.ladders.overdue} 线逾期 · ${dash.ladders.stalled} 线停滞）`),
+									`进度阶梯（第 ${dash.progress?.maxChapter ?? '?'} 章时点：${dash.ladders.overdue} 线逾期 · ${dash.ladders.stalled} 线停滞）`),
 								h('div', { style: stackStyle(space.xs) },
 									...dash.ladders.flagged.map((f, i) => h('div', { key: i, style: stackStyle(space.xs) },
 										h('div', { style: { fontSize: font.small, fontWeight: weight.medium } }, f.name),
@@ -334,7 +339,8 @@ export function ProjectDetailView({ state: s }) {
 	const cont = s.continuity;
 	const continuityBlock = Card({ tone: cont && cont.ok === false ? 'danger' : 'plain' },
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm } },
-			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small } }, '🩺 全书体检'),
+			h('span', { style: { display: 'inline-flex', color: color.accent } }, Ico('pulse', { size: 14 })),
+			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small, letterSpacing: '.5px' } }, '全书体检'),
 			cont
 				? Chip({ tone: cont.ok ? 'ok' : 'danger' },
 					cont.ok ? '未发现硬伤' : `${cont.stats?.errors ?? 0} 处硬伤`)
@@ -382,7 +388,8 @@ export function ProjectDetailView({ state: s }) {
 	const diag = s.diagnosis;
 	const diagnosisBlock = Card({ tone: 'plain' },
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm } },
-			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small } }, '📐 黄金三章诊断'),
+			h('span', { style: { display: 'inline-flex', color: color.accent } }, Ico('pulse', { size: 14 })),
+			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small, letterSpacing: '.5px' } }, '黄金三章诊断'),
 			h('span', { style: { flex: '1 1 auto' } }),
 			Btn({
 				size: 'sm', variant: diag ? 'ghost' : 'secondary', action: 'diagnose',
@@ -418,7 +425,8 @@ export function ProjectDetailView({ state: s }) {
 	// ── 提案队列（用户主权动作：工具面刻意没有 apply）──
 	const proposalsBlock = Card({ tone: pendingCount > 0 ? 'warn' : 'plain' },
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm } },
-			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small } }, '📝 待批准提案'),
+			h('span', { style: { display: 'inline-flex', color: color.accent } }, Ico('checkCircle', { size: 14 })),
+			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small, letterSpacing: '.5px' } }, '待批准提案'),
 			pendingCount > 0 ? Chip({ tone: 'warn' }, String(pendingCount)) : null,
 h('span', { style: { flex: '1 1 auto' } }),
 			// 常驻刷新：队列只在开书/应用动作时加载——写作会话新建提案后，挂着面板的
@@ -466,7 +474,7 @@ h('span', { style: { flex: '1 1 auto' } }),
 									`第 ${p.chapter} 章${p.title ? ' · ' + p.title : ''}`,
 									h('span', { style: { ...hintStyle, fontSize: font.caption, marginLeft: space.sm, fontWeight: weight.normal } },
 										`${p.id}${when ? ' · ' + when : ''}`)),
-								Btn({ size: 'sm', action: 'proposal-view', id: p.id }, open ? '收起' : '👁 查看'),
+								Btn({ size: 'sm', action: 'proposal-view', id: p.id }, Ico('eye', { size: 13 }), open ? '收起' : '查看'),
 								// 陈旧提案没有「应用」：点了只会再撞一次陈旧守卫（且把索引又写一遍）
 								stale
 									? Chip({ tone: 'warn' }, '已陈旧')
@@ -501,16 +509,17 @@ h('span', { style: { flex: '1 1 auto' } }),
 	const editBlock = Card({ tone: 'plain' },
 		// 头部：章节切换 + 写章 + 保存（原「✍️ 本章」常驻条并入，随稿纸一起放在待批准提案下方）
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' } },
-			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small } }, '✍️ 本章'),
+			h('span', { style: { display: 'inline-flex', color: color.accent } }, Ico('pen', { size: 14 })),
+			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small, letterSpacing: '.5px' } }, '本章'),
 			h('select', {
 				'data-field': 'chapterNo', value: String(s.chapterNo),
 				'aria-label': '切换到第几章',
 				style: { ...inputStyle, width: 'auto', padding: '3px 6px' },
 			}, chapterOptions.map((no) => h('option', { key: no, value: String(no) }, `第 ${no} 章`))),
 			Btn({ size: 'sm', variant: 'ghost', action: 'write', disabled: s.batchBusy },
-				s.batchBusy ? '写作中…' : '🪶 写章'),
+				Ico('pen', { size: 13 }), s.batchBusy ? '写作中…' : '写章'),
 			h('span', { style: { flex: '1 1 auto' } }),
-			Btn({ size: 'sm', variant: 'primary', action: 'save' }, '💾 保存'),
+			Btn({ size: 'sm', variant: 'primary', action: 'save' }, Ico('checkCircle', { size: 13 }), '保存'),
 		),
 		h('div', { style: { ...hintStyle, fontSize: font.caption, marginTop: space.xs, lineHeight: 1.6 } },
 			s.chapterNo > maxWritten ? '这一章还没落盘 —— 点「写章」直接过门禁链落盘' : '写章 = 生成新版本（旧稿保留）；润色 / 校对产物是提案'),
@@ -529,11 +538,11 @@ h('span', { style: { flex: '1 1 auto' } }),
 		// 润色 / 校对走真端点，产物是提案（点「应用」才生效）
 		h('div', { style: { ...rowWrapStyle(space.xs), marginTop: space.md } },
 				Btn({ size: 'sm', variant: 'secondary', action: 'review-options', disabled: s.chapterNo > maxWritten },
-					s.reviewVisible ? '收起审稿项' : '☑ 审稿项'),
+					Ico('checkCircle', { size: 13 }), s.reviewVisible ? '收起审稿项' : '审稿项'),
 			Btn({ size: 'sm', variant: 'accent', action: 'polish', disabled: revising !== null || s.chapterNo > maxWritten },
-				revising === 'polish' ? '润色中…' : '✨ 润色'),
+				Ico('sparkle', { size: 13 }), revising === 'polish' ? '润色中…' : '润色'),
 			Btn({ size: 'sm', variant: 'secondary', action: 'proofread', disabled: revising !== null || s.chapterNo > maxWritten },
-				revising === 'proofread' ? '校对中…' : '🔍 校对'),
+				Ico('eye', { size: 13 }), revising === 'proofread' ? '校对中…' : '校对'),
 			h('span', { style: { ...hintStyle, fontSize: font.caption } },
 				'产物是提案（在「待批准提案」里点「应用」才生成新版本）'),
 				Btn({ size: 'sm', variant: 'ghost', action: 'impact', disabled: s.impactLoading || s.chapterNo > maxWritten },
@@ -621,10 +630,10 @@ h('span', { style: { flex: '1 1 auto' } }),
 		}),
 
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.xs, marginTop: space.sm, flexWrap: 'wrap' } },
-			Btn({ size: 'sm', variant: 'ghost', action: 'refresh' }, '↻ 刷新'),
+			Btn({ size: 'sm', variant: 'ghost', action: 'refresh' }, Ico('refresh', { size: 13 }), '刷新'),
 			Btn({ size: 'sm', variant: 'ghost', action: 'export', disabled: s.exporting },
-				s.exporting ? '导出中…' : '⇩ 导出'),
-			Btn({ size: 'sm', variant: 'ghost', action: 'goto-lorebook', id: s.selected }, '📖 世界书'),
+				Ico('download', { size: 13 }), s.exporting ? '导出中…' : '导出'),
+			Btn({ size: 'sm', variant: 'ghost', action: 'goto-lorebook', id: s.selected }, Ico('book', { size: 13 }), '世界书'),
 			h('span', { style: { flex: '1 1 auto' } }),
 			s.deleteState === 'confirm'
 				? Btn({ size: 'sm', action: 'delete-cancel' }, '取消删除')
@@ -659,13 +668,15 @@ h('span', { style: { flex: '1 1 auto' } }),
 	const batchCheckpoint = s.batchResult?.checkpoint ?? s.detail?.batchCheckpoint;
 	// 批量起草已独占一个 tab，不再折叠：标题 + 内容直接平铺，省掉「展开」这一步。
 	const batchBlock = Card({ pad: space.md },
-		h('div', {
-			style: {
-				fontWeight: weight.semibold, fontSize: font.small, color: color.text,
-				borderLeft: `3px solid ${tint(color.accent, 45)}`,
-				paddingLeft: space.sm, lineHeight: 1.4, marginBottom: space.md,
-			},
-		}, `⚡ 批量起草（从第 ${s.batchFrom ?? nextNo} 章起 ${s.batchCount ?? 3} 章）`),
+		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, marginBottom: space.md } },
+			h('span', { style: { display: 'inline-flex', color: color.accent } }, Ico('bolt', { size: 14 })),
+			h('span', {
+				style: {
+					fontWeight: weight.semibold, fontSize: font.small, color: color.text,
+					letterSpacing: '.5px', lineHeight: 1.4,
+				},
+			}, `批量起草（从第 ${s.batchFrom ?? nextNo} 章起 ${s.batchCount ?? 3} 章）`),
+		),
 		h('div', { style: { ...hintStyle, fontSize: font.caption, lineHeight: 1.7, marginBottom: space.md } },
 			'并发生成、串行提交：每一章照样过机审、内容门禁、账本、契约指标，',
 			'单章被拦下不影响其它章。没有细纲或细纲未批准的章会直接被挡（可勾选强制）。'),
@@ -734,7 +745,8 @@ h('span', { style: { flex: '1 1 auto' } }),
 	const charsBusy = s.charsSaving === true;
 	const charLimitsBlock = Card({ tone: s.charsError ? 'danger' : 'plain' },
 		h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' } },
-			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small } }, '✒️ 每章字数'),
+			h('span', { style: { display: 'inline-flex', color: color.accent } }, Ico('pen', { size: 14 })),
+			h('span', { style: { fontWeight: weight.semibold, fontSize: font.small, letterSpacing: '.5px' } }, '每章字数'),
 			charView
 				? Chip({ tone: charView.charSource === 'custom' ? 'ok' : 'accent' },
 					`${charView.charMin}–${charView.charMax} 字`)

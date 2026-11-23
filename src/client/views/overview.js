@@ -10,6 +10,7 @@
 import { h } from '../react.js';
 import { color, space, font, weight, hintStyle, tint, stackStyle } from '../styles.js';
 import { Card, Chip, StatTile, Fold, Empty, Section, Mono, KV, Btn } from '../ui.js';
+import { Ico } from '../icons.js';
 import { genreLabel } from '../genre.js';
 
 const preStyle = {
@@ -37,7 +38,7 @@ export function ProjectOverviewView({ state: s }) {
 	if (s.elementsLoading) return h('div', { style: hintStyle }, '要素加载中…');
 	if (!el) {
 		return Empty({
-			icon: '📂',
+			icon: Ico('book', { size: 22 }),
 			title: '要素没读出来',
 			hint: '可能这本书刚建、还没有任何沉淀文件。点上方「刷新」重试一次。',
 		});
@@ -91,33 +92,33 @@ export function ProjectOverviewView({ state: s }) {
 	// ── 沉淀统计：一眼看清「这本书攒了什么」──
 	const tiles = Card({ tone: 'inset', pad: space.md },
 		h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: `${space.sm}px ${space.sm}px` } },
-			StatTile({ icon: '🗺', value: el.outline?.full ? '有' : '无', label: '大纲', tone: el.outline?.full ? 'ok' : 'warn', size: 'sm' }),
-			StatTile({ icon: '📑', value: outlineCount, label: '细纲', size: 'sm' }),
-			StatTile({ icon: '👤', value: chars.length, label: '角色卡', size: 'sm' }),
-			StatTile({ icon: '📖', value: el.worldbookCount ?? 0, label: '世界书', size: 'sm' }),
-			StatTile({ icon: '🔤', value: el.glossaryCount ?? 0, label: '术语', size: 'sm' }),
-			StatTile({ icon: '🧾', value: facts.length, label: '台账', size: 'sm' }),
-			StatTile({ icon: '🪡', value: foreshadows.length, label: '伏笔', size: 'sm' }),
-			StatTile({ icon: '🔗', value: relations.length, label: '关系', size: 'sm' }),
-			StatTile({ icon: '📈', value: arcs.length, label: '弧线', size: 'sm' }),
-			StatTile({ icon: '📝', value: pledges.length, label: '契约', size: 'sm' }),
-			StatTile({ icon: '🧠', value: cognition.length, label: '认知', size: 'sm' }),
-			StatTile({ icon: '🪜', value: ladders.length, label: '阶梯', size: 'sm' }),
+			StatTile({ icon: Ico('map', { size: 13 }), value: el.outline?.full ? '有' : '无', label: '大纲', tone: el.outline?.full ? 'ok' : 'warn', size: 'sm' }),
+			StatTile({ icon: Ico('page', { size: 13 }), value: outlineCount, label: '细纲', size: 'sm' }),
+			StatTile({ icon: Ico('users', { size: 13 }), value: chars.length, label: '角色卡', size: 'sm' }),
+			StatTile({ icon: Ico('book', { size: 13 }), value: el.worldbookCount ?? 0, label: '世界书', size: 'sm' }),
+			StatTile({ icon: Ico('layers', { size: 13 }), value: el.glossaryCount ?? 0, label: '术语', size: 'sm' }),
+			StatTile({ icon: Ico('receipt', { size: 13 }), value: facts.length, label: '台账', size: 'sm' }),
+			StatTile({ icon: Ico('thread', { size: 13 }), value: foreshadows.length, label: '伏笔', size: 'sm' }),
+			StatTile({ icon: Ico('globe', { size: 13 }), value: relations.length, label: '关系', size: 'sm' }),
+			StatTile({ icon: Ico('pulse', { size: 13 }), value: arcs.length, label: '弧线', size: 'sm' }),
+			StatTile({ icon: Ico('pen', { size: 13 }), value: pledges.length, label: '契约', size: 'sm' }),
+			StatTile({ icon: Ico('sparkle', { size: 13 }), value: cognition.length, label: '认知', size: 'sm' }),
+			StatTile({ icon: Ico('layers', { size: 13 }), value: ladders.length, label: '阶梯', size: 'sm' }),
 		),
 	);
 
 	// ── 大纲 ──
 	const outlineBlock = el.outline?.full
-		? Fold({ title: '📖 全书大纲', open: false },
+		? Fold({ title: h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } }, Ico('book', { size: 13 }), '全书大纲'), open: false },
 			h('div', { style: preStyle }, el.outline.full))
-		: Empty({ icon: '🗺', title: '还没有全书大纲', hint: '在会话里让 AI 调 novel_outline 生成，生成后这里会显示全文。' });
+		: Empty({ icon: Ico('map', { size: 13 }), title: '还没有全书大纲', hint: '在会话里让 AI 调 novel_outline 生成，生成后这里会显示全文。' });
 
 	// ── 角色卡 ──
 	const castBlock = chars.length > 0
 		? h('div', { style: stackStyle(space.xs) },
-			...chars.map((c) => Fold({ title: `👤 ${c.name}` }, h('div', { style: preStyle }, c.text || '（空卡）'))))
+			...chars.map((c) => Fold({ title: h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } }, Ico('users', { size: 13 }), c.name) }, h('div', { style: preStyle }, c.text || '（空卡）'))))
 		: Empty({
-			icon: '👥', title: '还没有角色卡',
+			icon: Ico('users', { size: 22 }), title: '还没有角色卡',
 			hint: '在会话里让 AI 调 novel_cast 生成。'
 				+ (castNames.length ? `已登记但无卡的角色：${castNames.join('、')}` : ''),
 		});
@@ -131,9 +132,9 @@ export function ProjectOverviewView({ state: s }) {
 			h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' } },
 				h('span', { style: { ...hintStyle, fontSize: font.small, flex: '1 1 240px', minWidth: 0 } },
 					`已沉淀 ${el.worldbookCount ?? 0} 条世界书 · ${el.glossaryCount ?? 0} 条术语。设定越细，写章越不容易崩人物与地名。`),
-				Btn({ variant: 'ghost', size: 'sm', action: 'goto-lorebook', id: s.selected }, '📖 去世界书'),
+				Btn({ variant: 'ghost', size: 'sm', action: 'goto-lorebook', id: s.selected }, Ico('book', { size: 13 }), '去世界书'),
 			))
-		: Empty({ icon: '🧭', title: '设定还是空的', hint: '在会话里让 AI 调 novel_world 沉淀世界观；也可以在「世界书」里手动加。' });
+		: Empty({ icon: Ico('globe', { size: 22 }), title: '设定还是空的', hint: '在会话里让 AI 调 novel_world 沉淀世界观；也可以在「世界书」里手动加。' });
 
 	// ── 时间线（账本事实按章分组，竖轴样式）──
 	const byChapter = new Map();
@@ -144,7 +145,7 @@ export function ProjectOverviewView({ state: s }) {
 	}
 	const chaptersSorted = [...byChapter.keys()].sort((a, b) => a - b);
 	const timelineBlock = chaptersSorted.length > 0
-		? Fold({ title: `🕰 事实时间线（${facts.length} 条 / ${chaptersSorted.length} 章）`, open: facts.length <= 24 },
+		? Fold({ title: h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } }, Ico('clock', { size: 13 }), `事实时间线（${facts.length} 条 / ${chaptersSorted.length} 章）`), open: facts.length <= 24 },
 			h('div', { style: stackStyle(0) },
 				...chaptersSorted.map((no, gi) => h('div', {
 					key: no,
@@ -186,7 +187,7 @@ export function ProjectOverviewView({ state: s }) {
 
 	// ── 伏笔 ──
 	const foreshadowBlock = foreshadows.length > 0
-		? Fold({ title: `🪡 伏笔（${foreshadows.length} 个）` },
+		? Fold({ title: h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } }, Ico('thread', { size: 13 }), `伏笔（${foreshadows.length} 个）`) },
 			h('div', { style: stackStyle(space.sm) },
 				...foreshadows.map((f, i) => {
 					const paid = Number.isInteger(f.payoffChapter);
@@ -216,7 +217,7 @@ export function ProjectOverviewView({ state: s }) {
 	// 各账本独立成块、有数据才给（空账本不掺噪声，同伏笔块「length>0 才给区块」口径）。
 	const ledgerSub = [];
 	if (relations.length > 0) {
-		ledgerSub.push(Fold({ title: `🔗 关系（${relations.length} 条）` },
+		ledgerSub.push(Fold({ title: h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } }, Ico('globe', { size: 13 }), `关系（${relations.length} 条）`) },
 			h('div', { style: stackStyle(space.xs) },
 				...relations.map((r, i) => h('div', { key: i, style: { display: 'flex', gap: space.sm, flexWrap: 'wrap', fontSize: font.small, alignItems: 'baseline' } },
 					Chip({ tone: 'neutral' }, `${r.a ?? '？'}${r.relation ? '·' + r.relation : ''}·${r.b ?? '？'}`),
@@ -224,7 +225,7 @@ export function ProjectOverviewView({ state: s }) {
 					h('span', { style: hintStyle }, `第 ${r.chapter ?? '？'} 章`))))));
 	}
 	if (arcs.length > 0) {
-		ledgerSub.push(Fold({ title: `📈 弧线（${arcs.length} 条）` },
+		ledgerSub.push(Fold({ title: h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } }, Ico('pulse', { size: 13 }), `弧线（${arcs.length} 条）`) },
 			h('div', { style: stackStyle(space.xs) },
 				...arcs.map((a, i) => h('div', { key: i, style: { display: 'flex', gap: space.sm, flexWrap: 'wrap', fontSize: font.small, alignItems: 'baseline' } },
 					Chip({ tone: 'accent' }, a.character ?? '？'),
@@ -233,7 +234,7 @@ export function ProjectOverviewView({ state: s }) {
 					h('span', { style: hintStyle }, `第 ${a.chapter ?? '？'} 章`))))));
 	}
 	if (pledges.length > 0) {
-		ledgerSub.push(Fold({ title: `📝 叙事契约（${pledges.length} 条）` },
+		ledgerSub.push(Fold({ title: h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } }, Ico('pen', { size: 13 }), `叙事契约（${pledges.length} 条）`) },
 			h('div', { style: stackStyle(space.xs) },
 				...pledges.map((pg, i) => {
 					const st = pg.status ?? 'open';
@@ -247,7 +248,7 @@ export function ProjectOverviewView({ state: s }) {
 				}))));
 	}
 	if (cognition.length > 0) {
-		ledgerSub.push(Fold({ title: `🧠 认知（${cognition.length} 条）` },
+		ledgerSub.push(Fold({ title: h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } }, Ico('sparkle', { size: 13 }), `认知（${cognition.length} 条）`) },
 			h('div', { style: stackStyle(space.xs) },
 				...cognition.map((c, i) => h('div', { key: i, style: { fontSize: font.small, color: color.text2 } },
 					`${c.subject ?? '？'} ${c.verb === 'doesNotKnow' ? '不知道' : '知道'}「${c.info ?? '？'}」${Number.isInteger(c.chapter) ? `（第 ${c.chapter} 章）` : ''}`)))));
@@ -276,12 +277,12 @@ export function ProjectOverviewView({ state: s }) {
 
 
 	return h('div', { style: stackStyle(space.xl) },
-		Section({ icon: '📚', title: '档案' }, profile, tiles),
-		Section({ icon: '🗺', title: '大纲' }, outlineBlock),
-		Section({ icon: '👥', title: '角色卡' }, castBlock),
-		Section({ icon: '🧭', title: '设定' }, settingBlock),
-		Section({ icon: '⏳', title: '时间线 · 账本' }, timelineBlock, ledgerBlock),
-		foreshadowBlock ? Section({ icon: '🪡', title: '伏笔' }, foreshadowBlock) : null,
-		ladderBlock ? Section({ icon: '🪜', title: '进度阶梯' }, ladderBlock) : null,
+		Section({ icon: Ico('book', { size: 13 }), title: '档案' }, profile, tiles),
+		Section({ icon: Ico('map', { size: 13 }), title: '大纲' }, outlineBlock),
+		Section({ icon: Ico('users', { size: 13 }), title: '角色卡' }, castBlock),
+		Section({ icon: Ico('globe', { size: 13 }), title: '设定' }, settingBlock),
+		Section({ icon: Ico('clock', { size: 13 }), title: '时间线 · 账本' }, timelineBlock, ledgerBlock),
+		foreshadowBlock ? Section({ icon: Ico('thread', { size: 13 }), title: '伏笔' }, foreshadowBlock) : null,
+		ladderBlock ? Section({ icon: Ico('layers', { size: 13 }), title: '进度阶梯' }, ladderBlock) : null,
 	);
 }

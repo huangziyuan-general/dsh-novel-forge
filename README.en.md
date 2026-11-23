@@ -66,6 +66,8 @@ The right-sidebar "Forge" panel, rendered from the real `lib/client.js` (these a
 > The screenshots above are **real renders** of `lib/client.js` (not hand-drawn mocks): run `npm run preview` to generate the preview page, then `assets/mockups/shoot-real.cjs` to reproduce — both light and dark themes track the host.
 >
 > The detail page is split into six tabs by workflow: **Assets / Writing / Health / Proposals / Batch / Chapters** — Assets is first and the default landing screen. "Assets" holds the reference material (archive, outline, character cards, settings, ledger & timeline); "Health" holds only the verification results (creation cockpit, full-book checkup, golden-three-chapter diagnosis). The breadcrumb and tab bar stick to the top, and switching tabs scrolls back to the content top.
+>
+> **Visual system (v1.10.0)**: the whole panel uses one set of monochrome linear SVG icons (`src/client/icons.js`, 15px / currentColor / 1.7 stroke), replacing the inconsistent colored emoji; the brand mark is a custom anvil + flame glyph. Gold is confined to three places — primary buttons, the active tab, and section markers — everything else uses host-neutral tokens. Both themes share one `color-mix`-derived palette: no icon library, no network requests. Cards gained a top-edge highlight plus two-tier themed shadows, and the active tab has a gold underline. Functional icons (chapter read 📖 / play ▶ / close ✕) keep their original glyphs — they are a test-locked accessibility contract.
 
 ## AI writing failure modes
 

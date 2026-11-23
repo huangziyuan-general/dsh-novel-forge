@@ -13,6 +13,7 @@
 import { h } from '../react.js';
 import { color, space, font, weight, hintStyle, footerStyle, inputStyle, stackStyle, card, tint } from '../styles.js';
 import { Card, Btn, Chip, Stat, StageRail, Empty, Section, Feedback, TAP } from '../ui.js';
+import { Ico } from '../icons.js';
 import { genreLabel } from '../genre.js';
 
 /**
@@ -30,16 +31,16 @@ export function projectMatches(p, query) {
 function statsOf(p) {
 	const fh = p.foreshadows ?? {};
 	const stats = [];
-	if (p.chapters !== null && p.chapters !== undefined) stats.push(Stat({ icon: '📄', value: p.chapters, unit: '章' }));
-	if (p.facts) stats.push(Stat({ icon: '🧾', value: p.facts, unit: '台账' }));
+	if (p.chapters !== null && p.chapters !== undefined) stats.push(Stat({ icon: Ico('page', { size: 12 }), value: p.chapters, unit: '章' }));
+	if (p.facts) stats.push(Stat({ icon: Ico('receipt', { size: 12 }), value: p.facts, unit: '台账' }));
 	if (fh.total) {
 		// 未回收数量是**要动作**的信号：超期用警告色，普通未回收用中性色
 		stats.push(Stat({
-			icon: '🪡', value: `${fh.open}/${fh.total}`, unit: '伏笔',
+			icon: Ico('thread', { size: 12 }), value: `${fh.open}/${fh.total}`, unit: '伏笔',
 			tone: fh.overdue > 0 ? 'warn' : 'neutral',
 		}));
 	}
-	if (p.castCount) stats.push(Stat({ icon: '👥', value: p.castCount, unit: '角色' }));
+	if (p.castCount) stats.push(Stat({ icon: Ico('users', { size: 12 }), value: p.castCount, unit: '角色' }));
 	return stats;
 }
 
@@ -78,8 +79,8 @@ export function ProjectListView({ state: s }) {
 					'不设则按投放平台/插件默认口径'),
 			),
 			h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, marginTop: space.sm } },
-				Btn({ variant: 'ghost', size: 'sm', action: 'refresh-projects' }, '↻ 刷新'),
-				Btn({ variant: 'ghost', size: 'sm', action: 'import-file' }, '⇪ 导入本地'),
+				Btn({ variant: 'ghost', size: 'sm', action: 'refresh-projects' }, Ico('refresh', { size: 13 }), '刷新'),
+				Btn({ variant: 'ghost', size: 'sm', action: 'import-file' }, Ico('upload', { size: 13 }), '导入本地'),
 			),
 		),
 
@@ -95,9 +96,9 @@ export function ProjectListView({ state: s }) {
 		s.loading
 			? h('div', { style: hintStyle }, '加载中…')
 			: s.projects.length === 0
-				? Empty({
-					icon: '🔨',
-					title: '本会话还没有项目',
+					? Empty({
+						icon: Ico('forge', { size: 26 }),
+						title: '本会话还没有项目',
 					hint: '输入书名创建一个；或在会话里让 AI 调 novel_project init —— 书建好后会自动出现在这里。',
 				})
 				: h('div', { style: stackStyle(space.md) },
@@ -121,8 +122,9 @@ export function ProjectListView({ state: s }) {
 						style: { ...card(), padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' },
 					},
 						h('div', { style: { display: 'flex', minWidth: 0 } },
-							// 书脊：一条 3px 竖条，扫一眼就知道卡片边界在哪
-							h('div', { style: { flex: 'none', width: '3px', background: color.accent, opacity: 0.75 } }),
+							// 书脊：3px 竖条标示卡片边界。1.10.0 从中调金改为低饱和色标
+							// ——金色收敛到「主按钮 / tab 选中 / 状态徽标」，书卡不再每张都亮。
+							h('div', { style: { flex: 'none', width: '3px', background: tint(color.accent, 42), borderRadius: '2px' } }),
 							h('div', { style: { flex: '1 1 auto', minWidth: 0, padding: `${space.lg}px` } },
 								// 标题行：整块可点（button 才能进 Tab 序 / 被读屏读到 / 回车触发）
 								// `...TAP` 给它悬停/按下反馈 —— 交互态只能来自 css.js
@@ -164,13 +166,13 @@ export function ProjectListView({ state: s }) {
 									? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: `${space.xs}px ${space.lg}px`, marginTop: space.md } }, ...statsOf(p))
 									: null,
 
-								h('div', { style: { display: 'flex', alignItems: 'center', gap: space.xs, marginTop: space.md } },
-									Btn({ variant: 'ghost', size: 'sm', action: 'goto-lorebook', id: p.name }, '📖 世界书'),
-									Btn({ variant: 'ghost', size: 'sm', action: 'rename-open', id: p.name }, '✎ 改名'),
-									Btn({ variant: 'ghost', size: 'sm', action: 'clone-open', id: p.name }, '⧉ 克隆'),
-									h('span', { style: { flex: '1 1 auto' } }),
-									Btn({ variant: 'danger', size: 'sm', action: 'list-delete', id: p.name }, '删除'),
-								),
+							h('div', { style: { display: 'flex', alignItems: 'center', gap: space.xs, marginTop: space.md } },
+								Btn({ variant: 'ghost', size: 'sm', action: 'goto-lorebook', id: p.name }, Ico('book', { size: 13 }), '世界书'),
+								Btn({ variant: 'ghost', size: 'sm', action: 'rename-open', id: p.name }, Ico('edit', { size: 13 }), '改名'),
+								Btn({ variant: 'ghost', size: 'sm', action: 'clone-open', id: p.name }, Ico('copy', { size: 13 }), '克隆'),
+								h('span', { style: { flex: '1 1 auto' } }),
+								Btn({ variant: 'danger', size: 'sm', action: 'list-delete', id: p.name }, Ico('trash', { size: 13 }), '删除'),
+							),
 
 								// 列表内联改名（目录名=id 不动，只改标题）
 								s.rename && s.rename.id === p.name
@@ -227,7 +229,7 @@ export function ProjectListView({ state: s }) {
 		s.unclaimed && s.unclaimed.length > 0
 			? Card({ tone: 'inset', pad: space.md },
 				Section({
-					icon: '📦', title: `未归属的书（${s.unclaimed.length}）`,
+					icon: Ico('layers', { size: 13 }), title: `未归属的书（${s.unclaimed.length}）`,
 					right: Btn({ size: 'sm', action: 'claim' }, '全部认领'),
 				},
 					h('div', { style: { ...hintStyle, fontSize: font.caption } },
