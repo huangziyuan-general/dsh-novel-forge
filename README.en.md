@@ -58,8 +58,8 @@ The right-sidebar "Forge" panel, rendered from the real `lib/client.js` (these a
 
 | | |
 | --- | --- |
-| **Detail · Assets** (default landing: archive / outline / character cards / settings / timeline)<br><img src="assets/mockups/png/dark-2b-详情-资料.png" width="440"> | **Detail · Writing** (write / edit / word count, next to Assets)<br><img src="assets/mockups/png/dark-2-详情-写作台.png" width="440"> |
-| **Project list**<br><img src="assets/mockups/png/dark-1-项目列表.png" width="440"> | **Polish guard rejects** (core selling point: code says no, with full reasons)<br><img src="assets/mockups/png/dark-5-润色守卫拦下.png" width="440"> |
+| **Project list**<br><img src="assets/mockups/png/dark-1-项目列表.png" width="440"> | **Detail · Writing** (write / edit / word count, next to Assets)<br><img src="assets/mockups/png/dark-2-详情-写作台.png" width="440"> |
+| **Detail · Assets** (default landing: archive / outline / character cards / settings / timeline)<br><img src="assets/mockups/png/dark-2b-详情-资料.png" width="440"> | **Polish guard rejects** (core selling point: code says no, with full reasons)<br><img src="assets/mockups/png/dark-5-润色守卫拦下.png" width="440"> |
 | **Batch drafting** (concurrent gen · serial gating · checkpoint resume)<br><img src="assets/mockups/png/dark-6-批量起草.png" width="440"> | **Chapter text-to-speech**<br><img src="assets/mockups/png/dark-3-章节听书.png" width="440"> |
 | **Worldbook**<br><img src="assets/mockups/png/dark-4-世界书.png" width="440"> | |
 

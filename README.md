@@ -60,8 +60,8 @@ DeepSeek Harness（DSH）的中文长篇写作插件。它不是「提示词合�
 
 | | |
 | --- | --- |
-| **详情 · 资料**（默认首屏：档案/大纲/角色卡/设定/时间线）<br><img src="assets/mockups/png/dark-2b-详情-资料.png" width="440"> | **详情 · 写作**（写章/编辑/字数，紧邻资料）<br><img src="assets/mockups/png/dark-2-详情-写作台.png" width="440"> |
-| **项目列表**<br><img src="assets/mockups/png/dark-1-项目列表.png" width="440"> | **润色守卫拦下**（核心卖点：代码拒绝，理由给全）<br><img src="assets/mockups/png/dark-5-润色守卫拦下.png" width="440"> |
+| **项目列表**<br><img src="assets/mockups/png/dark-1-项目列表.png" width="440"> | **详情 · 写作**（写章/编辑/字数，紧邻资料）<br><img src="assets/mockups/png/dark-2-详情-写作台.png" width="440"> |
+| **详情 · 资料**（默认首屏：档案/大纲/角色卡/设定/时间线）<br><img src="assets/mockups/png/dark-2b-详情-资料.png" width="440"> | **润色守卫拦下**（核心卖点：代码拒绝，理由给全）<br><img src="assets/mockups/png/dark-5-润色守卫拦下.png" width="440"> |
 | **批量起草**（并发生成·串行过门禁·断点续跑）<br><img src="assets/mockups/png/dark-6-批量起草.png" width="440"> | **章节听书**<br><img src="assets/mockups/png/dark-3-章节听书.png" width="440"> |
 | **世界书**<br><img src="assets/mockups/png/dark-4-世界书.png" width="440"> | |
 
