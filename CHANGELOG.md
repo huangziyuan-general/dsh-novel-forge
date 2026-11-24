@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.10.1 (2026-11-24)
+
+- 修复：**claim / create 端点的 `body.session` 未过形状校验**（`lib/server-routes/projects.js`）——同层全部端点（session/chapters/insights）都有 `validSessionId` 收口，唯独这两处写路径直接把请求体里的 session 写进归属集文件与 audit 行（`store.addBookSession` 收口也只查非空），4MB 请求体上界下一条超长字符串会原样持久化进每本未归属书。两处入口补同款 400 收口（claim 全拦；create 空串放行保持不带会话的调试路径，非空全拦）；归属收口 `addBookSession` 判据不变（供工具链共用）。
+- 修复：**polish / proofread 的章节号入口守卫**（`lib/server-routes/chapters.js` `runChapterRevision`）——此前章节号合法性依赖「先查章节记录（查不到先 400 `NO_CHAPTER`）、后拼路径」的执行顺序兜底，五处同款端点里唯独这一路没做入口校验。入口补同款 `BAD_CHAPTER` 400（NaN/小数/0/负数在形状层拦下，不再依赖执行顺序），合法章号照常穿过（守卫不误杀，错误码区分守卫自身与兜底）。
+
 ## v1.10.0 (2026-11-23)
 
 - 完善：**面板视觉系统重做**（新增 `src/client/icons.js`，接线 8 个视图）——功能图标从彩色 emoji 换为 15px 单色线性 SVG（`currentColor` 随文字色、深浅主题自动适配、1.7 描边、`aria-hidden` 装饰性语义、未知名回落不抛错），字形跨系统一致、零外部图标库零网络请求；章节视图三个带测试锁定的行为图标保持原样。选中标签改为底部 2px 品牌金细线标位（`data-nf-seg::after`），替代整块色块强调；标题/副标题字距与行高微调（`styles.js`），`Section` 图标参数从 emoji 字符串改为图标节点。

@@ -1257,6 +1257,22 @@ test('R3b GET chapters/:no 与 POST 同款守卫：脏章号 400，而不是静�
     assert.equal(ok.json.value, `${PASSAGE}\n`);
 });
 
+test('R3c polish/proofread 章节号同款守卫：脏章号 400 BAD_CHAPTER（入口拦下，不靠 NO_CHAPTER 兜底）', async () => {
+    await createBook('润色章号本');
+    for (const mode of ['polish', 'proofread']) {
+        for (const bad of ['abc', '1.5', '-2', '0', 'NaN']) {
+            const res = await drive({ method: 'POST', url: `${PREFIX}/projects/润色章号本/chapters/${encodeURIComponent(bad)}/${mode}`, body: {} });
+            assert.equal(res.statusCode, 400, `${mode} 章节号「${bad}」必须 400，实际 ${res.statusCode}：${res.body}`);
+            assert.equal(res.json.error?.code, 'BAD_CHAPTER',
+                `${mode} 章节号「${bad}」错误码应为 BAD_CHAPTER——守卫在入口（先于引擎 503 与章节存在性检查），不是查不到记录的 NO_CHAPTER`);
+        }
+    }
+    // 合法章号不被守卫误杀：穿过入口后照常落到引擎缺席的 503（本测试桩无模型引擎）
+    const resOk = await drive({ method: 'POST', url: `${PREFIX}/projects/润色章号本/chapters/1/polish`, body: {} });
+    assert.equal(resOk.statusCode, 503, `合法章号应穿过守卫，实际 ${resOk.statusCode}：${resOk.body}`);
+    assert.equal(resOk.json.error?.code, 'ENGINE_UNAVAILABLE');
+});
+
 // ── R4：面板保存走与 novel_write_chapter 同一套判定（旧版是全插件唯一旁路）────
 
 test('R4 面板保存章节：空稿 400、低于下限 409 不落盘、合格稿落盘并审计 actor=user', async () => {
@@ -2669,6 +2685,33 @@ test('S-5 polish/draft-batch 的 body.session 形状校验：结构性怪值 400
     // 正常 session id 不被误杀（合法字符白名单）
     const resOk = await drive({ method: 'POST', url: `${PREFIX}/projects/护栏本/chapters/1/polish`, body: { session: 's-abc123:456' } });
     assert.notEqual(resOk.statusCode, 400, `合法 session 不应 400，实际 ${resOk.statusCode}：${resOk.body}`);
+});
+
+test('S-5b claim/create 的 body.session 形状校验：写路径不落脏归属（validSessionId 收口）', async () => {
+    const badSession = 'bad id with spaces/../';
+    // claim：session 直接进 novel.json.sessions + audit 行——怪值必须在入口 400
+    const resClaim = await drive({ method: 'POST', url: `${PREFIX}/projects/claim`, body: { session: badSession } });
+    assert.equal(resClaim.statusCode, 400, `claim：session 怪值应 400，实际 ${resClaim.statusCode}：${resClaim.body}`);
+    assert.equal(resClaim.json.error.code, 'INVALID_FIELD');
+
+    // create：怪值不许建出书（400 且盘上无落点）
+    const resCreate = await drive({ method: 'POST', url: `${PREFIX}/projects`, body: { title: '脏会话本', session: badSession } });
+    assert.equal(resCreate.statusCode, 400, `create：session 怪值应 400，实际 ${resCreate.statusCode}：${resCreate.body}`);
+    assert.equal(resCreate.json.error.code, 'INVALID_FIELD');
+    assert.equal(fs.existsSync(path.join(root, '脏会话本')), false, '400 之后盘上不得出现该书目录');
+
+    // 正常路径不被误杀：合法 session 的 create 照常落归属集
+    const okCreate = await createBook('正常归属本', { session: 's-abc123:456' });
+    assert.equal(okCreate.statusCode, 200, okCreate.body);
+    const meta = JSON.parse(fs.readFileSync(path.join(root, '正常归属本', 'novel.json'), 'utf8'));
+    assert.deepEqual(meta.sessions, ['s-abc123:456'], '合法 session 必须照常进归属集');
+
+    // 合法 session 的 claim 照常认领（ids 过滤只动自己这本，不碰别的用例留下的未归属书）
+    await createBook('认领正路本');
+    const okClaim = await drive({ method: 'POST', url: `${PREFIX}/projects/claim`, body: { session: 's-abc123:456', ids: ['认领正路本'] } });
+    assert.equal(okClaim.statusCode, 200, okClaim.body);
+    const claimedMeta = JSON.parse(fs.readFileSync(path.join(root, '认领正路本', 'novel.json'), 'utf8'));
+    assert.deepEqual(claimedMeta.sessions, ['s-abc123:456'], '合法 session 的认领必须真的落归属');
 });
 
 // ── CHARS：POST /projects/:id/chars —— 缺省语义不许与工具面分叉 ──────────
