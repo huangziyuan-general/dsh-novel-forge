@@ -1834,6 +1834,9 @@ test('★ 全工具×全 action：真校验器验证输出 + render 冒烟', asy
         ['novel_project', 'check', { action: 'check', book: A }],
         ['novel_project', 'promise', { action: 'promise', book: A }],
         ['novel_outline', 'save_book', { action: 'save_book', book: A, outline: '# 全书大纲\n自检用大纲' }],
+        // P5 锚点改写留痕：二次 save_book 整体换血（题材词群替换 + 自申报词）→
+        // 回执的 anchorDiff/note 走一遍真 schema 校验器（首写那次不带键，这里才带）
+        ['novel_outline', 'save_book', { action: 'save_book', book: A, outline: '**修订说明**：自检锚点改写。\n# 全书大纲\n另一套卷段，换血用。' }],
         ['novel_outline', 'save_chapter', { action: 'save_chapter', book: A, chapter: 1, outline: '# 第1章细纲\n- 场景：自检场景' }],
         ['novel_outline', 'approve', { action: 'approve', book: A, chapter: 1 }],
         ['novel_character', 'save', { action: 'save', book: A, name: '测者甲', card: '外在底色：自检用人物卡' }],
@@ -1855,6 +1858,10 @@ test('★ 全工具×全 action：真校验器验证输出 + render 冒烟', asy
         // 世界规则台账四动作（设定域 × 冲突优先级：report-only，简报带「世界设定纪律」段）
         ['novel_worldbook', 'rules', { action: 'rules', book: A }],
         ['novel_worldbook', 'rules_add', { action: 'rules_add', book: A, payload: '地理|行政区划|郡县制|无改动|史实优先' }],
+        // 词汇禁区行式（P4）：第 2 格「禁止」分流成 kind=forbiddenWords 行——
+        // 后续 rules 回执走 kind/forbiddenWords 两个可选 schema 键（真校验器验形状）
+        ['novel_worldbook', 'rules_add', { action: 'rules_add', book: A, payload: '历史|禁止|平粜,户房' }],
+        ['novel_worldbook', 'rules', { action: 'rules', book: A }],
         ['novel_worldbook', 'rules_check', { action: 'rules_check', book: A, chapter: 1 }],
         ['novel_worldbook', 'rules_remove', { action: 'rules_remove', book: A, payload: '地理' }],
         ['novel_scene', 'save', { action: 'save', book: A, chapter: 1, scene: '自检场景', participants: '测者甲' }],

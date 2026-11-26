@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-    parseWorldRulesText, reconcileWorldRules, worldRuleScan, renderWorldRulesSection,
+    parseWorldRulesText, reconcileWorldRules, worldRuleScan, forbiddenWordsScan, renderWorldRulesSection,
     validWorldRuleRow, RULE_PRIORITIES,
 } from '../lib/world-rules.js';
 
@@ -111,6 +111,76 @@ test('★ renderWorldRulesSection：域分组 + 冲突口径标注 + 封顶 + �
     assert.match(body, /架空优先/);
     assert.match(body, /【力量】/);
     assert.ok(renderWorldRulesSection([]) === '', '空台账 → 空串（调用方跳过该段）');
+});
+
+// ── P4 词汇禁区：行式「域|禁止|词1,词2」解析 + 逐字扫描（与史实域扫描对称）────
+test('★ parse：词汇禁区行「域|禁止|词1,词2」抽 kind=forbiddenWords；空禁词进 errors', () => {
+    const raw = [
+        '历史|禁止|平粜,官砣,花押,户房',
+        '历史|官制|三省六部|无改动|史实优先',
+        '力量|禁止|',
+    ].join('\n');
+    const { rules, errors } = parseWorldRulesText(raw);
+    const forb = rules.filter((r) => r.kind === 'forbiddenWords');
+    assert.equal(forb.length, 1, '只有一条禁词行');
+    assert.deepEqual(forb[0].forbiddenWords, ['平粜', '官砣', '花押', '户房']);
+    assert.equal(forb[0].domain, '历史');
+    // 史实域行不受禁词行干扰
+    assert.ok(rules.some((r) => r.domain === '历史' && r.subdomain === '官制'));
+    // 空禁词行进 errors 不炸整批
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /无禁词/);
+});
+
+test('★ forbiddenWordsScan：逐字计数异域词命中；无命中/空文本/非禁词行全静默', () => {
+    const rules = [
+        { kind: 'forbiddenWords', domain: '历史', forbiddenWords: ['平粜', '户房'] },
+        { domain: '历史', subdomain: '官制', historicalAnchors: '', fictionalAdaptations: '', priority: 'balanced' },
+    ];
+    // 命中：平粜×2 + 户房×1 = 3 处
+    const hit = forbiddenWordsScan('朝廷下诏平粜，户房领粮；隔日再议平粜之价。', rules);
+    assert.equal(hit.issues.length, 1);
+    assert.deepEqual(hit.counts, [{ domain: '历史', hits: 3 }]);
+    assert.match(hit.issues[0], /词汇禁区「历史」/);
+    assert.match(hit.issues[0], /「平粜」×2/);
+    // 无命中 → 零 issues
+    assert.deepEqual(forbiddenWordsScan('山门外，少年负剑而行。', rules), { issues: [], counts: [] });
+    // 空文本 / 空台账 / 非禁词行 → 全静默
+    assert.deepEqual(forbiddenWordsScan('', rules), { issues: [], counts: [] });
+    assert.deepEqual(forbiddenWordsScan('x', []), { issues: [], counts: [] });
+    assert.deepEqual(forbiddenWordsScan('x', [rules[1]]), { issues: [], counts: [] }, '史实域行不走禁词扫描（与 worldRuleScan 分工对称）');
+});
+
+test('reconcile：禁词行按「禁止·域」upsert / 删除；域级删除整域连禁词行一起清', () => {
+    // upsert：同域禁词行后行覆盖前行
+    const up = reconcileWorldRules(
+        [{ kind: 'forbiddenWords', domain: '历史', forbiddenWords: ['平粜'] }],
+        [{ kind: 'forbiddenWords', domain: '历史', forbiddenWords: ['平粜', '户房'] }],
+    );
+    assert.equal(up.rules.length, 1, '同域禁词行不并影子行（后行覆盖）');
+    assert.deepEqual(up.rules[0].forbiddenWords, ['平粜', '户房']);
+    assert.match(up.added[0], /（更新）/);
+    // 按名删：「禁止·历史」删禁词行；「历史」域级删整域（史实行 + 禁词行）
+    const mixed = [{ kind: 'forbiddenWords', domain: '历史', forbiddenWords: ['平粜'] },
+        { domain: '历史', subdomain: '官制', historicalAnchors: '', fictionalAdaptations: '', priority: 'balanced' }];
+    const delWhole = reconcileWorldRules(mixed, [], ['历史']);
+    assert.equal(delWhole.rules.length, 0, '域级删除整域（含禁词行）');
+    assert.deepEqual(delWhole.removed, ['历史']);
+    const delOne = reconcileWorldRules(mixed, [], ['禁止·历史']);
+    assert.equal(delOne.rules.length, 1, '「禁止·历史」只删禁词行，史实行留下');
+    assert.equal(delOne.rules[0].subdomain, '官制');
+});
+
+test('★ renderWorldRulesSection：禁词行单列「词汇禁区」组', () => {
+    const rules = [
+        { domain: '历史', subdomain: '官制', historicalAnchors: '三省六部', fictionalAdaptations: '都察院', priority: 'historical' },
+        { kind: 'forbiddenWords', domain: '历史', forbiddenWords: ['平粜', '官砣', '花押', '户房'] },
+    ];
+    const body = renderWorldRulesSection(rules);
+    assert.match(body, /【历史】词汇禁区/);
+    assert.match(body, /平粜/);
+    // 全禁词台账也渲染（不依赖史实行在场）
+    assert.match(renderWorldRulesSection([rules[1]]), /词汇禁区/);
 });
 
 // ── 工具面接线（真走 bootPlugin：台账落盘 + rules_check + 简报段）────

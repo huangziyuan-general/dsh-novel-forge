@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.11.0 (2026-11-26)
+
+- 修复：**世界书面板把缺省启用的条目误显示为已停用**（`src/client/views/lorebook.js`）——条目的启用值缺省为真（`enabled` 缺席），视图却按真值过滤，缺省启用的条目被渲染成已停用态；改按 `enabled !== false` 判定，与工具层缺省语义一致。
+
+- 新增：**细纲对齐行强制**——`lib/outline-align.js`（纯函数）+ `novel_outline` 的 save_chapter / approve 关口。细纲须含「对齐：卷X · …」行并命中本章所在卷（卷序词或卷标题词任一），缺行/写错卷在 strict（新建书默认）档直接驳回、warn（存量书缺省）档留痕不拒。识别器认**行式**（对齐/对齐说明/对齐大纲/本卷对齐/对齐声明 等常见写法族，列表符/序号/加粗前缀、关键词后括注、长行均同认）与**段标题式**（`## 本章定位 / ## 全书大纲对齐 / ## 卷段对齐`，取节内正文作对齐文本）两形态；全书大纲无可解析卷结构时静默跳过（无基准可比，旧书零回归）。
+- 新增：**题材承诺可机判条款**——`lib/promise-terms.js`（纯函数）。承诺书支持「## 可核验条款」结构化段落（行式「要素\|关键词\|每章最低命中」），`novel_write_chapter` 内容门禁新增第⑩维：本章词频脱靶出 `promise-term-below` warning（报信号不判死刑，裁决留给人）；近 3 章 ≥2 章脱靶落 minor 债。写前简报补「承诺条款状态」段，会话接力方无需自己记得看。
+- 新增：**批次漂移检测**——`promiseDriftSeries`（纯函数）按 10 章批拉条款覆盖率时间线，「起步强、收尾塌」在 10 章批界落 `promise-drift` major 债；`novel_project check fullscan` 出 `promiseDrift` 读数（只读不落债）。漂移/脱靶信号并进质量趋势旗标（`promise-drift-recent` / `promise-term-below-recent`，复用既有 riskFlags 通道，会话接力盲区补丁）。
+- 新增：**词汇禁区**——`lib/world-rules.js` 台账新增「域\|禁止\|词1,词2」行式（`kind:forbiddenWords`），`forbiddenWordsScan`（纯函数）逐字计数异域词，`novel_worldbook rules_check` 双扫（史实域 + 词汇禁区），`novel_write_chapter` 内容门禁新增第⑪维 warning（与史实域扫描对称的另一半，补「玄幻向防异域词汇」约束面）。
+- 辅助：**伏笔 plan 交叉核对**——`novel_ledger foreshadow_setup` 的 plan 若早于全书大纲把该伏笔排在的卷段，出 `planWarn`（report-only 不拦：伏笔回收是硬门禁，plan 前置会每章把叙事往回收线拽）。
+- 重构：**逐字计数器收口为单一实现**——`lib/noai.js` 导出 `countAll`（非重叠精确子串计数），`promise-terms` / `world-rules` / `style` 各处的同语义计数并入共享口径，不再各自抄第二份。
+- 新增：**锚点改写留痕（只留痕不拦截）**——`lib/anchor-diff.js`（纯函数）：`novel_outline save_book` 与 `novel_project promise` 覆盖**已有**锚点时，先对旧/新两版做结构 diff（卷段 kept/removed/added、故事词群 lost/gained、字数变化率、方向性自申报词引入），命中强信号时回执带 `anchorDiff` 点名、audit 行带 `anchorMajor`/`anchorNote`（不止记字数，还记改了什么）——「门禁参照物被谁在何时换掉」从此可追溯；首写与正常小改全静默，方向性改写本身不拦（拦=替作者裁决）。
+
 ## v1.10.1 (2026-11-24)
 
 - 修复：**claim / create 端点的 `body.session` 未过形状校验**（`lib/server-routes/projects.js`）——同层全部端点（session/chapters/insights）都有 `validSessionId` 收口，唯独这两处写路径直接把请求体里的 session 写进归属集文件与 audit 行（`store.addBookSession` 收口也只查非空），4MB 请求体上界下一条超长字符串会原样持久化进每本未归属书。两处入口补同款 400 收口（claim 全拦；create 空串放行保持不带会话的调试路径，非空全拦）；归属收口 `addBookSession` 判据不变（供工具链共用）。

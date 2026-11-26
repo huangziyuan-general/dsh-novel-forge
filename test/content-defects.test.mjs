@@ -99,3 +99,41 @@ test('audit 元叙述词表：强工程词与软叙述层词都计入同一计�
     const clean = computeAudit({ content: '他推门进来，把包袱放下。' });
     assert.equal(clean.metaNarrative, 0);
 });
+
+// ── P2/P4 内容门禁新维度（⑩ 题材承诺条款 / ⑪ 词汇禁区，warning 档 report-only 不拦）────
+test('★ ⑩ 题材承诺条款：脱靶出 promise-term-below 警告；达标/无条款全静默', () => {
+    const terms = [{ name: '师徒互动', keywords: ['师傅', '徒弟', '拜师'], minHits: 2 }];
+    // 命中 1 次（师傅×1）< 需 2 → 脱靶 warning
+    const g = contentGate({ content: '师傅推门进来，说今天不练剑。', chapter: 7, promiseTerms: terms });
+    assert.equal(g.ok, true, 'warning 不拦（报信号不判死刑）');
+    assert.ok(g.warnings.some((w) => w.code === 'promise-term-below'));
+    assert.match(g.warnings.find((w) => w.code === 'promise-term-below').message, /师徒互动/);
+    // 达标（师傅×1 + 徒弟×1 = 2）→ 本维静默
+    const ok = contentGate({ content: '师傅对徒弟说：今日练剑。', chapter: 7, promiseTerms: terms });
+    assert.ok(!ok.warnings.some((w) => w.code === 'promise-term-below'), '达标不出警告');
+    assert.deepEqual(ok.checks.promiseChecks[0].below, false);
+    // 无条款（存量承诺书无结构化段）→ 整维零噪声
+    const none = contentGate({ content: 'x', chapter: 1 });
+    assert.deepEqual(none.checks.promiseChecks, []);
+    assert.ok(!none.warnings.some((w) => w.code === 'promise-term-below'));
+});
+
+test('★ ⑪ 词汇禁区：异域词命中出 world-forbidden-word 警告；无禁词行全静默', () => {
+    const world = [{ kind: 'forbiddenWords', domain: '历史', forbiddenWords: ['平粜', '户房'] }];
+    const g = contentGate({ content: '朝廷下诏平粜，户房领粮。', chapter: 9, worldRules: world });
+    assert.equal(g.ok, true, 'report-only 不拦');
+    assert.ok(g.warnings.some((w) => w.code === 'world-forbidden-word'));
+    assert.match(g.warnings.find((w) => w.code === 'world-forbidden-word').message, /词汇禁区「历史」/);
+    assert.deepEqual(g.checks.forbiddenHits, [{ domain: '历史', hits: 2 }], 'counts 逐域计总命中');
+    // 正文无异域词 → 本维静默
+    const clean = contentGate({ content: '少年负剑行于山门。', chapter: 9, worldRules: world });
+    assert.ok(!clean.warnings.some((w) => w.code === 'world-forbidden-word'));
+    // 台账无禁词行（只有史实域行）→ 零噪声
+    const his = contentGate({
+        content: '朝廷下诏平粜。', chapter: 9,
+        worldRules: [{ domain: '历史', subdomain: '官制', historicalAnchors: '', fictionalAdaptations: '', priority: 'balanced' }],
+    });
+    assert.ok(!his.warnings.some((w) => w.code === 'world-forbidden-word'), '非禁词行不走本维（与史实域扫描分工对称）');
+    // 缺省（未传台账）→ 整维静默
+    assert.deepEqual(contentGate({ content: '朝廷下诏平粜。', chapter: 9 }).checks.forbiddenHits, []);
+});

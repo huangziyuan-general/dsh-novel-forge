@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseMilestones, milestoneLedger, formatLedger, conceptTerms } from '../lib/milestone.js';
+import { parseMilestones, milestoneLedger, formatLedger, conceptTerms, foreshadowPlanCheck } from '../lib/milestone.js';
 
 const BOOK = `# 全书大纲
 
@@ -123,4 +123,35 @@ test('formatLedger：开区间节点在后续节点里显示「第N章起」而�
     const out = formatLedger(ledger);
     assert.ok(out.includes('第9章起'), '开区间用「第N章起」显示');
     assert.ok(!out.includes('Infinity'), 'Infinity 不外漏');
+});
+
+// ── 伏笔 plan 交叉核对（foreshadowPlanCheck，report-only 不拦）────
+const PLAN_OUTLINE = `# 全书大纲
+### 卷一 · 凡界（第 1-60 章）
+- 第 1-10 章：码头据点战。
+- 第 31-50 章：断桥破阵、结契。
+- 第 51-60 章：凡界秩序重定。`;
+
+test('★ 伏笔plan核对：plan 落在大纲节点区间内 → 不报；前置 → mismatch + 指路', () => {
+    // plan=40 落在「第 31-50 章·结契」节点内 → 对齐
+    const inRange = foreshadowPlanCheck({ bookOutline: PLAN_OUTLINE, plan: 40, setup: '结契的伏笔' });
+    assert.equal(inRange.mismatch, false);
+    assert.equal(inRange.nodeRange, '31–50');
+    assert.equal(inRange.message, null);
+    // 边界：plan=31（节点起章）对齐；plan=30（比节点起章早 1 章）前置 → mismatch
+    assert.equal(foreshadowPlanCheck({ bookOutline: PLAN_OUTLINE, plan: 31, setup: '结契的伏笔' }).mismatch, false);
+    const early = foreshadowPlanCheck({ bookOutline: PLAN_OUTLINE, plan: 30, setup: '结契的伏笔' });
+    assert.equal(early.mismatch, true);
+    assert.match(early.message, /提前 1 章/);
+    assert.match(early.message, /第31–50章/, 'message 点名大纲卷段区间');
+});
+
+test('★ 伏笔plan核对：大纲没提这条伏笔 / 无大纲 / plan 无效 → 不适用不冤枉', () => {
+    // 关键词零命中大纲任何节点 → nodeRange=null 静默
+    assert.equal(foreshadowPlanCheck({ bookOutline: PLAN_OUTLINE, plan: 40, setup: '九幽秘境' }).nodeRange, null);
+    assert.equal(foreshadowPlanCheck({ bookOutline: PLAN_OUTLINE, plan: 40, setup: '九幽秘境' }).mismatch, false);
+    // 无大纲 / plan<1 → 全部不适用
+    assert.deepEqual(foreshadowPlanCheck({ bookOutline: null, plan: 40, setup: '结契的伏笔' }),
+        { mismatch: false, plan: 40, nodeRange: null, nodeText: null, message: null });
+    assert.equal(foreshadowPlanCheck({ bookOutline: PLAN_OUTLINE, plan: 0, setup: '结契的伏笔' }).mismatch, false);
 });
