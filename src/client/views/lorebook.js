@@ -14,7 +14,7 @@ import { Ico } from '../icons.js';
 
 export function LorebookView({ state: s }) {
 	const editing = s.loreForm.mode !== 'none';
-	const on = s.loreEntries.filter((e) => e.enabled).length;
+	const on = s.loreEntries.filter((e) => e.enabled !== false).length;
 
 	return h('div', { style: stackStyle(space.lg) },
 
@@ -73,7 +73,7 @@ export function LorebookView({ state: s }) {
 			: h('div', { style: stackStyle(space.sm) },
 				...s.loreEntries.map((entry) => h('div', {
 					key: entry.id,
-					style: { ...card({ pad: space.md }), opacity: entry.enabled ? 1 : 0.62 },
+					style: { ...card({ pad: space.md }), opacity: entry.enabled !== false ? 1 : 0.62 },
 				},
 					h('div', { style: { display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' } },
 						h('span', {
@@ -83,7 +83,7 @@ export function LorebookView({ state: s }) {
 							},
 						}, entry.name),
 						entry.always_active ? Chip({ tone: 'accent' }, '常驻') : null,
-						!entry.enabled ? Chip({ tone: 'danger' }, '已停用') : null,
+						entry.enabled === false ? Chip({ tone: 'danger' }, '已停用') : null,
 						h('span', { style: { flex: '1 1 auto' } }),
 						Mono({}, `P${entry.priority}`),
 					),
@@ -103,7 +103,7 @@ export function LorebookView({ state: s }) {
 					h('div', { style: { display: 'flex', gap: space.xs, marginTop: space.sm, flexWrap: 'wrap', alignItems: 'center' } },
 						Btn({ size: 'sm', variant: 'ghost', action: 'lore-edit', id: entry.id }, '编辑'),
 						Btn({ size: 'sm', variant: 'ghost', action: 'lore-toggle', id: entry.id },
-							entry.enabled ? '停用' : '启用'),
+							entry.enabled === false ? '启用' : '停用'),
 						h('span', { style: { flex: '1 1 auto' } }),
 						// 删除两步确认：第一次点只点亮确认行（控制器 lore-delete 分支），
 						// 误触可取消——条目一删关键词/优先级/内容全没了，不能一键即走。
